@@ -3890,3 +3890,29 @@ export async function completeDailyTask(completionId: string, proof?: { note?: s
   const { data } = await api.patch<ApiEnvelope<DailyTaskCompletion>>(`/recurring-tasks/completions/${completionId}/complete`, proof ?? {});
   return data.data;
 }
+
+// My Payslips download: same endpoint as downloadPayslipPdf, saved as
+// payslip-<safeName>-<month>-<year>.pdf (the dashboard's filename). downloadAsync
+// resolves even on a 4xx/5xx, so the status is checked and the server's own
+// message (a JSON body) is surfaced instead of saving it as the "PDF".
+export async function downloadMyPayslip(id: string, month: number, year: number, name: string): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const safeName = (name || 'payslip').replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `payslip-${safeName}-${month}-${year}.pdf`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/payslips/${id}/pdf`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status < 200 || result.status >= 300) {
+    let message: string | undefined;
+    try {
+      const body = JSON.parse(await FileSystem.readAsStringAsync(result.uri));
+      message = body?.error ?? body?.message;
+    } catch {
+      // not JSON: fall back to the generic message
+    }
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    throw new Error(message ?? 'Failed to download this payslip.');
+  }
+  return { uri: result.uri, filename };
+}
