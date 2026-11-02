@@ -3835,3 +3835,26 @@ export interface EditDebitNoteInput {
   narration?: string;
   items: { purchaseVoucherItemId: string; returnedQuantity: number; amount: number }[];
 }
+
+// Payroll page: a salary payment with the breakdown parsed from its JSON note.
+// Payments made before the breakdown existed (note null / plain text) come back
+// with grossSalary null, and the row then falls back to the live figures.
+export interface SalaryPaymentWithBreakdown {
+  id: string;
+  userId: string;
+  amount: number;
+  mode: string | null;
+  paidAt: string;
+  paidBy: { name: string } | null;
+  grossSalary: number | null;
+  attendanceDeduction: number;
+  advanceDeduction: number | null;
+  advanceSkipped: boolean;
+  loanDeduction: number | null;
+  netPayable: number | null;
+}
+
+// Not returned by every backend build (the dashboard reads it defensively).
+export interface PayrollResult {
+  totalAdvanceDeduction?: number;
+}

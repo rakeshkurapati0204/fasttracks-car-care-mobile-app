@@ -34,6 +34,7 @@ import type {
   EditPurchaseVoucherInput,
   EditPaymentVoucherInput,
   EditDebitNoteInput,
+  SalaryPaymentWithBreakdown,
   Task,
   TaskStatus,
   CallCapabilities,
@@ -3950,4 +3951,27 @@ export async function editDebitNote(id: string, input: EditDebitNoteInput) {
 export async function approveLoanWithNotes(id: string, notes: string) {
   const { data } = await api.patch<ApiEnvelope<Loan>>(`/loans/${id}/approve`, { notes });
   return data.data;
+}
+
+// GET /payroll/salary-payments-all returns the raw rows with the note as an
+// unparsed string; it's parsed here with the dashboard's try/catch fallback.
+export async function fetchSalaryPaymentsWithBreakdown(month: number, year: number) {
+  const { data } = await api.get<ApiEnvelope<(Omit<SalaryPaymentWithBreakdown, 'grossSalary' | 'attendanceDeduction' | 'advanceDeduction' | 'advanceSkipped' | 'loanDeduction' | 'netPayable'> & { note: string | null })[]>>(
+    '/payroll/salary-payments-all',
+    { params: { month, year } },
+  );
+  const rows = Array.isArray(data.data) ? data.data : [];
+  return rows.map((p): SalaryPaymentWithBreakdown => {
+    let note: Record<string, unknown> = {};
+    try { note = JSON.parse(p.note || '{}') as Record<string, unknown>; } catch { /* plain-text note */ }
+    return {
+      id: p.id, userId: p.userId, amount: p.amount, mode: p.mode, paidAt: p.paidAt, paidBy: p.paidBy,
+      grossSalary: (note.grossSalary as number | undefined) ?? null,
+      attendanceDeduction: (note.attendanceDeduction as number | undefined) ?? 0,
+      advanceDeduction: (note.advanceDeduction as number | undefined) ?? null,
+      advanceSkipped: (note.advanceSkipped as boolean | undefined) ?? false,
+      loanDeduction: (note.loanDeduction as number | undefined) ?? null,
+      netPayable: (note.netPayable as number | undefined) ?? null,
+    };
+  });
 }
