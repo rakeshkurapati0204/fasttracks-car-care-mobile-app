@@ -3935,3 +3935,55 @@ export interface WabaNumber {
 export interface StaffPhoneNumberRow {
   employeeId?: string | null;
 }
+
+// ── Inventory page (dashboard parity) ───────────────────────────────────────
+// GET /inventory-items (list) — every row carries totalStock and the derived
+// effectiveStatus (computeEffectiveStatus in inventory_items_route.ts), plus
+// its receipts with the last reconciliation attached.
+export type InventoryEffectiveStatus = 'ACTIVE' | 'OUT_OF_STOCK' | 'EXPIRED' | 'DISCONTINUED';
+
+export interface InventoryListReceipt extends StockReceipt {
+  lastReconciliation?: { reconciledAt: string; difference: number; user?: { name: string } | null } | null;
+}
+
+export interface InventoryListItem {
+  id: string;
+  product: string;
+  category: string;
+  unit: string;
+  status: string;
+  effectiveStatus: InventoryEffectiveStatus;
+  totalStock?: number;
+  sellingPrice?: number | null;
+  incentiveValue?: number | null;
+  compatibility?: string | null;
+  warranty?: string | null;
+  notes?: string | null;
+  storeLocation?: string | null;
+  imageUrls?: string[];
+  lastVerifiedAt?: string | null;
+  lastVerifiedCount?: number | null;
+  receipts?: InventoryListReceipt[];
+  createdAt: string;
+}
+
+export interface InventoryListParams {
+  category?: string;
+  status?: string;
+  q?: string;
+}
+
+// GET /inventory-items/check-seller-match → { receiptId, barcode, quantityReceived, sellerName } | null
+export interface SellerMatch {
+  receiptId: string;
+  barcode: string;
+  quantityReceived: number;
+  sellerName: string;
+}
+
+// GET /inventory-items/lookup-barcode → { itemName, receiptId?, remainingQty? }
+export interface BarcodeLookup {
+  itemName: string;
+  receiptId?: string;
+  remainingQty?: number;
+}

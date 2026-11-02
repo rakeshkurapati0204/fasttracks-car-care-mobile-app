@@ -185,6 +185,10 @@ import type {
   ReconcileReason,
   ReconciliationRecord,
   DraftReceipt,
+  InventoryListItem,
+  InventoryListParams,
+  SellerMatch,
+  BarcodeLookup,
   ConfirmArrivalInput,
   ItemOutInput,
   ItemOutLog,
@@ -1798,6 +1802,72 @@ export async function uploadInventoryBill(
     signal: ctrl.signal,
     onUploadProgress: (evt) => ctrl.onProgress(progressToPercent(evt)),
   });
+  return data.data;
+}
+
+// ── Inventory page (dashboard parity) ───────────────────────────────────────
+// GET /inventory-items with the dashboard's own server-side filters. Rows carry
+// effectiveStatus, receipts and incentive/compatibility/warranty/notes.
+export async function fetchInventoryList(params?: InventoryListParams) {
+  const { data } = await api.get<ApiEnvelope<InventoryListItem[]>>('/inventory-items', { params });
+  return data.data;
+}
+
+// PATCH /inventory-items/:id with the Edit Product payload (status may be
+// EXPIRED, which the narrower ItemStatus type does not list).
+export async function saveInventoryItemEdits(id: string, input: Record<string, unknown>) {
+  const { data } = await api.patch<ApiEnvelope<InventoryListItem>>(`/inventory-items/${id}`, input);
+  return data.data;
+}
+
+// The wizard's receipt body (barcode, seller, dealer price, GST, logistics…).
+// POST /inventory-items/:id/receipts, requireInventoryWrite.
+export async function createInventoryReceiptFull(itemId: string, input: Record<string, unknown>) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/inventory-items/${itemId}/receipts`, input);
+  return data.data;
+}
+
+// The dashboard's LogisticsForm asks the legacy router for the next barcode
+// (GET /inventory/next-barcode): the /inventory-items copy sits behind /:id.
+export async function fetchNextBatchBarcode() {
+  const { data } = await api.get<ApiEnvelope<{ barcode: string }>>('/inventory/next-barcode');
+  return data.data;
+}
+
+// GET /inventory-items/check-seller-match — null when no batch matches.
+export async function checkSellerMatch(itemId: string, sellerName: string) {
+  const { data } = await api.get<ApiEnvelope<SellerMatch | null>>('/inventory-items/check-seller-match', { params: { itemId, sellerName } });
+  return data.data;
+}
+
+// POST /inventory-items/receipts/:receiptId/assign-barcode → { barcode }
+export async function assignReceiptBarcode(receiptId: string) {
+  const { data } = await api.post<ApiEnvelope<{ barcode: string }>>(`/inventory-items/receipts/${receiptId}/assign-barcode`);
+  return data.data.barcode;
+}
+
+// GET /inventory-items/lookup-barcode?barcode= (Items Out form).
+export async function lookupInventoryBarcode(barcode: string) {
+  const { data } = await api.get<ApiEnvelope<BarcodeLookup | null>>('/inventory-items/lookup-barcode', { params: { barcode } });
+  return data.data;
+}
+
+// GET /inventory-items/receipts/:receiptId — the fresh batch Edit Batch loads.
+export async function fetchInventoryReceipt(receiptId: string) {
+  const { data } = await api.get<ApiEnvelope<StockReceipt & { eta?: string | null }>>(`/inventory-items/receipts/${receiptId}`);
+  return data.data;
+}
+
+// PATCH /inventory-items/receipts/:receiptId with Edit Batch's full body
+// (nullable dealerPrice / eta, which UpdateReceiptInput can't express).
+export async function saveInventoryReceiptEdits(receiptId: string, input: Record<string, unknown>) {
+  const { data } = await api.patch<ApiEnvelope<StockReceipt>>(`/inventory-items/receipts/${receiptId}`, input);
+  return data.data;
+}
+
+// POST /inventory-items/import — pre-parsed spreadsheet rows (requireInventoryWrite).
+export async function importInventoryRows(rows: Record<string, unknown>[]) {
+  const { data } = await api.post<ApiEnvelope<{ created: number; skipped: number; errors: number }>>('/inventory-items/import', { rows });
   return data.data;
 }
 
