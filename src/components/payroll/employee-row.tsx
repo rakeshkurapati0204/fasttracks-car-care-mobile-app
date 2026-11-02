@@ -1,14 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState, type ReactNode } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Fonts, FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { getErrorMessage, undoSalaryPayment } from '@/lib/api';
 import type { PayrollResult, SalaryPaymentWithBreakdown } from '@/types/api';
 
 import { AttendanceGrid } from './attendance-grid';
 import { formatINR, isWithinPaymentWindow } from './helpers';
+import { MarkPaidSheet } from './pay-sheets';
 
 function Mono({ children, style }: { children: ReactNode; style?: object }) {
   return <ThemedText style={[styles.mono, style]}>{children}</ThemedText>;
@@ -25,20 +27,47 @@ function Line({ label, value, color, small, labelColor }: { label: string; value
 }
 
 export function EmployeePayrollRow({
-  result, wide, month, year, payment, canEditSalary, onSetSalary, onEditSalary, onRefresh,
+  result, wide, month, year, payment, canPay, canEditSalary, onSetSalary, onEditSalary, onPaymentChange, onRefresh,
 }: {
   result: PayrollResult;
   wide: boolean;
   month: number;
   year: number;
   payment: SalaryPaymentWithBreakdown | null;
+  canPay: boolean;
   canEditSalary: boolean;
+  onPaymentChange: () => void;
   onSetSalary: (r: PayrollResult) => void;
   onEditSalary: (r: PayrollResult) => void;
   onRefresh: () => void;
 }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
+  const [showPay, setShowPay] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const [undoError, setUndoError] = useState('');
+
+  const handleUndo = () => {
+    Alert.alert('Undo payment', 'Remove salary payment record for this month?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'OK',
+        onPress: async () => {
+          setUndoing(true);
+          setUndoError('');
+          try {
+            await undoSalaryPayment({ userId: result.userId!, month, year });
+            onPaymentChange();
+          } catch (e: unknown) {
+            // e.g. a later loan repayment blocks the undo; the server says why.
+            setUndoError(getErrorMessage(e, 'Failed to undo the payment.'));
+          } finally {
+            setUndoing(false);
+          }
+        },
+      },
+    ]);
+  };
 
   // Gross-vs-net gap for display: totalDeductions only tracks attendance / loan
   // / advance deductions and ignores a manual override, so the shown amount is
@@ -108,6 +137,16 @@ export function EmployeePayrollRow({
           <ThemedText style={[styles.pillText, { color: '#15803d' }]}>Paid</ThemedText>
         </View>
       ) : null}
+      {payment && canPay ? (
+        <Pressable onPress={handleUndo} disabled={undoing} accessibilityRole="button" hitSlop={8} style={styles.undo}>
+          <ThemedText style={[styles.undoText, { color: theme.danger }]}>{undoing ? 'Undoing…' : 'Undo'}</ThemedText>
+        </Pressable>
+      ) : null}
+      {!payment && canPay ? (
+        <Pressable onPress={() => setShowPay(true)} accessibilityRole="button" style={[styles.markBtn, { borderColor: theme.primary }]}>
+          <ThemedText style={[styles.markBtnText, { color: theme.primary }]}>Mark Paid</ThemedText>
+        </Pressable>
+      ) : null}
     </View>
   );
 
@@ -138,10 +177,15 @@ export function EmployeePayrollRow({
               <View style={styles.flex1}>{money}</View>
               {counts}
             </View>
-            {liveAdvance > 0 || payment ? pills : null}
+            {liveAdvance > 0 || payment || canPay ? pills : null}
           </View>
         )}
       </Pressable>
+
+      {undoError ? <ThemedText style={[styles.small, { color: theme.danger, paddingHorizontal: 20, paddingBottom: 12 }]}>{undoError}</ThemedText> : null}
+      {showPay ? (
+        <MarkPaidSheet employee={result} month={month} year={year} onClose={() => setShowPay(false)} onSaved={onPaymentChange} />
+      ) : null}
 
       {expanded ? (
         <View style={[styles.expanded, { backgroundColor: theme.backgroundElement, borderTopColor: theme.border }]}>
@@ -278,6 +322,10 @@ const styles = StyleSheet.create({
   pill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
   pillText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
   paid: { backgroundColor: 'rgba(34,197,94,0.15)' },
+  undo: { minHeight: 32, justifyContent: 'center', paddingHorizontal: 6, opacity: 0.8 },
+  undoText: { fontSize: 11, lineHeight: 14, fontFamily: FontWeights.semiBold },
+  markBtn: { minHeight: 36, paddingHorizontal: 12, borderWidth: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  markBtnText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.medium },
   setBtn: { minHeight: 36, paddingHorizontal: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   setBtnText: { color: '#ffffff', fontSize: 12, lineHeight: 16, fontFamily: FontWeights.medium },
   summary: { paddingHorizontal: 20, paddingVertical: 16 },

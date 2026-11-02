@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ErrorBanner } from '@/components/overview/parts';
 import { EmployeePayrollRow } from '@/components/payroll/employee-row';
 import { formatINR, formatPaymentWindow, getPaymentWindow, MONTH_NAMES } from '@/components/payroll/helpers';
-import LegacyPayrollScreen from '@/components/payroll/legacy-payroll';
+import { DisburseView } from '@/components/payroll/disburse-view';
 import { EditSalarySheet, SetSalarySheet } from '@/components/payroll/salary-sheets';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -63,6 +63,7 @@ export default function PayrollScreen() {
   const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState('');
   const [payments, setPayments] = useState<Record<string, SalaryPaymentWithBreakdown>>({});
+  const [reloadKey, setReloadKey] = useState(0);
   const [activeView, setActiveView] = useState<'payroll' | 'disburse'>('payroll');
   const [setSalaryEmp, setSetSalaryEmp] = useState<PayrollResult | null>(null);
   const [editSalaryEmp, setEditSalaryEmp] = useState<PayrollResult | null>(null);
@@ -99,6 +100,7 @@ export default function PayrollScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setReloadKey((k) => k + 1);
     await Promise.all([fetchPayroll(), fetchPayments()]);
     setRefreshing(false);
   };
@@ -136,21 +138,6 @@ export default function PayrollScreen() {
           <ThemedText style={styles.emptyTitle}>You don&apos;t have access to Payroll.</ThemedText>
         </Card>
       </View>,
-    );
-  }
-
-  // The bulk Disburse view (Mark Paid, Undo) is still the previous screen until Phase 2.
-  if (activeView === 'disburse') {
-    return shell(
-      <>
-        <View style={[styles.backBar, { borderBottomColor: theme.border }]}>
-          <Pressable onPress={() => setActiveView('payroll')} accessibilityRole="button" hitSlop={8} style={styles.backBtn}>
-            <Ionicons name="chevron-back" size={16} color={theme.primary} />
-            <ThemedText style={[styles.backText, { color: theme.primary }]}>Back to Payroll</ThemedText>
-          </Pressable>
-        </View>
-        <LegacyPayrollScreen />
-      </>,
     );
   }
 
@@ -197,7 +184,7 @@ export default function PayrollScreen() {
             onPress={handleExport}>
             Export Excel
           </Button>
-          <Button size="sm" variant="outline" icon="cash-outline" onPress={() => setActiveView('disburse')}>Disburse Salaries</Button>
+          <Button size="sm" variant={activeView === 'disburse' ? 'primary' : 'outline'} icon="cash-outline" onPress={() => setActiveView(activeView === 'disburse' ? 'payroll' : 'disburse')}>Disburse Salaries</Button>
         </View>
       </View>
 
@@ -246,7 +233,7 @@ export default function PayrollScreen() {
 
       {error ? <ErrorBanner message={error} onRetry={fetchPayroll} /> : null}
 
-      {!loading && summary && summary.employees.length > 0 ? (
+      {activeView === 'payroll' && !loading && summary && summary.employees.length > 0 ? (
         <View style={[styles.search, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <Ionicons name="search" size={16} color={theme.textMuted} />
           <TextInput
@@ -261,7 +248,9 @@ export default function PayrollScreen() {
     </View>
   );
 
-  const empty = loading ? (
+  const empty = activeView === 'disburse' ? (
+    <DisburseView month={month} year={year} wide={wide} reloadKey={reloadKey} />
+  ) : loading ? (
     <View style={styles.gap}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} height={72} />)}</View>
   ) : summary ? (
     <Card padding="lg" style={styles.centerCard}>
@@ -274,7 +263,7 @@ export default function PayrollScreen() {
   return shell(
     <>
       <FlatList
-        data={loading ? [] : filtered}
+        data={loading || activeView === 'disburse' ? [] : filtered}
         keyExtractor={(e, i) => e.userId ?? String(i)}
         renderItem={({ item }) => (
           <EmployeePayrollRow
@@ -283,7 +272,9 @@ export default function PayrollScreen() {
             month={month}
             year={year}
             payment={item.userId ? (payments[item.userId] ?? null) : null}
+            canPay={canPay}
             canEditSalary={canEditSalary}
+            onPaymentChange={fetchPayments}
             onSetSalary={setSetSalaryEmp}
             onEditSalary={setEditSalaryEmp}
             onRefresh={fetchPayroll}
@@ -339,7 +330,4 @@ const styles = StyleSheet.create({
   centerCard: { alignItems: 'center', paddingVertical: 48 },
   emptyTitle: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
   gap: { gap: 12 },
-  backBar: { paddingHorizontal: 16, borderBottomWidth: 1 },
-  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 44 },
-  backText: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.medium },
 });
