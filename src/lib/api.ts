@@ -4001,3 +4001,26 @@ export async function fetchFinancialRevenueTrend(period?: string) {
   const { data } = await api.get<ApiEnvelope<{ date: string; revenue: number }[]>>('/financial/revenue-trend', { params: { period } });
   return Array.isArray(data.data) ? data.data : [];
 }
+
+// Legal Documents page: Save Changes sends every field, with null (not
+// undefined) for a blank hearing date / notes, so clearing a field really clears it.
+export async function saveLegalCase(id: string, input: { title: string; status: string; nextHearingDate: string | null; notes: string | null }) {
+  const { data } = await api.put<ApiEnvelope<LegalCase>>(`/legal/cases/${id}`, input);
+  return data.data;
+}
+
+// Streams a stored case document (behind requireLegalAccess) into the cache so
+// it can be opened. A non-200 response is an error and nothing is kept.
+export async function downloadLegalDocument(documentId: string, filename: string): Promise<{ uri: string }> {
+  const token = await tokenStorage.get();
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const dest = `${FileSystem.cacheDirectory}legal-${documentId}-${safe}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/legal/documents/${documentId}/file`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to open document');
+  }
+  return { uri: result.uri };
+}

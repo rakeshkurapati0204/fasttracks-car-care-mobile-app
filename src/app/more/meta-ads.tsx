@@ -1,16 +1,17 @@
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, AppState, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { GlassCard } from '@/components/home/glass-card';
+import { ErrorBanner } from '@/components/overview/parts';
 import { AdsList, DailyTable, LeadList, TeamTable, type Drill } from '@/components/meta-ads/ads-lists';
 import {
   clock, dayLabel, dur, Empty, FilterChip, FollowRow, inr, num, Panel, SelectField, Stat,
 } from '@/components/meta-ads/ads-ui';
 import { LeadFlowChart, SourceDonut } from '@/components/meta-ads/lead-charts';
 import { ThemedText } from '@/components/themed-text';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Skeleton } from '@/components/ui';
+import { FontWeights, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
   fetchAdLeadList,
@@ -45,7 +46,39 @@ const PAGE_SIZE = 200;
 const TABS = ['Overview', 'Ads & campaigns', 'All leads', 'Daily report', 'Team activity'] as const;
 type Tab = (typeof TABS)[number];
 
+const WIDE_MIN = 560;
+
+// `n` equal columns per row (stat cards: 4 wide / 2 phone).
+function Cols({ n, gap = 16, children }: { n: number; gap?: number; children: ReactNode[] }) {
+  const items = children.filter(Boolean);
+  const rows: ReactNode[][] = [];
+  for (let i = 0; i < items.length; i += n) rows.push(items.slice(i, i + n));
+  return (
+    <View style={{ gap }}>
+      {rows.map((row, r) => (
+        <View key={r} style={{ flexDirection: 'row', gap }}>
+          {row.map((c, k) => <View key={k} style={styles.col}>{c}</View>)}
+          {Array.from({ length: n - row.length }).map((_, k) => <View key={'p' + k} style={styles.col} />)}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// The dashboard's two-column rows (lg:grid-cols-[1.6fr,1fr]) when wide, stacked on a phone.
+function Split({ wide, left, right }: { wide: boolean; left: ReactNode; right: ReactNode }) {
+  if (!wide) return <View style={styles.stack}>{left}{right}</View>;
+  return (
+    <View style={styles.split}>
+      <View style={{ flex: 1.6, minWidth: 0 }}>{left}</View>
+      <View style={{ flex: 1, minWidth: 0 }}>{right}</View>
+    </View>
+  );
+}
+
 function MetaAdsContent() {
+  const [width, setWidth] = useState(0);
+  const wide = width >= WIDE_MIN;
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const scroller = useRef<ScrollView>(null);
@@ -237,43 +270,46 @@ function MetaAdsContent() {
   );
 
   return (
-    <View style={styles.flex1}>
+    <View style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <Stack.Screen options={{ title: 'Meta Ads' }} />
       <ScrollView
         ref={scroller}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
+        contentContainerStyle={[styles.content, { padding: wide ? 24 : 16, paddingBottom: insets.bottom + 40 }]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onPullRefresh} />}
         keyboardShouldPersistTaps="handled"
       >
-        <View>
-          <ThemedText type="small" themeColor="textSecondary" style={styles.eyebrow}>MARKETING PERFORMANCE</ThemedText>
-          <ThemedText type="subtitle">Meta Ads</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">Your ads, enquiries and team follow-through. In one place.</ThemedText>
-        </View>
-
-        <View style={styles.headerRow}>
-          {lastLoaded ? (
-            <ThemedText type="small" themeColor="textSecondary" style={styles.flex1}>Updated {clock(lastLoaded.toISOString())} IST</ThemedText>
-          ) : <View style={styles.flex1} />}
-          <Pressable onPress={confirmRefresh} disabled={syncing} style={[styles.refreshBtn, syncing && styles.disabled]}>
-            {syncing ? <ActivityIndicator color="#ffffff" size="small" /> : null}
-            <ThemedText style={styles.btnLabel}>{syncing ? 'Refreshing' : 'Refresh'}</ThemedText>
-          </Pressable>
+        <View style={[styles.headRow, wide && styles.headRowWide]}>
+          <View style={styles.flex1}>
+            <ThemedText themeColor="textMuted" style={styles.eyebrow}>MARKETING PERFORMANCE</ThemedText>
+            <ThemedText style={styles.h1}>Meta Ads</ThemedText>
+            <ThemedText themeColor="textMuted" style={styles.subtitle}>Your ads, enquiries and team follow-through. In one place.</ThemedText>
+          </View>
+          <View style={styles.refreshWrap}>
+            {lastLoaded ? <ThemedText themeColor="textMuted" style={styles.updated}>{'Updated ' + clock(lastLoaded.toISOString()) + ' IST'}</ThemedText> : null}
+            <Pressable onPress={confirmRefresh} disabled={syncing} accessibilityRole="button" style={[styles.refreshBtn, { backgroundColor: theme.primary }, syncing && styles.disabled]}>
+              {syncing ? <ActivityIndicator color="#ffffff" size="small" /> : null}
+              <ThemedText style={styles.btnLabel}>{syncing ? 'Refreshing' : 'Refresh'}</ThemedText>
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.rangeRow}>
-          {RANGES.map((r) => (
-            <Pressable
-              key={r.days}
-              onPress={() => setDays(r.days)}
-              style={[styles.rangeChip, { backgroundColor: days === r.days ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={days === r.days ? styles.chipActive : undefined}>{r.label}</ThemedText>
-            </Pressable>
-          ))}
+          <View style={[styles.segment, { backgroundColor: theme.backgroundElement }]}>
+            {RANGES.map((r) => (
+              <Pressable
+                key={r.days}
+                onPress={() => setDays(r.days)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: days === r.days }}
+                style={[styles.segBtn, days === r.days && { backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1 }]}>
+                <ThemedText style={[styles.segText, { color: days === r.days ? theme.text : theme.textMuted }]}>{r.label}</ThemedText>
+              </Pressable>
+            ))}
+          </View>
+          <ThemedText themeColor="textMuted" style={styles.small}>
+            {'Dates and totals are Asia/Kolkata' + (msg ? ' · ' + msg : '')}
+          </ThemedText>
         </View>
-        <ThemedText type="small" themeColor="textSecondary">
-          Dates and totals are Asia/Kolkata{msg ? ` · ${msg}` : ''}
-        </ThemedText>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tabs, { borderBottomColor: theme.backgroundElement }]}>
           {TABS.map((t) => (
@@ -285,67 +321,72 @@ function MetaAdsContent() {
           ))}
         </ScrollView>
 
-        {err ? (
-          <GlassCard>
-            <ThemedText style={styles.error}>{err}</ThemedText>
-            <Pressable onPress={load} style={styles.retry}>
-              <ThemedText style={styles.btnLabel}>Retry</ThemedText>
-            </Pressable>
-          </GlassCard>
-        ) : null}
+        {err ? <ErrorBanner message={err} onRetry={load} /> : null}
         {loading && !daily.length && !err ? (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator />
-            <ThemedText type="small" themeColor="textSecondary">Loading live data…</ThemedText>
+          <View style={styles.stack}>
+            <Cols n={wide ? 4 : 2}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} height={108} />)}</Cols>
+            <Skeleton height={200} />
           </View>
         ) : null}
 
         {tab === 'Overview' && (
           <View style={styles.stack}>
-            <View style={styles.tiles}>
+            <Cols n={wide ? 4 : 2}>
               <Stat label="Total leads" icon="people-outline" value={num(totals.leads)}
-                sub={`${num(totals.paid)} paid · ${num(totals.organic)} direct`} onPress={() => drill({})} />
+                sub={num(totals.paid) + ' paid · ' + num(totals.organic) + ' direct'} onPress={() => drill({})} />
               <Stat label="Meta ad spend" icon="wallet-outline" value={inr(totals.spend)}
-                sub={`Spend across ${rangeLabel.toLowerCase()}`} />
+                sub={'Spend across ' + rangeLabel.toLowerCase()} />
               <Stat label="Cost per paid lead" icon="trending-up-outline" value={inr(totals.cpl)}
                 sub={totals.cplClipped && leadsSince
-                  ? `Spend ÷ paid leads, from ${dayLabel(leadsSince)} when lead capture began`
+                  ? 'Spend ÷ paid leads, from ' + dayLabel(leadsSince) + ' when lead capture began'
                   : 'Meta spend ÷ attributed paid leads'} />
               <Stat label="Remarks recorded" icon="chatbubble-outline" value={num(follow?.remarks)}
-                sub={follow ? `Of ${num(follow.accepted)} accepted leads` : undefined} />
-            </View>
+                sub={follow ? 'Of ' + num(follow.accepted) + ' accepted leads' : undefined} />
+            </Cols>
 
-            <Panel title="Lead flow" note="Daily enquiries by acquisition source">
-              {daily.length ? <LeadFlowChart daily={daily} onDrill={drill} /> : <Empty />}
-            </Panel>
+            <Split
+              wide={wide}
+              left={
+                <Panel title="Lead flow" note="Daily enquiries by acquisition source">
+                  {daily.length ? <LeadFlowChart daily={daily} onDrill={drill} /> : <Empty />}
+                </Panel>
+              }
+              right={
+                <Panel title="Where leads came from" note="Paid versus direct enquiries">
+                  {totals.paid + totals.organic > 0 ? (
+                    <SourceDonut paid={totals.paid} organic={totals.organic} onDrill={(p) => drill({ paid: p })} />
+                  ) : <Empty />}
+                </Panel>
+              }
+            />
 
-            <Panel title="Where leads came from" note="Paid versus direct enquiries">
-              {totals.paid + totals.organic > 0 ? (
-                <SourceDonut paid={totals.paid} organic={totals.organic} onDrill={(p) => drill({ paid: p })} />
-              ) : <Empty />}
-            </Panel>
-
-            <Panel title="Ad performance" note="Spend connected to attributed enquiries" right={viewAll('View all ads', 'Ads & campaigns')}>
-              <AdsList rows={ads.slice(0, 5)} onDrill={drill} />
-            </Panel>
-
-            <Panel title="Team follow-through" note="What happened after the enquiry arrived">
-              {follow ? (
-                <View style={styles.followStack}>
-                  <FollowRow label="Accepted by the team" note="Ownership recorded in the app" value={follow.accepted}
-                    onPress={() => setTab('Team activity')} />
-                  <FollowRow label="Accepted, no remark yet" note="No written outcome available" value={follow.acceptedNoRemark} />
-                  <FollowRow label="Not accepted" note="No team member recorded" value={follow.notAccepted}
-                    onPress={() => drill({ waiting: true })} />
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Median response {dur(follow.medianResponseSec)} · {num(follow.underTwoMin)} answered under 2 min
-                  </ThemedText>
-                </View>
-              ) : <Empty />}
-            </Panel>
+            <Split
+              wide={wide}
+              left={
+                <Panel title="Ad performance" note="Spend connected to attributed enquiries" right={viewAll('View all ads', 'Ads & campaigns')}>
+                  <AdsList rows={ads.slice(0, 5)} onDrill={drill} wide={wide} />
+                </Panel>
+              }
+              right={
+                <Panel title="Team follow-through" note="What happened after the enquiry arrived">
+                  {follow ? (
+                    <View style={styles.followStack}>
+                      <FollowRow label="Accepted by the team" note="Ownership recorded in the app" value={follow.accepted}
+                        onPress={() => setTab('Team activity')} />
+                      <FollowRow label="Accepted, no remark yet" note="No written outcome available" value={follow.acceptedNoRemark} />
+                      <FollowRow label="Not accepted" note="No team member recorded" value={follow.notAccepted}
+                        onPress={() => drill({ waiting: true })} />
+                      <ThemedText themeColor="textMuted" style={styles.small}>
+                        {'Median response ' + dur(follow.medianResponseSec) + ' · ' + num(follow.underTwoMin) + ' answered under 2 min'}
+                      </ThemedText>
+                    </View>
+                  ) : <Empty />}
+                </Panel>
+              }
+            />
 
             <Panel title="Recent leads" note="Acceptance and remarks, exactly where you need them" right={viewAll('View all leads', 'All leads')}>
-              <LeadList rows={leads.slice(0, 8)} />
+              <LeadList rows={leads.slice(0, 8)} wide={wide} />
             </Panel>
           </View>
         )}
@@ -353,7 +394,7 @@ function MetaAdsContent() {
         {tab === 'Ads & campaigns' && (
           <Panel title="Which ads are running"
             note={leadsSince ? `Lead capture began ${dayLabel(leadsSince)} — ads that ran before it cannot show a fair cost per lead` : undefined}>
-            <AdsList rows={ads} onDrill={drill} />
+            <AdsList rows={ads} onDrill={drill} wide={wide} />
           </Panel>
         )}
 
@@ -375,7 +416,7 @@ function MetaAdsContent() {
               </View>
             )}
 
-            <View style={styles.filters}>
+            <View style={[styles.filters, wide && styles.filtersWide]}>
               <SelectField label="Vehicle grade" value={fTier} onChange={setFTier} options={[
                 { v: 'all', t: 'All grades' },
                 { v: 'premium', t: `Premium (${tierCounts.premium ?? 0})` },
@@ -400,7 +441,7 @@ function MetaAdsContent() {
               ]} />
             </View>
 
-            <LeadList rows={leads} />
+            <LeadList rows={leads} wide={wide} />
             {leadsMore && (
               <Pressable onPress={loadMore} disabled={loadingMore} style={[styles.moreBtn, { borderColor: theme.backgroundSelected }]}>
                 <ThemedText type="small" style={styles.moreLabel}>
@@ -458,13 +499,26 @@ const styles = StyleSheet.create({
   flex1: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.four, gap: Spacing.two },
   centerText: { textAlign: 'center' },
-  content: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
+  content: { gap: 20, width: '100%', maxWidth: 1280, alignSelf: 'center' },
+  col: { flex: 1, minWidth: 0 },
+  split: { flexDirection: 'row', gap: 20, alignItems: 'flex-start' },
+  headRow: { gap: 12 },
+  headRowWide: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  h1: { fontSize: 32, lineHeight: 36, fontFamily: FontWeights.bold, letterSpacing: -0.6, marginTop: 4 },
+  subtitle: { fontSize: 13.5, lineHeight: 20, marginTop: 8 },
+  small: { fontSize: 12, lineHeight: 16 },
+  updated: { fontSize: 12, lineHeight: 16 },
+  refreshWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  segment: { flexDirection: 'row', padding: 4, borderRadius: 8, alignSelf: 'flex-start', flexWrap: 'wrap', gap: 2 },
+  segBtn: { minHeight: 36, paddingHorizontal: 12, borderRadius: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'transparent' },
+  segText: { fontSize: 13, lineHeight: 18, fontFamily: FontWeights.semiBold },
+  filtersWide: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end' },
   eyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 1.6 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   refreshBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, minHeight: 44, paddingHorizontal: Spacing.three, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', justifyContent: 'center' },
   disabled: { opacity: 0.6 },
   btnLabel: { color: '#ffffff', fontWeight: '600' },
-  rangeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
+  rangeRow: { gap: 8 },
   rangeChip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.one, borderRadius: Spacing.four },
   chipActive: { color: '#ffffff', fontWeight: '600' },
   tabs: { borderBottomWidth: 1, flexGrow: 0 },
@@ -472,7 +526,7 @@ const styles = StyleSheet.create({
   error: { color: '#B83030' },
   retry: { marginTop: Spacing.two, height: 48, paddingHorizontal: Spacing.four, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  stack: { gap: Layout.cardGap },
+  stack: { gap: 20 },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   followStack: { gap: Spacing.three },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginBottom: Spacing.three },
