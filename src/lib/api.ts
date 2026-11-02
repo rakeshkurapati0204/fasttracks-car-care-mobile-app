@@ -3944,3 +3944,10 @@ export async function editDebitNote(id: string, input: EditDebitNoteInput) {
   const { data } = await api.post<ApiEnvelope<unknown>>(`/accounting/debit-notes/${id}/edit`, input);
   return data.data;
 }
+
+// Finance Approvals: the dashboard's approve sheet sends its optional note as
+// `notes` (approveLoan above sends none).
+export async function approveLoanWithNotes(id: string, notes: string) {
+  const { data } = await api.patch<ApiEnvelope<Loan>>(`/loans/${id}/approve`, { notes });
+  return data.data;
+}

@@ -1,63 +1,28 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { Children, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { GlassCard } from '@/components/home/glass-card';
+import { getAvatarColor, getInitials } from '@/components/employees/employee-format';
+import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { Skeleton } from '@/components/ui';
+import { Fonts, FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import {
-  deleteIdentityDocument,
-  fetchIdentityDocumentDataUri,
-  fetchMyIdentityDocuments,
-  fetchMyProfile,
-  getErrorMessage,
-  revealIdentityDocumentValue,
-  uploadIdentityDocument,
-} from '@/lib/api';
-import { useAuth } from '@/lib/auth-context';
-import { usePermissions } from '@/lib/permissions-context';
-import { pickFromCamera, pickFromGallery, useFileUpload } from '@/lib/upload';
-import type { FullProfile, IdentityDocType, IdentityDocument } from '@/types/api';
+import { fetchIdentityDocumentDataUri, fetchMyIdentityDocuments, fetchMyProfile, revealIdentityDocumentValue } from '@/lib/api';
+import type { FullProfile, IdentityDocument } from '@/types/api';
 
-// Upload/delete are NOT self-accessible on the backend — verified in full
-// from backend/src/routes/identity-documents.ts: requireHROrOwnerOrDocsOverride
-// gates POST /:userId and DELETE /file/:id with no "self" exception at all
-// ("an employee can view their own documents but not add or remove them").
-// Only the GET routes (list, file view, reveal-value) have a self exception.
-// So this screen's view section is unconditionally self (everyone), and the
-// upload/delete controls below only render for PRIVILEGED_ROLES — the
-// route's own static bypass array (backend/src/routes/identity-documents.ts:24,
-// re-verified 2026-09-27 to include ACCOUNTING, which this list was
-// previously missing) — OR a per-employee 'employee_documents' tab override,
-// which the dashboard's Configure page can grant to any other role (the
-// documented Akshay/CASHIER case in backend/src/lib/tabRegistry.ts). Both
-// managing only the caller's OWN documents via this self-view screen —
-// uploading/deleting for a DIFFERENT employee is the separate Employee
-// Documents admin page (dashboard/employee-documents), not built here.
-const PRIVILEGED_ROLES = ['OWNER', 'HR', 'STORE_MANAGER', 'ACCOUNTING'];
+const WIDE_MIN = 560;
 
-// Dashboard's Personal Info page (frontend/src/app/(dashboard)/dashboard/
-// personal-info/page.tsx) is a read-only summary — this section replicates
-// it exactly (role label map, tenure calc, Active badge, Work pattern card,
-// Account/Change-password link, Salary pointer). The document upload/delete
-// UI below it is NOT on that dashboard page at all (upload lives on the
-// separate Employee Documents admin page) — kept here as an existing,
-// working self-service capability rather than removed, since dashboard
-// parity is about closing gaps, not stripping a feature nothing else
-// replaces yet for this role.
+const DOC_TYPE_LABEL: Record<string, string> = {
+  PAN_CARD: 'PAN Card', AADHAAR_CARD: 'Aadhaar Card', OTHER: 'Other document',
+  PASSPORT: 'Passport', DRIVING_LICENCE: 'Driving Licence', VOTER_ID: 'Voter ID',
+  LAST_SALARY_SLIP: 'Last Salary Slip', EDUCATION_CERTIFICATE: 'Education Certificate',
+  EXPERIENCE_LETTER: 'Experience Letter',
+};
+
 const ROLE_LABELS: Record<string, string> = {
   OWNER: 'Founder',
   STORE_MANAGER: 'Store Manager',
@@ -71,13 +36,6 @@ const ROLE_LABELS: Record<string, string> = {
   HR: 'HR',
   HOUSEKEEPING: 'Housekeeping',
   CASHIER: 'Cashier',
-};
-
-const DOC_TYPE_LABEL: Record<string, string> = {
-  PAN_CARD: 'PAN Card', AADHAAR_CARD: 'Aadhaar Card', OTHER: 'Other document',
-  PASSPORT: 'Passport', DRIVING_LICENCE: 'Driving Licence', VOTER_ID: 'Voter ID',
-  LAST_SALARY_SLIP: 'Last Salary Slip', EDUCATION_CERTIFICATE: 'Education Certificate',
-  EXPERIENCE_LETTER: 'Experience Letter',
 };
 
 function fmtDate(iso?: string | null) {
@@ -107,443 +65,315 @@ function tenure(iso?: string | null) {
   return parts.length ? parts.join(', ') : 'Less than a month';
 }
 
-const DOC_TYPES: { key: IdentityDocType; label: string }[] = [
-  { key: 'PAN_CARD', label: 'PAN Card' },
-  { key: 'AADHAAR_CARD', label: 'Aadhaar Card' },
-  { key: 'OTHER', label: 'Other' },
-];
-
-const UPLOAD_RULES = {
-  allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
-  maxSizeBytes: 10 * 1024 * 1024,
-};
-
-function Row({ label, value }: { label: string; value: string | null | undefined }) {
+function Row({ label, value }: { label: string; value?: string | null }) {
   return (
     <View style={styles.row}>
-      <ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>
-      <ThemedText type="smallBold" themeColor={value ? undefined : 'textSecondary'} numberOfLines={1} ellipsizeMode="tail" style={styles.rowValue}>
-        {value || 'Not set'}
-      </ThemedText>
+      <ThemedText themeColor="textMuted" style={styles.rowLabel}>{label}</ThemedText>
+      <ThemedText themeColor={value ? 'text' : 'textMuted'} style={styles.rowValue}>{value || 'Not set'}</ThemedText>
     </View>
   );
 }
 
+// Section card: 12px bold uppercase muted heading with an icon, rows divided
+// by a hairline (the dashboard's `divide-y`).
+function Section({ title, icon, children }: { title: string; icon: keyof typeof Ionicons.glyphMap; children: ReactNode }) {
+  const theme = useTheme();
+  const items = Children.toArray(children);
+  return (
+    <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <View style={styles.cardHead}>
+        <Ionicons name={icon} size={14} color={theme.textMuted} />
+        <ThemedText themeColor="textMuted" style={styles.heading}>{title.toUpperCase()}</ThemedText>
+      </View>
+      {items.map((c, i) => (
+        <View key={i} style={i > 0 && { borderTopWidth: 1, borderTopColor: theme.border }}>{c}</View>
+      ))}
+    </View>
+  );
+}
+
+function SmallButton({ label, icon, onPress, loading, disabled }: { label: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void; loading?: boolean; disabled?: boolean }) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled || loading}
+      accessibilityRole="button"
+      style={[styles.btn, { backgroundColor: theme.backgroundElement, borderColor: theme.border }, (disabled || loading) && { opacity: 0.5 }]}>
+      {loading ? <ActivityIndicator size="small" color={theme.text} /> : <Ionicons name={icon} size={14} color={theme.text} />}
+      <ThemedText style={styles.btnLabel}>{label}</ThemedText>
+    </Pressable>
+  );
+}
+
+// Self-only: /auth/me and the caller's own documents; the server enforces it.
 export default function PersonalInfoScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const router = useRouter();
-  const { user } = useAuth();
-  const { status: permStatus, hasTab, refresh: refreshPermissions } = usePermissions();
-  const canManage = PRIVILEGED_ROLES.includes(user?.role ?? '') || (permStatus === 'ready' && hasTab('employee_documents'));
 
+  const [width, setWidth] = useState(0);
   const [profile, setProfile] = useState<FullProfile | null>(null);
-  const [documents, setDocuments] = useState<IdentityDocument[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [openingId, setOpeningId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [documents, setDocuments] = useState<IdentityDocument[]>([]);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [revealingId, setRevealingId] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
 
-  const [docType, setDocType] = useState<IdentityDocType>('PAN_CARD');
-  const [docLabel, setDocLabel] = useState('');
-  const upload = useFileUpload(UPLOAD_RULES);
-
   const load = useCallback(async () => {
-    setError(null);
+    setError('');
     try {
       const me = await fetchMyProfile();
       setProfile(me);
-      setDocuments(await fetchMyIdentityDocuments(me.id));
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load your profile.'));
+      // A failed document load just leaves the card on its empty state.
+      fetchMyIdentityDocuments(me.id)
+        .then((d) => setDocuments(d ?? []))
+        .catch(() => {})
+        .finally(() => setDocumentsLoaded(true));
+    } catch {
+      setError('Could not load your details. Pull down to retry.');
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
     load();
   }, [load]);
 
   const onRefresh = async () => {
-    setIsRefreshing(true);
+    setRefreshing(true);
     await load();
-    setIsRefreshing(false);
+    setRefreshing(false);
   };
 
-  const onPickCamera = async () => {
-    const file = await pickFromCamera();
-    upload.pick(file);
-  };
-  const onPickGallery = async () => {
-    const file = await pickFromGallery();
-    upload.pick(file);
-  };
-
-  const doUpload = () => {
-    if (!profile) return;
-    return upload.upload((file, ctrl) =>
-      uploadIdentityDocument(profile.id, file, docType, docLabel.trim() || undefined, ctrl),
-    ).then((result) => {
-      if (result) {
-        setDocLabel('');
-        upload.reset();
-        load();
-        setNotice('Document uploaded.');
-      }
-    });
-  };
-
-  const onOpen = async (doc: IdentityDocument) => {
-    if (!doc.filename) return;
-    setOpeningId(doc.id);
-    setError(null);
+  // The dashboard opens the file in a new tab and silently ignores a failure.
+  const viewDocument = async (doc: IdentityDocument) => {
+    setViewingId(doc.id);
     try {
-      const dataUri = await fetchIdentityDocumentDataUri(doc.id, doc.mimeType ?? 'application/octet-stream');
-      await Linking.openURL(dataUri);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not open the document.'));
+      await Linking.openURL(await fetchIdentityDocumentDataUri(doc.id, doc.mimeType ?? 'application/octet-stream'));
+    } catch {
+      // silent, as on the dashboard
     } finally {
-      setOpeningId(null);
+      setViewingId(null);
     }
   };
 
-  // Self-reveal of your own encrypted document value — same reveal-value
-  // endpoint the admin Documents tab uses, which logs every call (action:
-  // REVEAL_VALUE) regardless of who's viewing. Only call from this explicit
-  // user tap, never automatically.
-  const onReveal = async (doc: IdentityDocument) => {
+  // Self-reveal of the encrypted number (logged server-side as REVEAL_VALUE).
+  const revealValue = async (doc: IdentityDocument) => {
     setRevealingId(doc.id);
-    setError(null);
     try {
       const value = await revealIdentityDocumentValue(doc.id);
       setRevealed((prev) => ({ ...prev, [doc.id]: value }));
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not reveal this value.'));
+    } catch {
+      // silent, as on the dashboard
     } finally {
       setRevealingId(null);
     }
   };
 
-  const onHide = (docId: string) => {
+  const hideValue = (id: string) =>
     setRevealed((prev) => {
       const next = { ...prev };
-      delete next[docId];
+      delete next[id];
       return next;
     });
-  };
 
-  const onDelete = (doc: IdentityDocument) => {
-    Alert.alert(
-      'Delete this document?',
-      `This permanently removes ${doc.label || doc.type.replace('_', ' ')} (${doc.filename}). This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setDeletingId(doc.id);
-            setError(null);
-            setNotice(null);
-            try {
-              await deleteIdentityDocument(doc.id);
-              setNotice('Document deleted.');
-              await load();
-            } catch (err: any) {
-              setError(getErrorMessage(err, 'Could not delete the document.'));
-            } finally {
-              setDeletingId(null);
-            }
-          },
-        },
-      ],
-    );
-  };
+  const wide = width >= WIDE_MIN;
+  const pad = wide ? 24 : 16;
+  const shell = (children: ReactNode) => (
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: 'Personal Info' }} />
+      <ScrollView
+        contentContainerStyle={[styles.content, { padding: pad, paddingBottom: insets.bottom + 40 }]}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        {children}
+      </ScrollView>
+    </ThemedView>
+  );
 
-  if (!profile) {
-    return (
-      <ThemedView style={styles.center}>
-        {error ? (
-          <>
-            <ThemedText style={styles.error}>{error}</ThemedText>
-            <Pressable onPress={load} style={styles.retryButton}>
-              <ThemedText style={styles.buttonLabel}>Retry</ThemedText>
-            </Pressable>
-          </>
-        ) : (
-          <ActivityIndicator />
-        )}
-      </ThemedView>
+  if (loading && !profile) {
+    return shell(
+      <>
+        <Skeleton width={180} height={32} />
+        <Skeleton height={96} />
+        <Skeleton height={160} />
+        <Skeleton height={140} />
+      </>,
     );
   }
 
-  return (
-    <>
-      <Stack.Screen options={{ title: 'Personal Info' }} />
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-      >
-        {(() => {
-          const roleLabel = ROLE_LABELS[profile.role] ?? profile.role;
-          const joined = fmtDate(profile.joiningDate);
-          const served = tenure(profile.joiningDate);
-          const shift = profile.customClockIn && profile.customClockOut ? `${profile.customClockIn} — ${profile.customClockOut}` : null;
-          const hasWorkPattern = !!shift || profile.workingDaysPerMonth != null || profile.defaultLeaves != null;
-          return (
-            <>
-              <ThemedView type="backgroundElement" style={styles.identityCard}>
-                <View style={[styles.avatar, { backgroundColor: theme.primary }]}>
-                  <ThemedText type="smallBold" style={styles.avatarLabel}>
-                    {profile.name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
-                  </ThemedText>
-                </View>
-                <View style={styles.flex1}>
-                  <ThemedText type="smallBold" style={styles.identityName}>{profile.name}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">{profile.designation || roleLabel}</ThemedText>
-                  <View style={styles.badgeRow}>
-                    {profile.employeeId && (
-                      <View style={[styles.badge, { backgroundColor: 'rgba(104,15,26,0.12)' }]}>
-                        <ThemedText type="small" style={{ color: theme.primary }}>{profile.employeeId}</ThemedText>
-                      </View>
-                    )}
-                    <View style={[styles.badge, { backgroundColor: profile.isActive ? 'rgba(34,197,94,0.12)' : 'rgba(107,114,128,0.14)' }]}>
-                      <ThemedText type="small" style={{ color: profile.isActive ? '#15803d' : '#4b5563' }}>
-                        {profile.isActive ? 'Active' : 'Inactive'}
-                      </ThemedText>
-                    </View>
-                  </View>
-                </View>
-              </ThemedView>
-
-              <ThemedText type="smallBold" style={styles.cardHeading}>Employment</ThemedText>
-              <ThemedView type="backgroundElement" style={styles.card}>
-                <Row label="Role" value={roleLabel} />
-                <Row label="Designation" value={profile.designation} />
-                <Row label="Employee ID" value={profile.employeeId} />
-                <Row label="Login username" value={profile.username} />
-                {profile.branch && <Row label="Branch" value={profile.branch} />}
-              </ThemedView>
-
-              <ThemedText type="smallBold" style={styles.cardHeading}>Contact</ThemedText>
-              <ThemedView type="backgroundElement" style={styles.card}>
-                <Row label="Work phone" value={profile.phone} />
-                <Row label="Personal phone" value={profile.personalPhone} />
-                <Row label="Work email" value={profile.email} />
-                <Row label="Personal email" value={profile.personalEmail} />
-              </ThemedView>
-
-              <ThemedText type="smallBold" style={styles.cardHeading}>Joining</ThemedText>
-              <ThemedView type="backgroundElement" style={styles.card}>
-                <Row label="Joined on" value={joined} />
-                <Row label="With us for" value={served} />
-              </ThemedView>
-
-              {hasWorkPattern && (
-                <>
-                  <ThemedText type="smallBold" style={styles.cardHeading}>Work pattern</ThemedText>
-                  <ThemedView type="backgroundElement" style={styles.card}>
-                    {shift && <Row label="Shift timing" value={shift} />}
-                    {profile.workingDaysPerMonth != null && <Row label="Working days / month" value={String(profile.workingDaysPerMonth)} />}
-                    {profile.defaultLeaves != null && (
-                      <Row label="Leave allowance" value={`${profile.defaultLeaves} day${profile.defaultLeaves === 1 ? '' : 's'}`} />
-                    )}
-                  </ThemedView>
-                </>
-              )}
-            </>
-          );
-        })()}
-
-        <View style={styles.section}>
-          <ThemedText type="smallBold">Identity documents</ThemedText>
-          {!canManage && (
-            <ThemedText type="small" themeColor="textSecondary">
-              Only HR/Owner/Store Manager can add or remove these — you can view your own here.
-            </ThemedText>
-          )}
-
-          {documents === null ? (
-            <ActivityIndicator style={styles.spinner} />
-          ) : documents.length === 0 ? (
-            <ThemedText themeColor="textSecondary">None on file yet.</ThemedText>
-          ) : (
-            documents.map((doc) => {
-              const label = doc.label || DOC_TYPE_LABEL[doc.type] || doc.type.replace('_', ' ');
-              return (
-                <ThemedView key={doc.id} type="backgroundElement" style={styles.docRow}>
-                  <Pressable onPress={() => onOpen(doc)} disabled={!doc.filename || openingId === doc.id} style={styles.docInfo}>
-                    <ThemedText type="smallBold" numberOfLines={1} ellipsizeMode="tail">{label}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} ellipsizeMode="tail">
-                      {doc.hasValue ? (revealed[doc.id] ?? doc.maskedValue ?? '••••') : (doc.filename || 'No file attached')}
-                    </ThemedText>
-                  </Pressable>
-                  <View style={styles.docActions}>
-                    {openingId === doc.id && <ActivityIndicator size="small" />}
-                    {doc.hasValue && (
-                      revealed[doc.id] ? (
-                        <Pressable onPress={() => onHide(doc.id)} style={styles.revealButton} accessibilityLabel={`Hide ${label}`}>
-                          <ThemedText type="small">Hide</ThemedText>
-                        </Pressable>
-                      ) : (
-                        <Pressable onPress={() => onReveal(doc)} disabled={revealingId === doc.id} style={styles.revealButton} accessibilityLabel={`Reveal ${label}`}>
-                          {revealingId === doc.id ? <ActivityIndicator size="small" /> : <ThemedText type="small">Reveal</ThemedText>}
-                        </Pressable>
-                      )
-                    )}
-                    {canManage && (
-                      <Pressable
-                        onPress={() => onDelete(doc)}
-                        disabled={deletingId === doc.id}
-                        style={styles.deleteButton}
-                        accessibilityLabel={`Delete ${label}`}
-                      >
-                        {deletingId === doc.id ? (
-                          <ActivityIndicator size="small" />
-                        ) : (
-                          <ThemedText style={styles.deleteLabel}>✕</ThemedText>
-                        )}
-                      </Pressable>
-                    )}
-                  </View>
-                </ThemedView>
-              );
-            })
-          )}
-        </View>
-
-        <ThemedText type="smallBold" style={styles.cardHeading}>Account</ThemedText>
-        <ThemedView type="backgroundElement" style={styles.card}>
-          <Pressable onPress={() => router.push('/more/change-password')} style={styles.accountLink}>
-            <ThemedText type="smallBold">Change password</ThemedText>
-          </Pressable>
-          <ThemedText type="small" themeColor="textSecondary" style={styles.helperText}>
-            Something here wrong? Ask your manager or HR to update it — these details are managed from the Employees page.
-          </ThemedText>
-        </ThemedView>
-
-        <Pressable onPress={() => router.push('/more/my-salary')} style={[styles.salaryLink, { borderColor: theme.border }]}>
-          <ThemedText type="smallBold">Salary and payslips are on My Salary →</ThemedText>
+  if (!profile) {
+    return shell(
+      <View style={[styles.card, styles.empty, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <ThemedText style={styles.body}>{error || 'Your details are unavailable right now.'}</ThemedText>
+        <Pressable onPress={() => { setLoading(true); load(); }} accessibilityRole="button" hitSlop={8} style={styles.retry}>
+          <ThemedText style={[styles.retryText, { color: theme.primary }]}>Retry</ThemedText>
         </Pressable>
+      </View>,
+    );
+  }
 
-        {permStatus === 'error' && (
-          <View style={styles.section}>
-            <ThemedText style={styles.error}>Couldn&apos;t load your permissions.</ThemedText>
-            <Pressable onPress={() => refreshPermissions()} style={styles.retryButton}>
-              <ThemedText style={styles.buttonLabel}>Retry</ThemedText>
-            </Pressable>
-          </View>
-        )}
+  const roleLabel = ROLE_LABELS[profile.role] ?? profile.role;
+  const joined = fmtDate(profile.joiningDate);
+  const served = tenure(profile.joiningDate);
+  const shift = profile.customClockIn && profile.customClockOut ? `${profile.customClockIn} — ${profile.customClockOut}` : null;
 
-        {canManage && (
-          <GlassCard style={styles.uploadCard}>
-            <ThemedText type="smallBold">Add a document</ThemedText>
-            <View style={styles.chipRow}>
-              {DOC_TYPES.map((t) => (
-                <Pressable
-                  key={t.key}
-                  onPress={() => setDocType(t.key)}
-                  style={[styles.chip, { backgroundColor: docType === t.key ? theme.primary : theme.backgroundElement }]}>
-                  <ThemedText type="small" style={docType === t.key ? styles.chipLabelActive : undefined}>{t.label}</ThemedText>
-                </Pressable>
-              ))}
-            </View>
-            {docType === 'OTHER' && (
-              <TextInput
-                value={docLabel}
-                onChangeText={setDocLabel}
-                placeholder="What is this document?"
-                placeholderTextColor={theme.textSecondary}
-                style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-              />
-            )}
+  return shell(
+    <>
+      <View>
+        <ThemedText style={styles.h1}>Personal Info</ThemedText>
+        <ThemedText themeColor="textMuted" style={styles.subtitle}>Your details as they are on record.</ThemedText>
+      </View>
 
-            <View style={styles.pickRow}>
-              <Pressable onPress={onPickCamera} style={styles.pickButton} accessibilityLabel="Take a photo">
-                <ThemedText style={styles.buttonLabel}>Camera</ThemedText>
-              </Pressable>
-              <Pressable onPress={onPickGallery} style={styles.pickButton} accessibilityLabel="Choose from gallery">
-                <ThemedText style={styles.buttonLabel}>Gallery</ThemedText>
-              </Pressable>
-            </View>
+      {error ? <ErrorBanner message={error} onRetry={load} /> : null}
 
-            {upload.file && (
-              <View style={styles.previewRow}>
-                <ThemedText type="small" numberOfLines={1} ellipsizeMode="tail" style={styles.flex1}>
-                  {upload.file.name}
-                </ThemedText>
-                {upload.status === 'uploading' ? (
-                  <View style={styles.progressRow}>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {upload.progress != null ? `${upload.progress}%` : 'Uploading…'}
-                    </ThemedText>
-                    <Pressable onPress={upload.cancel} accessibilityLabel="Cancel upload">
-                      <ThemedText type="link">Cancel</ThemedText>
-                    </Pressable>
-                  </View>
-                ) : upload.status === 'error' ? (
-                  <Pressable onPress={upload.retry}>
-                    <ThemedText type="link">Retry</ThemedText>
-                  </Pressable>
-                ) : (
-                  <Pressable onPress={doUpload} style={styles.uploadButton}>
-                    <ThemedText style={styles.buttonLabel}>Upload</ThemedText>
-                  </Pressable>
-                )}
+      {/* Identity */}
+      <View style={[styles.card, styles.identity, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <View style={[styles.avatar, { backgroundColor: getAvatarColor(profile.name) }]}>
+          <ThemedText style={styles.avatarText}>{getInitials(profile.name)}</ThemedText>
+        </View>
+        <View style={styles.flex1}>
+          <ThemedText numberOfLines={1} style={styles.name}>{profile.name}</ThemedText>
+          <ThemedText themeColor="textMuted" style={styles.body}>{profile.designation || roleLabel}</ThemedText>
+          <View style={styles.badges}>
+            {profile.employeeId ? (
+              <View style={[styles.badge, { backgroundColor: 'rgba(104,15,26,0.12)' }]}>
+                <ThemedText style={[styles.badgeText, { color: theme.primary }]}>{profile.employeeId}</ThemedText>
               </View>
-            )}
-            {upload.error && <ThemedText style={styles.error}>{upload.error}</ThemedText>}
-          </GlassCard>
-        )}
+            ) : null}
+            <View style={[styles.badge, { backgroundColor: profile.isActive ? 'rgba(34,197,94,0.12)' : 'rgba(107,114,128,0.14)' }]}>
+              <ThemedText style={[styles.badgeText, { color: profile.isActive ? '#15803d' : '#4b5563' }]}>{profile.isActive ? 'Active' : 'Inactive'}</ThemedText>
+            </View>
+          </View>
+        </View>
+      </View>
 
-        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-        {notice && <ThemedText style={styles.notice}>{notice}</ThemedText>}
-      </ScrollView>
-    </>
+      <Section title="Employment" icon="ribbon-outline">
+        <Row label="Role" value={roleLabel} />
+        <Row label="Designation" value={profile.designation} />
+        <Row label="Employee ID" value={profile.employeeId} />
+        <Row label="Login username" value={profile.username} />
+        {profile.branch ? <Row label="Branch" value={profile.branch} /> : null}
+      </Section>
+
+      <Section title="Contact" icon="call-outline">
+        <Row label="Work phone" value={profile.phone} />
+        <Row label="Personal phone" value={profile.personalPhone} />
+        <Row label="Work email" value={profile.email} />
+        <Row label="Personal email" value={profile.personalEmail} />
+      </Section>
+
+      <Section title="Joining" icon="calendar-outline">
+        <Row label="Joined on" value={joined} />
+        <Row label="With us for" value={served} />
+      </Section>
+
+      {/* Always shown once loaded, even when empty. View-only: documents are
+          added from Onboarding > Documents (HR/admin). */}
+      <Section title="Identity documents" icon="document-text-outline">
+        {!documentsLoaded ? (
+          <ThemedText themeColor="textMuted" style={styles.small}>Loading…</ThemedText>
+        ) : documents.length === 0 ? (
+          <ThemedText themeColor="textMuted" style={styles.small}>No identity documents on file.</ThemedText>
+        ) : (
+          documents.map((doc) => (
+            <View key={doc.id} style={[styles.docRow, wide ? styles.docRowWide : null]}>
+              <View style={styles.flex1}>
+                <ThemedText style={styles.docTitle}>{DOC_TYPE_LABEL[doc.type] ?? doc.type}</ThemedText>
+                <ThemedText themeColor="textMuted" style={styles.docSub}>
+                  {doc.hasValue ? (revealed[doc.id] ?? doc.maskedValue ?? '••••') : (doc.filename || 'No file attached')}
+                </ThemedText>
+              </View>
+              <View style={styles.docActions}>
+                {doc.hasValue ? (
+                  revealed[doc.id] ? (
+                    <SmallButton label="Hide" icon="eye-off-outline" onPress={() => hideValue(doc.id)} />
+                  ) : (
+                    <SmallButton label="Reveal" icon="eye-outline" onPress={() => revealValue(doc)} loading={revealingId === doc.id} />
+                  )
+                ) : null}
+                {doc.filename ? <SmallButton label="View" icon="eye-outline" onPress={() => viewDocument(doc)} loading={viewingId === doc.id} /> : null}
+              </View>
+            </View>
+          ))
+        )}
+      </Section>
+
+      {/* Only when something is actually configured */}
+      {shift || profile.workingDaysPerMonth || profile.defaultLeaves != null ? (
+        <Section title="Work pattern" icon="time-outline">
+          {shift ? <Row label="Shift timing" value={shift} /> : null}
+          {profile.workingDaysPerMonth != null ? <Row label="Working days / month" value={String(profile.workingDaysPerMonth)} /> : null}
+          {profile.defaultLeaves != null ? <Row label="Leave allowance" value={`${profile.defaultLeaves} day${profile.defaultLeaves === 1 ? '' : 's'}`} /> : null}
+        </Section>
+      ) : null}
+
+      <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <View style={[styles.cardHead, { marginBottom: 12 }]}>
+          <Ionicons name="business-outline" size={14} color={theme.textMuted} />
+          <ThemedText themeColor="textMuted" style={styles.heading}>ACCOUNT</ThemedText>
+        </View>
+        <Pressable
+          onPress={() => router.push('/more/change-password')}
+          accessibilityRole="button"
+          style={[styles.accountLink, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+          <Ionicons name="key-outline" size={16} color={theme.text} />
+          <ThemedText style={styles.accountLabel}>Change password</ThemedText>
+        </Pressable>
+        <ThemedText themeColor="textMuted" style={[styles.small, { marginTop: 12 }]}>
+          Something here wrong? Ask your manager or HR to update it — these details are managed from the Employees page.
+        </ThemedText>
+      </View>
+
+      {/* Salary pointer, not the figure itself */}
+      <Pressable
+        onPress={() => router.push('/more/my-salary')}
+        accessibilityRole="link"
+        style={[styles.card, styles.salary, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Ionicons name="mail-outline" size={16} color={theme.textMuted} />
+        <ThemedText style={styles.accountLabel}>Salary and payslips are on My Salary →</ThemedText>
+      </Pressable>
+    </>,
   );
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.two, padding: Spacing.four },
-  content: { padding: Spacing.four, gap: Spacing.three, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  title: { fontSize: 28, lineHeight: 34 },
-  card: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.one },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
-  section: { gap: Spacing.one },
-  spinner: { marginTop: Spacing.two },
-  docRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Spacing.three, padding: Spacing.two + 4, gap: Spacing.two },
-  docInfo: { flex: 1, gap: Spacing.half },
-  docActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  deleteButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  deleteLabel: { color: '#B83030', fontSize: 16 },
-  error: { color: '#B83030' },
-  notice: { color: '#167A48' },
-  retryButton: { height: 44, paddingHorizontal: Spacing.four, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  buttonLabel: { color: '#ffffff', fontWeight: '600' },
-  uploadCard: { gap: Spacing.two },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
-  chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, borderRadius: Spacing.four },
-  chipLabelActive: { color: '#ffffff', fontWeight: '600' },
-  input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
-  pickRow: { flexDirection: 'row', gap: Spacing.two },
-  pickButton: { flex: 1, height: 46, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  previewRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: Spacing.one },
-  flex1: { flex: 1 },
-  progressRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  uploadButton: { height: 40, paddingHorizontal: Spacing.three, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  identityCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, borderRadius: Spacing.three, padding: Spacing.three },
-  avatar: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
-  avatarLabel: { color: '#ffffff' },
-  identityName: { fontSize: 17 },
-  badgeRow: { flexDirection: 'row', gap: Spacing.one, marginTop: Spacing.half, flexWrap: 'wrap' },
-  badge: { paddingHorizontal: Spacing.two, paddingVertical: 2, borderRadius: 999 },
-  cardHeading: { marginTop: Spacing.one },
-  rowValue: { flex: 1, textAlign: 'right', marginLeft: Spacing.three },
-  revealButton: { minHeight: 44, paddingHorizontal: Spacing.two, alignItems: 'center', justifyContent: 'center' },
-  accountLink: { minHeight: Spacing.four + Spacing.two, justifyContent: 'center' },
-  helperText: { marginTop: Spacing.one },
-  salaryLink: { borderRadius: Spacing.three, padding: Spacing.three, borderWidth: 1 },
+  flex1: { flex: 1, minWidth: 0 },
+  content: { gap: 16, width: '100%', maxWidth: 672, alignSelf: 'center' },
+  h1: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold, fontWeight: '900' },
+  subtitle: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  body: { fontSize: 14, lineHeight: 20 },
+  small: { fontSize: 12, lineHeight: 16, paddingVertical: 8 },
+  card: { borderWidth: 1, borderRadius: Radii.lg, padding: 16 },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  heading: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.bold, letterSpacing: 0.6 },
+  empty: { alignItems: 'center', paddingVertical: 48, gap: 8 },
+  retry: { minHeight: 36, justifyContent: 'center' },
+  retryText: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.medium },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 20 },
+  avatar: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: '#ffffff', fontSize: 18, lineHeight: 24, fontFamily: FontWeights.bold },
+  name: { fontSize: 18, lineHeight: 28, fontFamily: FontWeights.bold },
+  badges: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
+  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+  badgeText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  row: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, paddingVertical: 10 },
+  rowLabel: { fontSize: 12, lineHeight: 20, flexShrink: 0 },
+  rowValue: { flex: 1, fontSize: 14, lineHeight: 20, fontFamily: FontWeights.medium, textAlign: 'right' },
+  docRow: { gap: 8, paddingVertical: 10 },
+  docRowWide: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  docTitle: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.medium },
+  docSub: { fontSize: 12, lineHeight: 16, fontFamily: Fonts?.mono },
+  docActions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+  btn: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 12, borderWidth: 1, borderRadius: 8 },
+  btnLabel: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  accountLink: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingHorizontal: 12, borderWidth: 1, borderRadius: Radii.md },
+  accountLabel: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  salary: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

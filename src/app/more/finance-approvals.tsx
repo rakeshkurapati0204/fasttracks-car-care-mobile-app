@@ -1,55 +1,31 @@
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ActionSheet, fmt, LoanSheet } from '@/components/finance-approvals/loan-sheets';
+import { ErrorBanner } from '@/components/overview/parts';
+import { SuccessBanner } from '@/components/onboarding/form-parts';
+import { shareCsv } from '@/components/purchase/helpers';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Button, Card, Skeleton } from '@/components/ui';
+import { Fonts, FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import {
-  approveLoan, createLoanAdmin, fetchEmployees, fetchLoanRepayments, fetchLoans,
-  getErrorMessage, rejectLoan, updateLoan,
-} from '@/lib/api';
+import { approveLoanWithNotes, createLoanAdmin, fetchEmployees, fetchLoans, getErrorMessage, rejectLoan, updateLoan } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
-import type { EmployeeListItem, Loan, LoanRepayment } from '@/types/api';
+import type { Loan } from '@/types/api';
 
-// View/edit (list, create-admin, PATCH edit): ADMIN_ROLES=[OWNER,
-// STORE_MANAGER,CASHIER] (backend/src/routes/loans.ts, re-verified
-// 2026-09-27 — this is the actual server gate for GET/POST /admin/PATCH
-// /:id, distinct from and NARROWER than the dashboard frontend's own
-// canEdit array which incorrectly also includes ACCOUNTING — an ACCOUNTING
-// user there would see working Edit/+New Loan buttons that then 403
-// server-side, so mobile intentionally follows the backend, not the
-// dashboard's frontend array, for this gate). Approve/reject: narrower
-// still, [OWNER,STORE_MANAGER] only (loans.ts PATCH /:id/approve|reject) —
-// even CASHIER, who can view/create/edit, cannot decide — with a
-// server-side block on self-approval and on a STORE_MANAGER acting on
-// another STORE_MANAGER's request; those 403s are surfaced via
-// getErrorMessage, never predicted here.
-//
-// Sub-tab VISIBILITY (which of Loans/Active a user sees) is a separate,
-// per-employee-overridable System A tab-permission pair on the dashboard
-// (finance_approvals_loans_tab / finance_approvals_active_tab, plain
-// booleans, no view_only/full_access mode — confirmed no such mode exists
-// for this screen in backend/src/lib/tabRegistry.ts) — read via hasTab()
-// below so a per-employee override in the dashboard's Configure page is
-// honored here too, not just the static role gates above which only cover
-// the actions themselves.
-const VIEW_ROLES = ['OWNER', 'STORE_MANAGER', 'CASHIER'];
+const WIDE_MIN = 560;
+
+// List/create/edit: the backend's ADMIN_ROLES (OWNER, STORE_MANAGER, CASHIER).
+// Approve/reject: OWNER or STORE_MANAGER only, with the server blocking
+// self-approval and a Store Manager acting on another Store Manager's request
+// (surfaced through the error message, not predicted here). The dashboard's own
+// frontend arrays are wider than the backend, so mobile follows the backend.
+const ADMIN_ROLES = ['OWNER', 'STORE_MANAGER', 'CASHIER'];
 const DECIDE_ROLES = ['OWNER', 'STORE_MANAGER'];
-
-const REPAYMENT_MODE_OPTIONS: { key: 'MONTHLY_N' | 'LUMP_NEXT_MONTH' | 'TBD' | 'CUSTOM'; label: string }[] = [
-  { key: 'MONTHLY_N', label: 'Monthly, over N months' },
-  { key: 'LUMP_NEXT_MONTH', label: 'Lump sum, next month' },
-  { key: 'TBD', label: 'TBD (no auto-deduction)' },
-  { key: 'CUSTOM', label: 'Custom per-month' },
-];
-
-const LOAN_FILTERS = ['PENDING', 'APPROVED', 'REJECTED', 'COMPLETED', ''] as const;
 
 const LOAN_STATUS: Record<string, { bg: string; color: string; label: string }> = {
   PENDING: { bg: 'rgba(245,158,11,0.12)', color: '#b45309', label: 'Pending' },
@@ -58,683 +34,521 @@ const LOAN_STATUS: Record<string, { bg: string; color: string; label: string }> 
   COMPLETED: { bg: 'rgba(99,102,241,0.12)', color: '#4338ca', label: 'Completed' },
 };
 
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-
-function formatCurrency(n: number) {
-  return `₹${n.toLocaleString('en-IN')}`;
-}
+const FILTERS = ['PENDING', 'APPROVED', 'REJECTED', 'COMPLETED', ''] as const;
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// Mirrors backend's buildEvenSchedule() exactly (paise-integer math, last
-// month absorbs the remainder) — seeds the CUSTOM editor's starting grid.
-function nextMonthFrom(year: number, month: number): { month: number; year: number } {
-  const m = month + 1;
-  return m > 12 ? { month: m - 12, year: year + 1 } : { month: m, year };
-}
-function buildEvenSplitPreview(amount: number, tenureMonths: number): { month: number; year: number; plannedAmount: number }[] {
-  const amountPaise = Math.round(amount * 100);
-  const perMonthPaise = Math.floor(amountPaise / tenureMonths);
-  const entries: { month: number; year: number; plannedAmount: number }[] = [];
-  const now = new Date();
-  let { month, year } = nextMonthFrom(now.getFullYear(), now.getMonth() + 1);
-  let running = 0;
-  for (let i = 0; i < tenureMonths; i++) {
-    const isLast = i === tenureMonths - 1;
-    const planPaise = isLast ? amountPaise - running : perMonthPaise;
-    entries.push({ month, year, plannedAmount: planPaise / 100 });
-    running += planPaise;
-    const next = nextMonthFrom(year, month);
-    month = next.month;
-    year = next.year;
-  }
-  return entries;
+type Tab = 'active' | 'loans';
+
+function Mono({ children, color, bold }: { children: ReactNode; color?: string; bold?: boolean }) {
+  return <ThemedText style={[styles.mono, color ? { color } : null, bold && styles.bold]}>{children}</ThemedText>;
 }
 
-function csvCell(value: string | number): string {
-  const s = String(value);
-  // Guard against CSV/formula injection: text beginning with = + - @ (or a
-  // leading tab/CR) is executed as a formula by Excel/Sheets. Only string
-  // values can carry this, so prefix them with ' to keep them plain text;
-  // numeric values (including negatives) are left untouched.
-  const safe = typeof value === 'string' && /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
-  return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
-async function shareCsv(filename: string, rows: (string | number)[][]) {
-  const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
-  const uri = `${FileSystem.cacheDirectory}${filename}`;
-  await FileSystem.writeAsStringAsync(uri, '﻿' + csv, { encoding: FileSystem.EncodingType.UTF8 });
-  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'text/csv' });
-}
-
-export default function FinanceApprovalsScreen() {
-  const insets = useSafeAreaInsets();
-  const theme = useTheme();
-  const { user } = useAuth();
-  const { status: permStatus, hasTab } = usePermissions();
-  const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
-  const canEdit = isAuthorized; // ADMIN_ROLES gate — view/create/edit, not decide
-  const canDecide = DECIDE_ROLES.includes(user?.role ?? '');
-  const canSeeLoansTab = permStatus === 'ready' && hasTab('finance_approvals_loans_tab');
-  const canSeeActiveTab = permStatus === 'ready' && hasTab('finance_approvals_active_tab');
-
-  const [tab, setTab] = useState<'loans' | 'active'>('loans');
-  const [loans, setLoans] = useState<Loan[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [repayments, setRepayments] = useState<Record<string, LoanRepayment[]>>({});
-  const [loadingRepaymentsId, setLoadingRepaymentsId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [loanFilter, setLoanFilter] = useState<typeof LOAN_FILTERS[number]>('PENDING');
-  const [isExporting, setIsExporting] = useState(false);
-
-  // New Advance form
-  const [showNewForm, setShowNewForm] = useState(false);
-  const [employees, setEmployees] = useState<EmployeeListItem[] | null>(null);
-  const [newEmployeeId, setNewEmployeeId] = useState('');
-  const [newAmount, setNewAmount] = useState('');
-  const [newMode, setNewMode] = useState<'MONTHLY_N' | 'LUMP_NEXT_MONTH' | 'TBD' | 'CUSTOM' | ''>('');
-  const [newTenure, setNewTenure] = useState('');
-  const [newNotes, setNewNotes] = useState('');
-  const [customSchedule, setCustomSchedule] = useState<{ month: number; year: number; plannedAmount: number }[]>([]);
-  const [isCreating, setIsCreating] = useState(false);
-
-  // Inline edit — matches dashboard's Edit modal fields exactly (amount,
-  // remainingAmount, monthlyDeductionAmount, status, notes). Mode/tenure are
-  // create-only on the dashboard too — its edit modal has no mode field.
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editAmount, setEditAmount] = useState('');
-  const [editRemaining, setEditRemaining] = useState('');
-  const [editMonthly, setEditMonthly] = useState('');
-  const [editStatus, setEditStatus] = useState<Loan['status']>('APPROVED');
-  const [editNotes, setEditNotes] = useState('');
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
-
-  const load = useCallback(async () => {
-    if (!isAuthorized) return;
-    setError(null);
-    try {
-      setLoans(await fetchLoans());
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load loan requests.'));
-    }
-  }, [isAuthorized]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
-    load();
-  }, [load]);
-
-  // Default to whichever sub-tab this user's per-employee overrides
-  // actually grant — mirrors the dashboard's own tab-visibility filter.
-  useEffect(() => {
-    if (permStatus !== 'ready') return;
-    if (tab === 'loans' && !canSeeLoansTab && canSeeActiveTab) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time default-tab correction once permissions resolve
-      setTab('active');
-    } else if (tab === 'active' && !canSeeActiveTab && canSeeLoansTab) {
-      setTab('loans');
-    }
-  }, [permStatus, canSeeLoansTab, canSeeActiveTab, tab]);
-
-  const onRefresh = async () => {
-    setIsRefreshing(true);
-    await load();
-    setIsRefreshing(false);
-  };
-
-  const onApprove = async (id: string) => {
-    setBusyId(id);
-    setError(null);
-    setNotice(null);
-    try {
-      await approveLoan(id);
-      setNotice('Loan approved.');
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not approve this loan.'));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const onReject = async (id: string) => {
-    if (!rejectReason.trim()) {
-      setError('Enter a rejection reason.');
-      return;
-    }
-    setBusyId(id);
-    setError(null);
-    setNotice(null);
-    try {
-      await rejectLoan(id, rejectReason.trim());
-      setNotice('Loan rejected.');
-      setRejectingId(null);
-      setRejectReason('');
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not reject this loan.'));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const openNewForm = async () => {
-    setShowNewForm(true);
-    setError(null);
-    if (!employees) {
-      try {
-        setEmployees(await fetchEmployees());
-      } catch (err: any) {
-        setError(getErrorMessage(err, 'Could not load the employee list.'));
-      }
-    }
-  };
-
-  const newAmountNum = Number(newAmount) || 0;
-  const newTenureNum = Number(newTenure) || 0;
-  const showTenureField = newMode === 'MONTHLY_N' || newMode === 'CUSTOM';
-  const showDerivedMonthly = newMode === 'MONTHLY_N' && newAmountNum > 0 && newTenureNum > 0;
-
-  // Reseed the CUSTOM grid only when N actually changes (or amount changes
-  // before any manual edit) — not on every keystroke, so overrides aren't
-  // silently wiped mid-edit. Matches dashboard's LoanModal effect exactly.
-  useEffect(() => {
-    if (newMode !== 'CUSTOM' || !newAmountNum || newTenureNum < 1) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- derived-schedule reset, mirrors dashboard
-      setCustomSchedule([]);
-      return;
-    }
-    setCustomSchedule((prev) => (prev.length === newTenureNum ? prev : buildEvenSplitPreview(newAmountNum, newTenureNum)));
-  }, [newMode, newTenureNum, newAmountNum]);
-
-  const customTotal = customSchedule.reduce((s, e) => s + e.plannedAmount, 0);
-  const customDiff = Math.round((newAmountNum - customTotal) * 100) / 100;
-  const canSaveNew = !!newEmployeeId && !!newAmount && !!newMode && (!showTenureField || newTenureNum >= 1)
-    && (newMode === 'CUSTOM' ? customSchedule.length === newTenureNum : true);
-
-  const onCreateLoan = async () => {
-    if (!canSaveNew) { setError('Fill in employee, amount, and repayment mode.'); return; }
-    setIsCreating(true);
-    setError(null);
-    try {
-      await createLoanAdmin({
-        userId: newEmployeeId,
-        amount: newAmountNum,
-        repaymentMode: newMode,
-        tenureMonths: showTenureField ? newTenureNum : undefined,
-        scheduleEntries: newMode === 'CUSTOM' ? customSchedule.map((e) => e.plannedAmount) : undefined,
-        notes: newNotes.trim() || undefined,
-      });
-      setShowNewForm(false);
-      setNewEmployeeId('');
-      setNewAmount('');
-      setNewMode('');
-      setNewTenure('');
-      setNewNotes('');
-      setCustomSchedule([]);
-      setNotice('Advance created and approved.');
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not record this advance.'));
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  const openEdit = (loan: Loan) => {
-    setEditingId(loan.id);
-    setEditAmount(String(loan.amount));
-    setEditRemaining(String(loan.remainingAmount ?? 0));
-    setEditMonthly(String(loan.monthlyDeductionAmount ?? 0));
-    setEditStatus(loan.status);
-    setEditNotes(loan.notes ?? '');
-    setError(null);
-  };
-
-  const onSaveEdit = async (id: string) => {
-    const amount = Number(editAmount);
-    if (!amount) {
-      setError('Enter a valid amount.');
-      return;
-    }
-    setIsSavingEdit(true);
-    setError(null);
-    try {
-      await updateLoan(id, {
-        amount,
-        remainingAmount: Number(editRemaining),
-        monthlyDeductionAmount: Number(editMonthly),
-        status: editStatus,
-        notes: editNotes.trim() || undefined,
-      });
-      setEditingId(null);
-      setNotice('Advance updated.');
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not save these changes.'));
-    } finally {
-      setIsSavingEdit(false);
-    }
-  };
-
-  if (!isAuthorized) {
-    return (
-      <ThemedView style={styles.center}>
-        <ThemedText themeColor="textSecondary">
-          Finance Approvals is only available to Owner, Store Manager, or Cashier accounts.
-        </ThemedText>
-      </ThemedView>
-    );
-  }
-
-  // Money-specific requirement: a failed fetch shows an error, never an
-  // empty/zero list — `loans === null` (not-yet-loaded) is distinct from
-  // `loans === []` (genuinely none), and `error` renders regardless of which
-  // state `loans` is in, so a failure is never silently indistinguishable
-  // from "no advances outstanding."
-  const allActiveLoans = (loans ?? []).filter((l) => l.status === 'APPROVED' && l.remainingAmount > 0);
-  const q = search.trim().toLowerCase();
-  const activeLoans = q ? allActiveLoans.filter((l) => l.user.name.toLowerCase().includes(q)) : allActiveLoans;
-  const totalActiveRemaining = activeLoans.reduce((s, l) => s + l.remainingAmount, 0);
-  const pendingCount = (loans ?? []).filter((l) => l.amount > 0 && l.status === 'PENDING').length;
-  const filteredLoans = (loans ?? []).filter((l) => l.amount > 0 && (!loanFilter || l.status === loanFilter));
-  const visibleLoans = tab === 'loans' ? filteredLoans : activeLoans;
-
-  const onExportActiveCsv = async () => {
-    setIsExporting(true);
-    try {
-      const rows: (string | number)[][] = [
-        ['Type', 'Employee', 'Total Given', 'Paid Back', 'Still Owes / Amount', 'Monthly Cut', 'Since', 'Notes / Reason'],
-        ...activeLoans.map((l) => [
-          'Loan', l.user.name, l.amount, l.amount - l.remainingAmount, l.remainingAmount,
-          l.monthlyDeductionAmount > 0 ? l.monthlyDeductionAmount : 'TBD',
-          l.requestedAt ? fmtDate(l.requestedAt) : '', l.notes || '',
-        ]),
-      ];
-      await shareCsv(`finance-active-${new Date().toISOString().slice(0, 10)}.csv`, rows);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not export this list.'));
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const onToggleRepayments = async (loanId: string) => {
-    if (expandedId === loanId) { setExpandedId(null); return; }
-    setExpandedId(loanId);
-    if (repayments[loanId]) return;
-    setLoadingRepaymentsId(loanId);
-    setError(null);
-    try {
-      setRepayments((prev) => ({ ...prev, [loanId]: undefined as any }));
-      const rows = await fetchLoanRepayments(loanId);
-      setRepayments((prev) => ({ ...prev, [loanId]: rows }));
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load the repayment schedule.'));
-    } finally {
-      setLoadingRepaymentsId(null);
-    }
-  };
-
-  if (showNewForm) {
-    return (
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}>
-        <Stack.Screen options={{ title: 'New Advance' }} />
-        <Pressable onPress={() => setShowNewForm(false)}><ThemedText type="small">← Cancel</ThemedText></Pressable>
-        <ThemedText type="smallBold" style={styles.fieldLabel}>Employee</ThemedText>
-        {employees === null ? (
-          <ActivityIndicator style={styles.spinner} />
-        ) : (
-          <View style={styles.chipRow}>
-            {employees.map((e) => (
-              <Pressable key={e.id} onPress={() => setNewEmployeeId(e.id)} style={[styles.chip, { backgroundColor: newEmployeeId === e.id ? theme.primary : theme.backgroundElement }]}>
-                <ThemedText type="small" style={newEmployeeId === e.id ? styles.tabLabelActive : undefined}>{e.name}</ThemedText>
-              </Pressable>
-            ))}
-          </View>
-        )}
-        <TextInput
-          value={newAmount}
-          onChangeText={setNewAmount}
-          placeholder="Total Advance Amount (₹) *"
-          placeholderTextColor={theme.textSecondary}
-          keyboardType="decimal-pad"
-          style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-        />
-
-        <ThemedText type="smallBold" style={styles.fieldLabel}>Repayment Mode</ThemedText>
-        <View style={styles.chipRow}>
-          {REPAYMENT_MODE_OPTIONS.map((m) => (
-            <Pressable key={m.key} onPress={() => setNewMode(m.key)} style={[styles.chip, { backgroundColor: newMode === m.key ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={newMode === m.key ? styles.tabLabelActive : undefined}>{m.label}</ThemedText>
-            </Pressable>
-          ))}
-        </View>
-
-        {showTenureField && (
-          <TextInput
-            value={newTenure}
-            onChangeText={setNewTenure}
-            placeholder="Months (N) *"
-            placeholderTextColor={theme.textSecondary}
-            keyboardType="number-pad"
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-          />
-        )}
-
-        {showDerivedMonthly && (
-          <ThemedView type="backgroundElement" style={styles.previewBanner}>
-            <ThemedText type="small" style={{ color: '#2563eb' }}>
-              ≈ {formatCurrency(newAmountNum / newTenureNum)}/month for {newTenureNum} months
-            </ThemedText>
-          </ThemedView>
-        )}
-
-        {newMode === 'CUSTOM' && customSchedule.length > 0 && (
-          <View style={styles.fieldLabel}>
-            <View style={styles.scheduleHeaderRow}>
-              <ThemedText type="small" themeColor="textSecondary">Per-Month Schedule (editable)</ThemedText>
-              <Pressable onPress={() => setCustomSchedule(buildEvenSplitPreview(newAmountNum, newTenureNum))}>
-                <ThemedText type="link">Reset to even split</ThemedText>
-              </Pressable>
-            </View>
-            {customSchedule.map((entry, i) => (
-              <View key={i} style={styles.scheduleRow}>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.scheduleMonth}>
-                  {MONTH_NAMES[entry.month - 1]} {entry.year}
-                </ThemedText>
-                <TextInput
-                  value={String(entry.plannedAmount)}
-                  onChangeText={(t) => {
-                    const v = Number(t) || 0;
-                    setCustomSchedule((prev) => prev.map((row, ri) => (ri === i ? { ...row, plannedAmount: v } : row)));
-                  }}
-                  keyboardType="decimal-pad"
-                  style={[styles.input, styles.flex1, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-                />
-              </View>
-            ))}
-            {Math.abs(customDiff) > 0.004 && (
-              <ThemedView type="backgroundElement" style={styles.warningBanner}>
-                <ThemedText type="small" style={{ color: '#b45309' }}>
-                  Schedule totals {formatCurrency(customTotal)} but loan is {formatCurrency(newAmountNum)} ({customDiff > 0 ? `${formatCurrency(customDiff)} short` : `${formatCurrency(-customDiff)} over`})
-                </ThemedText>
-              </ThemedView>
-            )}
-          </View>
-        )}
-
-        <TextInput
-          value={newNotes}
-          onChangeText={setNewNotes}
-          placeholder="Notes (optional)"
-          placeholderTextColor={theme.textSecondary}
-          style={[styles.input, styles.fieldLabel, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-        />
-        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-        <Pressable onPress={onCreateLoan} disabled={isCreating || !canSaveNew} style={[styles.button, styles.approveButton, styles.fieldLabel, { opacity: canSaveNew ? 1 : 0.6 }]}>
-          {isCreating ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>Create Advance</ThemedText>}
-        </Pressable>
-      </ScrollView>
-    );
-  }
-
+function KV({ k, children }: { k: string; children: ReactNode }) {
   return (
-    <>
-      <Stack.Screen options={{ title: 'Finance Approvals' }} />
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-      >
-        <View style={styles.tabRow}>
-          {canSeeActiveTab && (
-            <Pressable onPress={() => setTab('active')} style={[styles.tabChip, { backgroundColor: tab === 'active' ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={tab === 'active' ? styles.tabLabelActive : undefined}>Active</ThemedText>
-            </Pressable>
-          )}
-          {canSeeLoansTab && (
-            <Pressable onPress={() => setTab('loans')} style={[styles.tabChip, { backgroundColor: tab === 'loans' ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={tab === 'loans' ? styles.tabLabelActive : undefined}>Loans</ThemedText>
-              {pendingCount > 0 && (
-                <View style={styles.pendingBadge}>
-                  <ThemedText type="small" style={styles.pendingBadgeLabel}>{pendingCount}</ThemedText>
-                </View>
-              )}
-            </Pressable>
-          )}
-        </View>
-
-        {canEdit && (
-          <Pressable onPress={openNewForm} style={styles.newButton}><ThemedText style={styles.buttonLabel}>+ New Loan</ThemedText></Pressable>
-        )}
-
-        {tab === 'active' && (
-          <>
-            <ThemedView type="backgroundElement" style={styles.summaryCard}>
-              <ThemedText type="small" themeColor="textSecondary">ACTIVE ADVANCES</ThemedText>
-              <ThemedText type="title" style={styles.summaryCount}>{activeLoans.length}</ThemedText>
-              <ThemedText type="small" style={{ color: '#b45309' }}>{formatCurrency(totalActiveRemaining)} outstanding</ThemedText>
-            </ThemedView>
-            <View style={styles.searchRow}>
-              <TextInput
-                value={search}
-                onChangeText={setSearch}
-                placeholder="Search employee name…"
-                placeholderTextColor={theme.textSecondary}
-                style={[styles.input, styles.flex1, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-              />
-              <Pressable onPress={onExportActiveCsv} disabled={isExporting} style={[styles.exportButton, { borderColor: theme.border }]}>
-                {isExporting ? <ActivityIndicator size="small" /> : <ThemedText type="small">CSV</ThemedText>}
-              </Pressable>
-            </View>
-          </>
-        )}
-
-        {tab === 'loans' && (
-          <View style={styles.chipRow}>
-            {LOAN_FILTERS.map((f) => (
-              <Pressable key={f || 'all'} onPress={() => setLoanFilter(f)} style={[styles.chip, { backgroundColor: loanFilter === f ? theme.primary : theme.backgroundElement }]}>
-                <ThemedText type="small" style={loanFilter === f ? styles.tabLabelActive : undefined}>
-                  {f || 'All'}{f === 'PENDING' && pendingCount > 0 ? ` (${pendingCount})` : ''}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
-        )}
-
-        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-        {notice && <ThemedText style={styles.notice}>{notice}</ThemedText>}
-        {loans === null ? (
-          error ? null : <ActivityIndicator style={styles.spinner} />
-        ) : visibleLoans.length === 0 ? (
-          <ThemedText type="small" themeColor="textSecondary">
-            {tab === 'loans'
-              ? (loanFilter ? `No ${loanFilter.toLowerCase()} loan requests.` : 'No loan requests.')
-              : (q ? `No active loans match "${search}".` : 'No active loans.')}
-          </ThemedText>
-        ) : (
-          visibleLoans.map((loan) => {
-            const st = LOAN_STATUS[loan.status] ?? LOAN_STATUS.PENDING;
-            return (
-            <ThemedView key={loan.id} type="backgroundElement" style={styles.row}>
-              <View style={styles.headerRow}>
-                <View style={styles.flex1}>
-                  <ThemedText type="smallBold" numberOfLines={1} ellipsizeMode="tail" style={styles.tabularNums}>{loan.user.name} · {formatCurrency(loan.amount)}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} ellipsizeMode="tail" style={styles.tabularNums}>
-                    {loan.user.role.replace(/_/g, ' ')}
-                    {loan.status === 'APPROVED' ? ` · Remaining ${formatCurrency(loan.remainingAmount ?? 0)}` : ''}
-                    {' · '}Monthly: {loan.monthlyDeductionAmount > 0 ? formatCurrency(loan.monthlyDeductionAmount) : 'TBD'}
-                    {loan.monthlyDeductionPercent > 0 ? ` (${loan.monthlyDeductionPercent.toFixed(1)}%)` : ''}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">Requested: {fmtDate(loan.requestedAt)}</ThemedText>
-                  {loan.notes && <ThemedText type="small" themeColor="textSecondary">{loan.notes}</ThemedText>}
-                  {loan.status === 'REJECTED' && loan.rejectionReason && (
-                    <ThemedText type="small" style={styles.error}>Reason: {loan.rejectionReason}</ThemedText>
-                  )}
-                  {loan.status === 'APPROVED' && loan.approvedBy && loan.approvedAt && (
-                    <ThemedText type="small" themeColor="textSecondary">Approved by {loan.approvedBy.name} on {fmtDate(loan.approvedAt)}</ThemedText>
-                  )}
-                </View>
-                <View style={[styles.statusPill, { backgroundColor: st.bg }]}>
-                  <ThemedText type="small" style={{ color: st.color }}>{st.label}</ThemedText>
-                </View>
-              </View>
-
-              {canDecide && loan.status === 'PENDING' && (
-                <View style={styles.actions}>
-                  {rejectingId === loan.id ? (
-                    <View style={styles.flex1}>
-                      <TextInput
-                        value={rejectReason}
-                        onChangeText={setRejectReason}
-                        placeholder="Rejection reason"
-                        placeholderTextColor={theme.textSecondary}
-                        style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
-                      />
-                      <View style={styles.actions}>
-                        <Pressable
-                          onPress={() => onReject(loan.id)}
-                          disabled={busyId === loan.id}
-                          style={[styles.button, styles.rejectButton]}
-                        >
-                          <ThemedText style={styles.buttonLabel}>Confirm reject</ThemedText>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => { setRejectingId(null); setRejectReason(''); }}
-                          style={[styles.button, styles.cancelButton]}
-                        >
-                          <ThemedText type="small">Cancel</ThemedText>
-                        </Pressable>
-                      </View>
-                    </View>
-                  ) : (
-                    <>
-                      <Pressable
-                        onPress={() => onApprove(loan.id)}
-                        disabled={busyId === loan.id}
-                        style={[styles.button, styles.approveButton]}
-                      >
-                        <ThemedText style={styles.buttonLabel}>Approve</ThemedText>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => setRejectingId(loan.id)}
-                        disabled={busyId === loan.id}
-                        style={[styles.button, styles.rejectButton]}
-                      >
-                        <ThemedText style={styles.buttonLabel}>Reject</ThemedText>
-                      </Pressable>
-                      {busyId === loan.id && <ActivityIndicator size="small" />}
-                    </>
-                  )}
-                </View>
-              )}
-
-              {canEdit && (
-                editingId === loan.id ? (
-                  <View style={styles.editBlock}>
-                    <TextInput value={editAmount} onChangeText={setEditAmount} placeholder="Amount (₹)" placeholderTextColor={theme.textSecondary} keyboardType="decimal-pad" style={[styles.input, { color: theme.text, backgroundColor: theme.background }]} />
-                    <TextInput value={editRemaining} onChangeText={setEditRemaining} placeholder="Remaining Amount (₹)" placeholderTextColor={theme.textSecondary} keyboardType="decimal-pad" style={[styles.input, { color: theme.text, backgroundColor: theme.background }]} />
-                    <TextInput value={editMonthly} onChangeText={setEditMonthly} placeholder="Monthly Deduction (₹, 0 = TBD)" placeholderTextColor={theme.textSecondary} keyboardType="decimal-pad" style={[styles.input, { color: theme.text, backgroundColor: theme.background }]} />
-                    <View style={styles.chipRow}>
-                      {(['APPROVED', 'PENDING', 'COMPLETED', 'REJECTED'] as const).map((s) => (
-                        <Pressable key={s} onPress={() => setEditStatus(s)} style={[styles.chip, { backgroundColor: editStatus === s ? theme.primary : theme.background }]}>
-                          <ThemedText type="small" style={editStatus === s ? styles.tabLabelActive : undefined}>{LOAN_STATUS[s]?.label ?? s}</ThemedText>
-                        </Pressable>
-                      ))}
-                    </View>
-                    <TextInput value={editNotes} onChangeText={setEditNotes} placeholder="Notes" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.background }]} />
-                    <View style={styles.actions}>
-                      <Pressable onPress={() => onSaveEdit(loan.id)} disabled={isSavingEdit} style={[styles.button, styles.approveButton]}>
-                        {isSavingEdit ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>Save Changes</ThemedText>}
-                      </Pressable>
-                      <Pressable onPress={() => setEditingId(null)} style={[styles.button, styles.cancelButton]}>
-                        <ThemedText type="small">Cancel</ThemedText>
-                      </Pressable>
-                    </View>
-                  </View>
-                ) : (
-                  <Pressable onPress={() => openEdit(loan)} style={styles.repaymentsToggle}>
-                    <ThemedText type="link">Edit</ThemedText>
-                  </Pressable>
-                )
-              )}
-
-              {tab === 'active' && (
-                <View>
-                  <Pressable onPress={() => onToggleRepayments(loan.id)} style={styles.repaymentsToggle}>
-                    <ThemedText type="link">{expandedId === loan.id ? 'Hide repayments' : 'View repayments'}</ThemedText>
-                  </Pressable>
-                  {expandedId === loan.id && (
-                    loadingRepaymentsId === loan.id || repayments[loan.id] === undefined ? (
-                      <ActivityIndicator style={styles.spinner} />
-                    ) : repayments[loan.id].length === 0 ? (
-                      <ThemedText type="small" themeColor="textSecondary">No repayments recorded yet.</ThemedText>
-                    ) : (
-                      repayments[loan.id].map((r) => (
-                        <View key={r.id} style={styles.repaymentRow}>
-                          <ThemedText type="small" themeColor="textSecondary">{r.month}/{r.year}</ThemedText>
-                          <ThemedText type="small" style={styles.tabularNums}>{formatCurrency(r.amountDeducted)}</ThemedText>
-                          <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>Remaining {formatCurrency(r.remainingAfter)}</ThemedText>
-                        </View>
-                      ))
-                    )
-                  )}
-                </View>
-              )}
-            </ThemedView>
-            );
-          })
-        )}
-      </ScrollView>
-    </>
+    <View style={styles.kv}>
+      <ThemedText themeColor="textMuted" style={styles.k}>{k}</ThemedText>
+      <View style={styles.v}>{children}</View>
+    </View>
   );
 }
 
+function SmallBtn({ label, onPress, bg, color }: { label: string; onPress: () => void; bg?: string; color?: string }) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={[styles.smallBtn, bg ? { backgroundColor: bg, borderColor: 'transparent' } : { borderColor: theme.border }]}>
+      <ThemedText style={[styles.smallBtnLabel, { color: color ?? theme.textMuted }]}>{label}</ThemedText>
+    </Pressable>
+  );
+}
+
+// Active table columns: first two left-aligned, the rest right-aligned.
+const COLS = [
+  { key: 'n', header: '#', width: 44 },
+  { key: 'name', header: 'Employee', width: 160 },
+  { key: 'given', header: 'Total Given', width: 104 },
+  { key: 'paid', header: 'Paid Back', width: 104 },
+  { key: 'owes', header: 'Still Owes', width: 104 },
+  { key: 'cut', header: 'Monthly Cut', width: 104 },
+  { key: 'left', header: 'Months Left', width: 100 },
+  { key: 'since', header: 'Since', width: 110 },
+  { key: 'notes', header: 'Notes', width: 160 },
+  { key: 'edit', header: 'Edit', width: 76 },
+];
+
+export default function FinanceApprovalsScreen() {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const { status: permStatus, hasTab } = usePermissions();
+
+  const canEdit = ADMIN_ROLES.includes(user?.role ?? '');
+  const canApprove = DECIDE_ROLES.includes(user?.role ?? '');
+  const canSeeActive = hasTab('finance_approvals_active_tab');
+  const canSeeLoans = hasTab('finance_approvals_loans_tab');
+
+  const [width, setWidth] = useState(0);
+  const [tab, setTab] = useState<Tab>('active');
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loanFilter, setLoanFilter] = useState<(typeof FILTERS)[number]>('PENDING');
+  const [activeSearch, setActiveSearch] = useState('');
+  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
+
+  const [loanAction, setLoanAction] = useState<{ id: string; action: 'approve' | 'reject'; name: string } | null>(null);
+  const [loanActLoading, setLoanActLoading] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [loanModal, setLoanModal] = useState<{ loan?: Loan } | null>(null);
+  const [loanSaving, setLoanSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+
+  const wide = width >= WIDE_MIN;
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      setLoans(await fetchLoans());
+    } catch {
+      setError('Failed to load advances.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
+    load();
+    fetchEmployees()
+      .then((list) => setEmployees(list.map((e) => ({ id: e.id, name: e.name }))))
+      .catch(() => { /* non-critical: only the create form's picker needs it */ });
+  }, [load]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
+
+  const confirmAction = async (note: string) => {
+    if (!loanAction) return;
+    setLoanActLoading(true);
+    setActionError('');
+    try {
+      if (loanAction.action === 'approve') await approveLoanWithNotes(loanAction.id, note);
+      else await rejectLoan(loanAction.id, note);
+      setToast({ type: 'success', msg: `Advance ${loanAction.action === 'approve' ? 'approved' : 'rejected'}.` });
+      setLoanAction(null);
+      load();
+    } catch (err: unknown) {
+      setActionError(getErrorMessage(err, 'Action failed.'));
+    } finally {
+      setLoanActLoading(false);
+    }
+  };
+
+  const saveLoan = async (data: Record<string, unknown>) => {
+    setLoanSaving(true);
+    setSaveError('');
+    try {
+      if (loanModal?.loan) {
+        await updateLoan(loanModal.loan.id, data as Parameters<typeof updateLoan>[1]);
+        setToast({ type: 'success', msg: 'Advance updated.' });
+      } else {
+        await createLoanAdmin(data as Parameters<typeof createLoanAdmin>[0]);
+        setToast({ type: 'success', msg: 'Advance created.' });
+      }
+      setLoanModal(null);
+      load();
+    } catch (err: unknown) {
+      setSaveError(getErrorMessage(err, 'Failed to save advance.'));
+    } finally {
+      setLoanSaving(false);
+    }
+  };
+
+  const openModal = (loan?: Loan) => { setSaveError(''); setLoanModal({ loan }); };
+  const openActionSheet = (l: Loan, action: 'approve' | 'reject') => { setActionError(''); setLoanAction({ id: l.id, action, name: l.user.name }); };
+
+  const visibleTabs = (['active', 'loans'] as const).filter((t) => (t === 'active' ? canSeeActive : canSeeLoans));
+  // Dashboard default is "active"; if that tab is hidden, fall to the visible one.
+  const current: Tab = visibleTabs.includes(tab) ? tab : (visibleTabs[0] ?? tab);
+
+  const pendingCount = loans.filter((l) => l.amount > 0 && l.status === 'PENDING').length;
+  const filteredLoans = loans.filter((l) => l.amount > 0 && (!loanFilter || l.status === loanFilter));
+
+  const allActive = loans.filter((l) => l.status === 'APPROVED' && l.remainingAmount > 0);
+  const term = activeSearch.trim().toLowerCase();
+  const activeLoans = (term ? allActive.filter((l) => l.user.name.toLowerCase().includes(term)) : allActive)
+    .slice()
+    .sort((a, b) => a.user.name.localeCompare(b.user.name));
+  const totalLoan = activeLoans.reduce((s, l) => s + l.remainingAmount, 0);
+  const totalGiven = activeLoans.reduce((s, l) => s + l.amount, 0);
+  const totalPaid = activeLoans.reduce((s, l) => s + (l.amount - l.remainingAmount), 0);
+
+  const exportCsv = async () => {
+    const rows: (string | number)[][] = [
+      ['Type', 'Employee', 'Total Given', 'Paid Back', 'Still Owes / Amount', 'Monthly Cut', 'Since', 'Notes / Reason'],
+      ...activeLoans.map((l) => [
+        'Loan', l.user.name, l.amount, l.amount - l.remainingAmount, l.remainingAmount,
+        l.monthlyDeductionAmount > 0 ? l.monthlyDeductionAmount : 'TBD',
+        l.requestedAt ? fmtDate(l.requestedAt) : '', l.notes || '',
+      ]),
+    ];
+    try {
+      if (!(await shareCsv(`finance-active-${new Date().toISOString().slice(0, 10)}.csv`, rows))) setToast({ type: 'error', msg: 'Sharing isn’t available on this device.' });
+    } catch (e: unknown) {
+      setToast({ type: 'error', msg: e instanceof Error && e.message ? e.message : 'Failed to export CSV.' });
+    }
+  };
+
+  const shell = (children: ReactNode) => (
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: 'Finance Approvals' }} />
+      {children}
+    </ThemedView>
+  );
+
+  if (!ADMIN_ROLES.includes(user?.role ?? '')) {
+    return shell(
+      <View style={[styles.pageMax, { padding: wide ? 24 : 16 }]}>
+        <Card style={styles.centerCard}>
+          <ThemedText style={styles.emptyText}>You don&apos;t have access to Finance Approvals.</ThemedText>
+        </Card>
+      </View>,
+    );
+  }
+
+  // ── Active tab pieces ─────────────────────────────────────────────────────
+  const activeCardRow = (l: Loan, i: number) => {
+    const paidBack = l.amount - l.remainingAmount;
+    const monthsLeft = l.monthlyDeductionAmount > 0 ? Math.ceil(l.remainingAmount / l.monthlyDeductionAmount) : null;
+    return { paidBack, monthsLeft, alt: i % 2 !== 0 };
+  };
+
+  const activeTable = (
+    <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.hscroll}>
+      <View style={[styles.table, { minWidth: COLS.reduce((s, c) => s + (c.key === 'edit' && !canEdit ? 0 : c.width), 0) }]}>
+        <View style={[styles.tr, { backgroundColor: theme.backgroundElement, borderBottomColor: theme.border }]}>
+          {COLS.filter((c) => c.key !== 'edit' || canEdit).map((c, i) => (
+            <View key={c.key} style={[styles.td, { flexBasis: c.width, flexGrow: c.width }]}>
+              <ThemedText themeColor="textMuted" style={[styles.th, i > 1 && styles.right]}>{c.header}</ThemedText>
+            </View>
+          ))}
+        </View>
+        {activeLoans.map((l, i) => {
+          const { paidBack, monthsLeft, alt } = activeCardRow(l, i);
+          const cell = (key: string, node: ReactNode, right = true) => {
+            const c = COLS.find((x) => x.key === key)!;
+            return <View key={key} style={[styles.td, { flexBasis: c.width, flexGrow: c.width }, right && styles.alignEnd]}>{node}</View>;
+          };
+          return (
+            <View key={l.id} style={[styles.tr, { borderBottomColor: theme.border }, alt && { backgroundColor: theme.backgroundElement }]}>
+              {cell('n', <ThemedText themeColor="textMuted" style={styles.cellText}>{i + 1}</ThemedText>, false)}
+              {cell('name', <ThemedText numberOfLines={1} style={[styles.cellText, styles.bold]}>{l.user.name}</ThemedText>, false)}
+              {cell('given', <Mono>{fmt(l.amount)}</Mono>)}
+              {cell('paid', paidBack > 0 ? <Mono color="#15803d" bold>{fmt(paidBack)}</Mono> : <ThemedText themeColor="textMuted" style={styles.cellText}>—</ThemedText>)}
+              {cell('owes', <Mono color="#b45309" bold>{fmt(l.remainingAmount)}</Mono>)}
+              {cell('cut', l.monthlyDeductionAmount > 0 ? <Mono>{fmt(l.monthlyDeductionAmount)}</Mono> : <ThemedText style={[styles.cellText, styles.bold, { color: '#dc2626' }]}>TBD</ThemedText>)}
+              {cell('left', monthsLeft !== null ? <Mono>{`${monthsLeft} mo`}</Mono> : <ThemedText themeColor="textMuted" style={styles.cellText}>—</ThemedText>)}
+              {cell('since', <ThemedText themeColor="textMuted" style={styles.cellText}>{l.requestedAt ? fmtDate(l.requestedAt) : '—'}</ThemedText>)}
+              {cell('notes', <ThemedText themeColor="textMuted" numberOfLines={1} style={styles.cellText}>{l.notes || '—'}</ThemedText>, false)}
+              {canEdit ? cell('edit', <SmallBtn label="Edit" onPress={() => openModal(l)} />) : null}
+            </View>
+          );
+        })}
+        <View style={[styles.tr, styles.totalRow, { backgroundColor: theme.backgroundElement, borderTopColor: theme.border }]}>
+          <View style={[styles.td, { flexBasis: COLS[0].width + COLS[1].width, flexGrow: COLS[0].width + COLS[1].width }]}>
+            <ThemedText themeColor="textMuted" style={[styles.cellText, styles.bold]}>{`TOTAL (${activeLoans.length} employees)`}</ThemedText>
+          </View>
+          <View style={[styles.td, styles.alignEnd, { flexBasis: COLS[2].width, flexGrow: COLS[2].width }]}><Mono bold>{fmt(totalGiven)}</Mono></View>
+          <View style={[styles.td, styles.alignEnd, { flexBasis: COLS[3].width, flexGrow: COLS[3].width }]}><Mono color="#15803d" bold>{fmt(totalPaid)}</Mono></View>
+          <View style={[styles.td, styles.alignEnd, { flexBasis: COLS[4].width, flexGrow: COLS[4].width }]}><Mono color="#b45309" bold>{fmt(totalLoan)}</Mono></View>
+          <View style={{ flexBasis: COLS.slice(5).reduce((s, c) => s + (c.key === 'edit' && !canEdit ? 0 : c.width), 0), flexGrow: 1 }} />
+        </View>
+      </View>
+    </ScrollView>
+  );
+
+  const renderActiveCard = (l: Loan, i: number) => {
+    const { paidBack, monthsLeft } = activeCardRow(l, i);
+    return (
+      <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <ThemedText style={[styles.cardName]}>{`${i + 1}. ${l.user.name}`}</ThemedText>
+        <KV k="Total Given"><Mono>{fmt(l.amount)}</Mono></KV>
+        <KV k="Paid Back">{paidBack > 0 ? <Mono color="#15803d" bold>{fmt(paidBack)}</Mono> : <ThemedText themeColor="textMuted" style={styles.cellText}>—</ThemedText>}</KV>
+        <KV k="Still Owes"><Mono color="#b45309" bold>{fmt(l.remainingAmount)}</Mono></KV>
+        <KV k="Monthly Cut">{l.monthlyDeductionAmount > 0 ? <Mono>{fmt(l.monthlyDeductionAmount)}</Mono> : <ThemedText style={[styles.cellText, styles.bold, { color: '#dc2626' }]}>TBD</ThemedText>}</KV>
+        <KV k="Months Left">{monthsLeft !== null ? <Mono>{`${monthsLeft} mo`}</Mono> : <ThemedText themeColor="textMuted" style={styles.cellText}>—</ThemedText>}</KV>
+        <KV k="Since"><ThemedText themeColor="textMuted" style={styles.cellText}>{l.requestedAt ? fmtDate(l.requestedAt) : '—'}</ThemedText></KV>
+        <KV k="Notes"><ThemedText themeColor="textMuted" style={styles.cellText}>{l.notes || '—'}</ThemedText></KV>
+        {canEdit ? <View style={styles.rowBtns}><SmallBtn label="Edit" onPress={() => openModal(l)} /></View> : null}
+      </View>
+    );
+  };
+
+  const renderLoanCard = (loan: Loan) => {
+    const st = LOAN_STATUS[loan.status] ?? LOAN_STATUS.PENDING;
+    return (
+      <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <View style={[styles.loanHead, wide && styles.loanHeadWide]}>
+          <View style={styles.flex1}>
+            <View style={styles.nameRow}>
+              <ThemedText style={styles.loanName}>{loan.user?.name}</ThemedText>
+              <ThemedText themeColor="textMuted" style={styles.small}>{loan.user?.role?.replace(/_/g, ' ')}</ThemedText>
+            </View>
+            <View style={styles.facts}>
+              <ThemedText themeColor="textMuted" style={styles.fact}>Total: <Mono bold>{fmt(loan.amount)}</Mono></ThemedText>
+              {loan.status === 'APPROVED' ? (
+                <ThemedText themeColor="textMuted" style={styles.fact}>
+                  Remaining: <Mono bold color={loan.remainingAmount > 0 ? '#b45309' : '#15803d'}>{fmt(loan.remainingAmount)}</Mono>
+                </ThemedText>
+              ) : null}
+              <ThemedText themeColor="textMuted" style={styles.fact}>
+                Monthly: <Mono bold>{loan.monthlyDeductionAmount > 0 ? fmt(loan.monthlyDeductionAmount) : 'TBD'}</Mono>
+                {loan.monthlyDeductionPercent > 0 ? ` (${loan.monthlyDeductionPercent.toFixed(1)}%)` : ''}
+              </ThemedText>
+              <ThemedText themeColor="textMuted" style={styles.fact}>{`Requested: ${fmtDate(loan.requestedAt)}`}</ThemedText>
+            </View>
+            {loan.notes ? <ThemedText themeColor="textMuted" style={styles.note}>{`📄 ${loan.notes}`}</ThemedText> : null}
+            {loan.status === 'REJECTED' && loan.rejectionReason ? <ThemedText style={[styles.note, { color: '#b91c1c' }]}>{`Reason: ${loan.rejectionReason}`}</ThemedText> : null}
+            {loan.status === 'APPROVED' && loan.approvedBy ? (
+              <ThemedText themeColor="textMuted" style={styles.note}>{`Approved by ${loan.approvedBy.name} on ${fmtDate(loan.approvedAt!)}`}</ThemedText>
+            ) : null}
+          </View>
+          <View style={styles.rowBtns}>
+            <View style={[styles.pill, { backgroundColor: st.bg }]}><ThemedText style={[styles.pillText, { color: st.color }]}>{st.label}</ThemedText></View>
+            {canEdit ? <SmallBtn label="✎ Edit" onPress={() => openModal(loan)} /> : null}
+            {loan.status === 'PENDING' && canApprove ? (
+              <>
+                <SmallBtn label="Approve" bg="rgba(34,197,94,0.12)" color="#15803d" onPress={() => openActionSheet(loan, 'approve')} />
+                <SmallBtn label="Reject" bg="rgba(239,68,68,0.12)" color="#b91c1c" onPress={() => openActionSheet(loan, 'reject')} />
+              </>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  // ── Header (everything above the list) ────────────────────────────────────
+  const header = (
+    <View style={styles.headerWrap}>
+      <View style={[styles.headRow, wide && styles.headRowWide]}>
+        <View style={styles.flex1}>
+          <ThemedText style={styles.h1}>Finance Approvals</ThemedText>
+          <ThemedText themeColor="textMuted" style={styles.subtitle}>Review and approve employee advance requests</ThemedText>
+        </View>
+        {canEdit ? <Button size="sm" onPress={() => { openModal(); setTab('loans'); }}>+ New Loan</Button> : null}
+      </View>
+
+      {toast ? (toast.type === 'success' ? <SuccessBanner message={toast.msg} /> : <ErrorBanner message={toast.msg} />) : null}
+      {error ? <ErrorBanner message={error} onRetry={() => { setLoading(true); load(); }} /> : null}
+
+      {visibleTabs.length > 0 ? (
+        <View style={[styles.tabs, { backgroundColor: theme.backgroundElement }]}>
+          {visibleTabs.map((t) => (
+            <Pressable
+              key={t}
+              onPress={() => setTab(t)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: current === t }}
+              style={[styles.tabBtn, current === t && { backgroundColor: theme.primary }]}>
+              <ThemedText style={[styles.tabLabel, { color: current === t ? '#ffffff' : theme.textMuted }]}>{t === 'active' ? 'Active' : 'Loans'}</ThemedText>
+              {t === 'loans' && pendingCount > 0 ? (
+                <View style={styles.tabCount}><ThemedText style={styles.tabCountText}>{pendingCount}</ThemedText></View>
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {current === 'active' && visibleTabs.length > 0 && !loading ? (
+        <>
+          <View style={[styles.stat, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <ThemedText themeColor="textMuted" style={styles.statLabel}>ACTIVE ADVANCES</ThemedText>
+            <ThemedText style={styles.statValue}>{activeLoans.length}</ThemedText>
+            <ThemedText style={[styles.statSub, { color: '#b45309' }]}>{`${fmt(totalLoan)} outstanding`}</ThemedText>
+          </View>
+          <View style={styles.toolbar}>
+            <TextInput
+              value={activeSearch}
+              onChangeText={setActiveSearch}
+              placeholder="Search employee name…"
+              placeholderTextColor={theme.textMuted}
+              style={[styles.search, { color: theme.text, backgroundColor: theme.surface, borderColor: theme.border }, wide ? { width: 280 } : styles.flex1]}
+            />
+            {activeSearch ? <Button variant="outline" size="sm" onPress={() => setActiveSearch('')}>Clear</Button> : null}
+            <View style={styles.spacer} />
+            <Button variant="outline" size="sm" onPress={exportCsv}>Download CSV</Button>
+          </View>
+          {activeLoans.length > 0 ? <ThemedText style={styles.h3}>Active Advances</ThemedText> : null}
+          {wide && activeLoans.length > 0 ? (
+            <View style={[styles.tableWrap, { backgroundColor: theme.surface, borderColor: theme.border }]}>{activeTable}</View>
+          ) : null}
+        </>
+      ) : null}
+
+      {current === 'loans' && visibleTabs.length > 0 ? (
+        <View style={styles.filters}>
+          {FILTERS.map((f) => (
+            <Pressable
+              key={f || 'all'}
+              onPress={() => setLoanFilter(f)}
+              accessibilityRole="button"
+              style={[styles.chip, loanFilter === f ? { backgroundColor: theme.primary, borderColor: theme.primary } : { borderColor: theme.border }]}>
+              <ThemedText style={[styles.chipLabel, { color: loanFilter === f ? '#ffffff' : theme.textMuted }]}>
+                {`${f || 'All'}${f === 'PENDING' && pendingCount > 0 ? ` (${pendingCount})` : ''}`}
+              </ThemedText>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {permStatus !== 'ready' ? <Skeleton height={64} /> : null}
+      {permStatus === 'ready' && visibleTabs.length === 0 ? (
+        <Card style={styles.centerCard}><ThemedText style={styles.emptyText}>You don&apos;t have access to any Finance Approvals tab.</ThemedText></Card>
+      ) : null}
+    </View>
+  );
+
+  // FlatList rows: loan cards on the Loans tab, active cards on a phone. On a
+  // wide Active tab the table sits in the header (it scrolls sideways).
+  const listData: Loan[] = loading || visibleTabs.length === 0 ? [] : current === 'loans' ? filteredLoans : wide ? [] : activeLoans;
+
+  const empty = loading ? (
+    <View style={styles.gap}>{[0, 1, 2].map((i) => <Skeleton key={i} height={wide ? 56 : 120} />)}</View>
+  ) : visibleTabs.length === 0 ? null : current === 'loans' ? (
+    <Card style={styles.centerCard}>
+      <ThemedText themeColor="textMuted" style={styles.emptyText}>{`No ${loanFilter.toLowerCase() || ''} loan requests.`}</ThemedText>
+    </Card>
+  ) : activeLoans.length === 0 ? (
+    <Card style={styles.centerCard}>
+      <ThemedText themeColor="textMuted" style={styles.emptyText}>{term ? `No active loans match "${activeSearch}".` : 'No active loans.'}</ThemedText>
+    </Card>
+  ) : null;
+
+  const footer = !wide && current === 'active' && activeLoans.length > 0 && !loading ? (
+    <View style={[styles.card, styles.totalCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+      <ThemedText themeColor="textMuted" style={[styles.cellText, styles.bold]}>{`TOTAL (${activeLoans.length} employees)`}</ThemedText>
+      <KV k="Total Given"><Mono bold>{fmt(totalGiven)}</Mono></KV>
+      <KV k="Paid Back"><Mono color="#15803d" bold>{fmt(totalPaid)}</Mono></KV>
+      <KV k="Still Owes"><Mono color="#b45309" bold>{fmt(totalLoan)}</Mono></KV>
+    </View>
+  ) : null;
+
+  return shell(
+    <>
+      <FlatList
+        data={listData}
+        keyExtractor={(l) => l.id}
+        renderItem={({ item, index }) => (current === 'loans' ? renderLoanCard(item) : renderActiveCard(item, index))}
+        ListHeaderComponent={header}
+        ListEmptyComponent={empty}
+        ListFooterComponent={footer}
+        ItemSeparatorComponent={Gap}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[styles.pageMax, { padding: wide ? 24 : 16, paddingBottom: insets.bottom + 40 }]}
+      />
+      {loanAction ? (
+        <ActionSheet
+          action={loanAction.action}
+          name={loanAction.name}
+          loading={loanActLoading}
+          error={actionError}
+          onConfirm={confirmAction}
+          onCancel={() => setLoanAction(null)}
+        />
+      ) : null}
+      {loanModal !== null ? (
+        <LoanSheet
+          loan={loanModal.loan}
+          employees={employees}
+          wide={wide}
+          loading={loanSaving}
+          error={saveError}
+          onSave={saveLoan}
+          onCancel={() => setLoanModal(null)}
+        />
+      ) : null}
+    </>,
+  );
+}
+
+function Gap() {
+  return <View style={{ height: 14 }} />;
+}
+
 const styles = StyleSheet.create({
-  content: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.three },
-  error: { color: '#B83030', marginTop: Spacing.one },
-  notice: { color: '#167A48', marginTop: Spacing.one },
-  spinner: { marginTop: Spacing.three },
-  row: { borderRadius: Spacing.three, padding: Spacing.three, minHeight: Layout.minTouchTarget, gap: Spacing.two },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: Spacing.two },
-  flex1: { flex: 1 },
-  actions: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.one, alignItems: 'center' },
-  button: { height: 40, paddingHorizontal: Spacing.three, borderRadius: Spacing.two, alignItems: 'center', justifyContent: 'center' },
-  approveButton: { backgroundColor: '#167A48' },
-  rejectButton: { backgroundColor: '#B83030' },
-  cancelButton: { backgroundColor: '#8A8A8E' },
-  buttonLabel: { color: '#ffffff', fontWeight: '600' },
-  input: { height: 42, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15, marginTop: Spacing.one },
-  tabRow: { flexDirection: 'row', gap: Spacing.one },
-  tabChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.three, paddingVertical: Spacing.one, borderRadius: Spacing.four, minHeight: 36, justifyContent: 'center' },
-  tabLabelActive: { color: '#ffffff', fontWeight: '600' },
-  repaymentsToggle: { marginTop: Spacing.one, minHeight: 44, justifyContent: 'center' },
-  repaymentRow: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.one, marginTop: Spacing.half },
-  tabularNums: { fontVariant: ['tabular-nums'] },
-  newButton: { height: 44, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  fieldLabel: { marginTop: Spacing.two },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one, marginTop: Spacing.one },
-  chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.half, borderRadius: 999 },
-  editBlock: { gap: Spacing.one, marginTop: Spacing.two },
-  previewBanner: { borderRadius: Spacing.two, padding: Spacing.two, marginTop: Spacing.two },
-  scheduleHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.two },
-  scheduleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: Spacing.one },
-  scheduleMonth: { width: 100 },
-  warningBanner: { borderRadius: Spacing.two, padding: Spacing.two, marginTop: Spacing.two },
-  pendingBadge: { marginLeft: Spacing.one, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 999, paddingHorizontal: Spacing.one, paddingVertical: 1 },
-  pendingBadgeLabel: { color: '#ffffff', fontWeight: '700', fontSize: 11 },
-  summaryCard: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.half },
-  summaryCount: { fontSize: 28, lineHeight: 32 },
-  searchRow: { flexDirection: 'row', gap: Spacing.two, alignItems: 'center' },
-  exportButton: { height: 42, paddingHorizontal: Spacing.three, borderRadius: Spacing.two, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  statusPill: { paddingHorizontal: Spacing.two, paddingVertical: 3, borderRadius: 999 },
+  flex1: { flex: 1, minWidth: 0 },
+  pageMax: { width: '100%', maxWidth: 1100, alignSelf: 'center' },
+  headerWrap: { gap: 16, marginBottom: 16 },
+  headRow: { gap: 12 },
+  headRowWide: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  h1: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold },
+  subtitle: { fontSize: 14, lineHeight: 20, marginTop: 4 },
+  small: { fontSize: 12, lineHeight: 16 },
+  bold: { fontFamily: FontWeights.bold, fontWeight: '700' },
+  mono: { fontFamily: Fonts?.mono, fontSize: 13, lineHeight: 18 },
+  tabs: { flexDirection: 'row', gap: 4, padding: 4, borderRadius: 10, alignSelf: 'flex-start' },
+  tabBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 22, minHeight: 40, borderRadius: 8, justifyContent: 'center' },
+  tabLabel: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  tabCount: { backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 },
+  tabCountText: { color: '#ffffff', fontSize: 11, lineHeight: 16, fontFamily: FontWeights.bold },
+  stat: { borderWidth: 1, borderRadius: Radii.lg, paddingVertical: 16, paddingHorizontal: 20, gap: 4 },
+  statLabel: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  statValue: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold, fontWeight: '800' },
+  statSub: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  toolbar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
+  search: { minHeight: 44, borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, fontFamily: FontWeights.regular },
+  spacer: { flexGrow: 1 },
+  h3: { fontSize: 15, lineHeight: 22, fontFamily: FontWeights.bold },
+  tableWrap: { borderWidth: 1, borderRadius: Radii.lg, overflow: 'hidden' },
+  hscroll: { flexGrow: 1 },
+  table: { flexGrow: 1 },
+  tr: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: 'transparent' },
+  totalRow: { borderBottomWidth: 0, borderTopWidth: 2 },
+  td: { paddingHorizontal: 14, paddingVertical: 10, minWidth: 0 },
+  alignEnd: { alignItems: 'flex-end' },
+  th: { fontSize: 13, lineHeight: 18, fontFamily: FontWeights.semiBold },
+  right: { textAlign: 'right' },
+  cellText: { fontSize: 13, lineHeight: 18 },
+  card: { borderWidth: 1, borderRadius: Radii.lg, padding: 16, gap: 6 },
+  totalCard: { marginTop: 14 },
+  cardName: { fontSize: 15, lineHeight: 22, fontFamily: FontWeights.bold },
+  kv: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  k: { width: 96, fontSize: 12, lineHeight: 18 },
+  v: { flex: 1, minWidth: 0 },
+  rowBtns: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingTop: 4 },
+  smallBtn: { minHeight: 36, paddingHorizontal: 12, borderWidth: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  smallBtnLabel: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  loanHead: { gap: 12 },
+  loanHeadWide: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 },
+  loanName: { fontSize: 16, lineHeight: 24, fontFamily: FontWeights.bold },
+  facts: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 2 },
+  fact: { fontSize: 13, lineHeight: 20 },
+  note: { fontSize: 13, lineHeight: 18, marginTop: 6 },
+  pill: { paddingHorizontal: 12, paddingVertical: 3, borderRadius: 999 },
+  pillText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { minHeight: 36, paddingHorizontal: 14, borderWidth: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  chipLabel: { fontSize: 13, lineHeight: 18, fontFamily: FontWeights.semiBold },
+  centerCard: { alignItems: 'center', paddingVertical: 48 },
+  emptyText: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  gap: { gap: 12 },
 });
