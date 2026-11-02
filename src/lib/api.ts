@@ -35,6 +35,13 @@ import type {
   EditPaymentVoucherInput,
   EditDebitNoteInput,
   SalaryPaymentWithBreakdown,
+  ConversationListParams,
+  ConversationStats,
+  StaffPhoneNumberRow,
+  ConversationCallRecording,
+  ConversationCallSummary,
+  CreateConversationInput,
+  WabaNumber,
   Task,
   TaskStatus,
   CallCapabilities,
@@ -4029,4 +4036,80 @@ export async function downloadLegalDocument(documentId: string, filename: string
 export async function fetchAssignableEmployees() {
   const { data } = await api.get<ApiEnvelope<{ id: string; name: string }[]>>('/employees/assignable');
   return Array.isArray(data.data) ? data.data : [];
+}
+
+// ── Conversations page: filtered list, stats, status / flag / assign, call ──
+export async function fetchConversationList(params: ConversationListParams) {
+  const { data } = await api.get<ApiEnvelope<Conversation[]>>('/conversations', { params });
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Manager roles only (the server 403s others; the page treats that as no stats).
+export async function fetchConversationStats(params: { category?: string; staffPhoneNumberId?: string }) {
+  const { data } = await api.get<ApiEnvelope<ConversationStats>>('/conversations/stats', { params });
+  return data.data;
+}
+
+export async function updateConversationStatus(id: string, status: string) {
+  const { data } = await api.put<ApiEnvelope<Conversation>>(`/conversations/${id}/status`, { status });
+  return data.data;
+}
+
+export async function flagConversationHighValue(id: string, isHighValue: boolean) {
+  const { data } = await api.put<ApiEnvelope<Conversation>>(`/conversations/${id}/flag`, { isHighValue });
+  return data.data;
+}
+
+export async function assignConversation(id: string, assignedToId: string) {
+  const { data } = await api.put<ApiEnvelope<Conversation>>(`/conversations/${id}/assign`, { assignedToId });
+  return data.data;
+}
+
+// OWNER only: the business numbers shown as filter tabs under Customer.
+export async function fetchStaffPhoneNumbers() {
+  const { data } = await api.get<ApiEnvelope<StaffPhoneNumberRow[]>>('/staff-phone-numbers');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Click-to-call: only the conversation id is sent; the server looks the number up.
+export async function initiateConversationCall(conversationId: string) {
+  const { data } = await api.post<ApiEnvelope<unknown>>('/calls/initiate', {
+    conversationId,
+    idempotencyKey: `${conversationId}-${Date.now()}`,
+  });
+  return data;
+}
+
+// ── Conversations Phase 2 ──
+// OWNER / STORE_MANAGER get full recordings; the server 403s anyone else.
+export async function fetchConversationCallRecordings(conversationId: string) {
+  const { data } = await api.get<ApiEnvelope<ConversationCallRecording[]>>('/call-recordings', { params: { conversationId } });
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// A salesperson's own calls: summary text only, no audio.
+export async function fetchConversationCallSummaries() {
+  const { data } = await api.get<ApiEnvelope<ConversationCallSummary[]>>('/call-recordings/my-summary');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function retranscribeCallRecording(id: string) {
+  const { data } = await api.post<ApiEnvelope<{ queued: boolean }>>(`/call-recordings/${id}/retranscribe`);
+  return data;
+}
+
+export async function createConversation(input: CreateConversationInput) {
+  const { data } = await api.post<ApiEnvelope<Conversation>>('/conversations', input);
+  return data.data;
+}
+
+// OWNER only (Manage Numbers).
+export async function fetchWabaNumbers() {
+  const { data } = await api.get<ApiEnvelope<WabaNumber[]>>('/staff-phone-numbers/waba-numbers');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function saveStaffPhoneNumber(input: { phoneNumberId: string; displayPhone: string; employeeId: string | null }) {
+  const { data } = await api.post<ApiEnvelope<StaffPhoneNumberRow>>('/staff-phone-numbers', input);
+  return data.data;
 }

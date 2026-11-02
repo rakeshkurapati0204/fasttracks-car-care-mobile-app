@@ -342,6 +342,16 @@ export const SCREEN_REGISTRY: ScreenMeta[] = [
     visibleToRoles: ['OWNER', 'STORE_MANAGER'],
   },
   {
+    id: 'conversations',
+    title: 'Conversations',
+    dashboardRoute: '/dashboard/conversations',
+    purpose: 'WhatsApp inbox: conversation list, chat, calls tab, new conversation, manage numbers.',
+    endpoints: ['GET /conversations', 'GET /conversations/:id/messages'],
+    note: 'Side-menu entry restored 2026-11-02 to match the dashboard nav (roles OWNER, STORE_MANAGER, SOCIAL_MEDIA, SALES). The screen itself also accepts the per-user conversations permission.',
+    visibleToRoles: ['OWNER', 'STORE_MANAGER', 'SOCIAL_MEDIA', 'SALES'],
+    route: '/conversations',
+  },
+  {
     id: 'calls',
     title: 'Calls',
     dashboardRoute: '/dashboard/calls',

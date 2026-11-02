@@ -3858,3 +3858,80 @@ export interface SalaryPaymentWithBreakdown {
 export interface PayrollResult {
   totalAdvanceDeduction?: number;
 }
+
+// ── Conversations page (dashboard conversations/page.tsx) ──
+// Fields the API returns that the original Conversation / message types omit.
+export interface Conversation {
+  lastCustomerMessageAt?: string | null;
+  businessPhoneNumberId?: string | null;
+}
+
+export interface ConversationMessage {
+  deliveryError?: string | null;
+}
+
+export interface ConversationListParams {
+  category?: string;
+  status?: string;
+  search?: string;
+  staffPhoneNumberId?: string;
+}
+
+export interface ConversationStats {
+  total: number;
+  active: number;
+  waiting: number;
+  highValue: number;
+  byCategory: Record<ConversationCategory, number>;
+}
+
+export interface StaffPhoneNumberRow {
+  id: string;
+  phoneNumberId: string;
+  displayPhone: string | null;
+  label: string | null;
+  employee?: { id: string; name: string } | null;
+}
+
+// ── Conversations Phase 2: call recordings, new conversation, staff numbers ──
+// GET /call-recordings?conversationId= (OWNER / STORE_MANAGER only).
+export interface ConversationCallRecording {
+  id: string;
+  conversationId: string | null;
+  callerPhone: string;
+  audioUrl: string;
+  durationSecs: number | null;
+  callTimestamp: string;
+  transcriptText: string | null;
+  transcriptStatus: TranscriptStatus;
+}
+
+// GET /call-recordings/my-summary: no audio URL and no transcript, by design.
+export interface ConversationCallSummary {
+  id: string;
+  callTimestamp: string;
+  durationSecs: number | null;
+  customerName: string;
+  summary: string;
+  source: string;
+}
+
+export interface CreateConversationInput {
+  customerName: string;
+  customerPhone: string;
+  assignedToId: string;
+  category: ConversationCategory;
+}
+
+// One number on the WhatsApp Business Account (GET /staff-phone-numbers/waba-numbers).
+export interface WabaNumber {
+  id: string;
+  display_phone_number: string;
+  verified_name: string;
+  status: string;
+  quality_rating: string;
+}
+
+export interface StaffPhoneNumberRow {
+  employeeId?: string | null;
+}
