@@ -3975,3 +3975,29 @@ export async function fetchSalaryPaymentsWithBreakdown(month: number, year: numb
     };
   });
 }
+
+// Payslips page: the issued payslip's PDF (what the dashboard's print page
+// shows), named like the dashboard's download, saved to the cache. Unlike
+// downloadPayslipPdf above, a non-200 response is an error and nothing is
+// written, so a JSON error body is never mistaken for the PDF.
+export async function downloadIssuedPayslipPdf(id: string, employeeName: string, month: number, year: number): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const safeName = employeeName.replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `payslip-${safeName}-${month}-${year}.pdf`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/payslips/${id}/pdf`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to download this payslip.');
+  }
+  return { uri: result.uri, filename };
+}
+
+// Financial page: the Revenue Trend line (GET /financial/revenue-trend, same
+// requireManagerOrOwner gate as the other /financial routes).
+export async function fetchFinancialRevenueTrend(period?: string) {
+  const { data } = await api.get<ApiEnvelope<{ date: string; revenue: number }[]>>('/financial/revenue-trend', { params: { period } });
+  return Array.isArray(data.data) ? data.data : [];
+}
