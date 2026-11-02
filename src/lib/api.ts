@@ -4024,3 +4024,9 @@ export async function downloadLegalDocument(documentId: string, filename: string
   }
   return { uri: result.uri };
 }
+
+// Job Tracker: the staff filter's list (GET /employees/assignable, any signed-in user).
+export async function fetchAssignableEmployees() {
+  const { data } = await api.get<ApiEnvelope<{ id: string; name: string }[]>>('/employees/assignable');
+  return Array.isArray(data.data) ? data.data : [];
+}
