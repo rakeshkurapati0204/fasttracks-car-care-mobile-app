@@ -30,6 +30,10 @@ import type {
   RecurringTaskCompletion,
   RecurringTaskDefinition,
   DailyTaskCompletion,
+  PurchaseLedgerDetail,
+  EditPurchaseVoucherInput,
+  EditPaymentVoucherInput,
+  EditDebitNoteInput,
   Task,
   TaskStatus,
   CallCapabilities,
@@ -3915,4 +3919,28 @@ export async function downloadMyPayslip(id: string, month: number, year: number,
     throw new Error(message ?? 'Failed to download this payslip.');
   }
   return { uri: result.uri, filename };
+}
+
+// ── Purchase page: full ledger detail + edit purchase voucher ──
+export async function fetchPurchaseLedgerDetail(id: string) {
+  const { data } = await api.get<ApiEnvelope<PurchaseLedgerDetail>>(`/accounting/ledgers/${id}`);
+  return data.data;
+}
+
+// Changing anything besides the narration reverses the voucher and posts a
+// corrected one; a narration-only change updates in place.
+export async function editPurchaseVoucher(id: string, input: EditPurchaseVoucherInput) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/accounting/purchase-vouchers/${id}/edit`, input);
+  return data.data;
+}
+
+// ── Purchase Phase 2: edit payment voucher / edit debit note ──
+export async function editPaymentVoucher(id: string, input: EditPaymentVoucherInput) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/accounting/payment-vouchers/${id}/edit`, input);
+  return data.data;
+}
+
+export async function editDebitNote(id: string, input: EditDebitNoteInput) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/accounting/debit-notes/${id}/edit`, input);
+  return data.data;
 }

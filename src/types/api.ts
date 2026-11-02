@@ -3749,3 +3749,89 @@ export interface DailyTaskCompletion extends RecurringTaskCompletion {
   proof?: RecurringTaskProof;
   proofLabel?: string | null;
 }
+
+// ── Purchase page (dashboard accounting/page.tsx): ledger detail rows ──
+export interface PurchaseVoucherItemRow {
+  id: string; description: string; quantity: string; rate: string; amount: string;
+}
+
+// A debit note nested under a purchase voucher (the over-return check) or one
+// row of the ledger-wide `debitNotes` history (any status, incl. superseded).
+export interface PurchaseDebitNoteRow {
+  id: string; voucherNumber: string; voucherDate: string; totalAmount: string; status: string; narration: string | null;
+  purchaseVoucherId: string;
+  purchaseVoucher?: { id: string; voucherNumber: string };
+  replacementPurchaseVoucherId: string | null;
+  replacementPurchaseVoucher: { id: string; voucherNumber: string } | null;
+  items: { id: string; purchaseVoucherItemId: string; returnedQuantity: string; amount: string }[];
+  supersededById?: string | null;
+  supersededBy?: { id: string; voucherNumber: string } | null;
+  supersedes?: { id: string; voucherNumber: string } | null;
+}
+
+export interface PurchaseVoucherRow {
+  id: string; voucherNumber: string; voucherDate: string; totalAmount: string; status: string; outstanding: string;
+  narration: string | null;
+  transporterName: string | null;
+  purchaseOrder: { id: string; status: string; totalAmount: number; supplierId: string } | null;
+  allocations: { paymentVoucher: { voucherNumber: string } }[];
+  items: PurchaseVoucherItemRow[];
+  debitNotesAsSource: PurchaseDebitNoteRow[];
+  debitNotesAsReplacement: PurchaseDebitNoteRow[];
+  supersededById?: string | null;
+  supersededBy?: { id: string; voucherNumber: string } | null;
+  supersedes?: { id: string; voucherNumber: string } | null;
+}
+
+export interface PaymentVoucherRow {
+  id: string; ledgerId: string; voucherNumber: string; voucherType: string; voucherDate: string; totalAmount: string;
+  bankAccountId: string | null; narration: string | null; status: string; available: string;
+  allocations: { id: string; purchaseVoucherId: string; amountAllocated: string; purchaseVoucher: { id: string; voucherNumber: string } }[];
+  supersededById: string | null;
+  supersededBy: { id: string; voucherNumber: string } | null;
+  supersedes: { id: string; voucherNumber: string } | null;
+}
+
+export interface PurchaseLedgerDetail {
+  ledger: {
+    id: string; name: string; gstin: string | null; phone: string | null; email: string | null; address: string | null; isActive: boolean;
+    partyType: 'SUPPLIER' | 'TRANSPORTER' | null;
+  };
+  balance: string;
+  purchaseVouchers: PurchaseVoucherRow[];
+  paymentVouchers: PaymentVoucherRow[];
+  debitNotes: PurchaseDebitNoteRow[];
+}
+
+export interface EditPurchaseVoucherInput {
+  editReason: string;
+  voucherNumber?: string;
+  voucherDate: string;
+  narration?: string;
+  transporterName?: string;
+  purchaseOrderId?: string;
+  items: { description: string; quantity?: number; rate: number; amount: number }[];
+}
+
+export interface EditPaymentVoucherInput {
+  editReason: string;
+  ledgerId: string;
+  voucherType: 'PAYMENT' | 'RECEIPT';
+  voucherNumber?: string;
+  voucherDate: string;
+  totalAmount: number;
+  bankAccountId?: string;
+  narration?: string;
+  // Omitted = keep the current allocation set; [] = clear it.
+  allocations?: { purchaseVoucherId: string; amount: number }[];
+}
+
+export interface EditDebitNoteInput {
+  editReason: string;
+  purchaseVoucherId: string;
+  replacementPurchaseVoucherId?: string;
+  voucherNumber?: string;
+  voucherDate: string;
+  narration?: string;
+  items: { purchaseVoucherItemId: string; returnedQuantity: number; amount: number }[];
+}
