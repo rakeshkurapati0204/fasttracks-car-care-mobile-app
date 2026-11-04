@@ -130,10 +130,13 @@ function PlayerCard({ call }: { call: CallTrackerEntry }) {
 
 function SummaryBlock({ summary }: { summary: CallSummaryData }) {
   if (summary.notice) return <ThemedText themeColor="textMuted" style={styles.prose}>{summary.notice}</ThemedText>;
-  const empty = !summary.intent && !summary.nextSteps && ![summary.keyPoints, summary.decisions, summary.actionItems, summary.objections].some((l) => l.length);
+  const empty = !summary.intent && !summary.nextSteps && !summary.brief && !summary.detailedSummary && !summary.numbers.length
+    && ![summary.keyPoints, summary.decisions, summary.actionItems, summary.objections, summary.salesmanSaid, summary.customerSaid].some((l) => l.length);
   // Older records (before the current summary format) have none of the current fields: say so rather than show a blank tab.
   if (empty) return <ThemedText themeColor="textMuted" style={styles.prose}>The saved summary has no usable content (older format or nothing was said).</ThemedText>;
   const lists: { label: string; items: string[] }[] = [
+    { label: 'Salesman said', items: summary.salesmanSaid },
+    { label: 'Customer said', items: summary.customerSaid },
     { label: 'Key points', items: summary.keyPoints },
     { label: 'Decisions', items: summary.decisions },
     { label: 'Action items', items: summary.actionItems },
@@ -141,7 +144,18 @@ function SummaryBlock({ summary }: { summary: CallSummaryData }) {
   ];
   return (
     <View style={styles.sections}>
+      {summary.brief ? <Section label="Brief"><ThemedText style={styles.prose}>{summary.brief}</ThemedText></Section> : null}
       {summary.intent ? <Section label="Intent"><ThemedText style={styles.prose}>{summary.intent}</ThemedText></Section> : null}
+      {summary.detailedSummary ? <Section label="Detailed summary"><ThemedText style={styles.prose}>{summary.detailedSummary}</ThemedText></Section> : null}
+      {summary.numbers.length ? (
+        <Section label="Numbers mentioned">
+          {summary.numbers.map((n, i) => (
+            <ThemedText key={i} style={styles.prose}>
+              {`• ${n.what}: ${n.value}${n.saidBy ? ` (${n.saidBy})` : ''}${n.verified ? '' : ' ⚠ not matched to the transcript'}`}
+            </ThemedText>
+          ))}
+        </Section>
+      ) : null}
       {lists.filter((l) => l.items.length).map((l) => (
         <Section key={l.label} label={l.label}>
           {l.items.map((item, i) => <ThemedText key={i} style={styles.prose}>{`\u2022 ${item}`}</ThemedText>)}
@@ -169,7 +183,7 @@ function TranscriptView({ turns }: { turns: CallTurn[] }) {
       {turns.map((t, i) => (
         <View key={i} style={styles.turn}>
           <ThemedText style={[styles.speaker, { color: t.speaker === 'SALESMAN' ? theme.primary : theme.textSecondary }]}>
-            {t.speaker === 'SALESMAN' ? 'Salesman' : t.speaker === 'CUSTOMER' ? 'Customer' : t.speaker}
+            {t.speaker === 'SALESMAN' ? 'Salesman' : t.speaker === 'CUSTOMER' ? 'Customer' : t.speaker.replace(/^SPEAKER_(\d+)$/, (_m, n) => `Speaker ${Number(n) + 1}`)}
           </ThemedText>
           <ThemedText style={styles.prose}>{t.text}</ThemedText>
         </View>

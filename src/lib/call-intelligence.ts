@@ -81,6 +81,21 @@ const strings = (v: unknown): string[] =>
 const text = (v: unknown): string => (typeof v === 'string' && !PLACEHOLDER.test(v) ? v.trim() : '');
 const first = (...vals: string[]): string => vals.find((v) => v !== '') ?? '';
 
+// summary.numbers: rows {what, value, said_by, quote?, verified?}. A row without a label or a value is dropped; nothing is invented.
+function parseNumbers(v: unknown): CallSummaryData['numbers'] {
+  if (!Array.isArray(v)) return [];
+  const rows: CallSummaryData['numbers'] = [];
+  for (const x of v) {
+    if (!x || typeof x !== 'object') continue;
+    const o = x as Record<string, unknown>;
+    const what = text(o.what);
+    const value = text(o.value);
+    if (!what || !value) continue;
+    rows.push({ what, value, saidBy: text(o.said_by), quote: text(o.quote), verified: o.verified !== false });
+  }
+  return rows;
+}
+
 // The summary JSON from the service, or null when it is missing or not an object. A short call carries
 // {status: "not_enough_speech", reason} instead of the normal fields: it is shown as such, never invented.
 export function parseSummary(raw: unknown): CallSummaryData | null {
@@ -96,6 +111,11 @@ export function parseSummary(raw: unknown): CallSummaryData | null {
     actionItems: strings(r.action_items).length ? strings(r.action_items) : strings(r.follow_up_actions),
     objections: strings(r.objections),
     nextSteps: first(text(r.next_steps), strings(r.agreed_next_steps).join('; ')),
+    brief: text(r.brief),
+    detailedSummary: text(r.detailed_summary),
+    salesmanSaid: strings(r.salesman_said),
+    customerSaid: strings(r.customer_said),
+    numbers: parseNumbers(r.numbers),
     notice: r.status === 'not_enough_speech' ? text(r.reason) || 'Not enough speech to summarise.' : undefined,
   };
 }
