@@ -1,0 +1,21 @@
+// Local Expo module wrapping Exotel's Android Voice SDK (ExotelVoice). SKELETON: the SDK is NOT linked yet, so nothing here can reach Exotel.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.exotelvoice'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.exotelvoice"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+}
+
+dependencies {
+  // AFTER Exotel confirms the flow and provides the SDK: add Exotel's AAR here, e.g. implementation files('libs/exotel-voice.aar'),
+  // and set ExotelVoiceModule.SDK_ENABLED = true.
+}

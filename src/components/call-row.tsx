@@ -1,11 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { avatarColor, formatCallDuration, formatCallTime, isMissedCall } from '@/lib/call-format';
+import { fetchCallCapabilities } from '@/lib/api';
+import { dialBlockedReason, newDialKey } from '@/lib/dial';
+import { placeCall } from '@/lib/dial-flow';
 import type { CallLogEntry } from '@/types/api';
+import { FasttracksDialer } from '../../modules/fasttracks-dialer/src';
 
 const GREEN = '#1E8E3E';
 const RED = '#B83030';
@@ -20,11 +25,34 @@ export function CallRow({ call }: { call: CallLogEntry }) {
   const label = missed ? 'Missed' : inbound ? 'Incoming' : 'Outgoing';
   const duration = missed ? null : formatCallDuration(call.durationSeconds);
 
-  // UI only — Exotel calling is wired up separately. The number is shown
-  // exactly as the API returns it (the backend masks it on purpose).
-  const callBack = () => {
-    const who = call.customerName && call.counterpartyDisplay ? `${name}\n${call.counterpartyDisplay}` : name;
-    Alert.alert('Calling not connected yet', `${who}\n\nCalling through Exotel will be added soon.`);
+  // "Call back": the same Exotel click-to-call as the dial pad. The list only has a masked number, so the call's id goes to the server, which looks the real
+  // number up for a call this user may see. The key is kept until a call is placed, so a retry after a network failure cannot ring the customer twice.
+  const [busy, setBusy] = useState(false);
+  const key = useRef<string | null>(null);
+  const callBack = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const caps = await fetchCallCapabilities().catch(() => null);
+      const blocked = dialBlockedReason(caps);
+      if (blocked) { Alert.alert('Cannot call', blocked); return; }
+      let isPhoneApp = false;
+      try { isPhoneApp = !!FasttracksDialer?.isDefaultDialer(); } catch { /* not a phone-app build */ }
+      key.current ??= newDialKey();
+      const out = await placeCall({
+        target: { fromCallId: call.id }, display: name, key: key.current,
+        native: FasttracksDialer ?? null, autoOn: !!caps?.c2cAutoAnswerEnabled && !!FasttracksDialer, isPhoneApp,
+      });
+      if (out.kind === 'placed') {
+        key.current = null;
+        if (!out.autoAnswered) Alert.alert('Calling', 'Your phone will ring first. Answer it to be connected.');
+      } else if (out.kind === 'failed') {
+        if (!out.keepKey) key.current = null;
+        Alert.alert('Could not place the call', out.text);
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -63,11 +91,12 @@ export function CallRow({ call }: { call: CallLogEntry }) {
       </View>
       <Pressable
         onPress={callBack}
+        disabled={busy}
         accessibilityLabel="Call back"
         accessibilityRole="button"
         hitSlop={Spacing.half * 2}
         style={styles.callButton}>
-        <Ionicons name="call" size={20} color="#ffffff" />
+        {busy ? <ActivityIndicator color="#ffffff" /> : <Ionicons name="call" size={20} color="#ffffff" />}
       </Pressable>
     </View>
   );

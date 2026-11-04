@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar, FadeIn, PRESSED_OPACITY, Segmented } from '@/components/call-tracker/primitives';
@@ -9,7 +10,8 @@ import { ThemedText } from '@/components/themed-text';
 import { Badge, type BadgeVariant } from '@/components/ui';
 import { Fonts, FontWeights, Radii, Spacing, withAlpha } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { directionLabel, formatClock, type CallTrackerEntry } from '@/lib/call-tracker';
+import { getErrorMessage } from '@/lib/api';
+import { callAudioSource, directionLabel, fetchCallTrackerDetail, formatClock, type CallSummaryData, type CallTrackerEntry, type CallTurn } from '@/lib/call-tracker';
 import { longDay, timeRange } from '@/lib/call-tracker-format';
 
 const TABULAR = { fontVariant: ['tabular-nums' as const] };
@@ -25,6 +27,7 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   available: 'success',
   completed: 'success',
   processing: 'warning',
+  pending: 'muted',
   failed: 'danger',
   missing: 'danger',
   none: 'muted',
@@ -40,25 +43,146 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Disabled player: there is no audio or playback backend yet.
+const LOAD_TIMEOUT_MS = 15000;
+
+// Plays the call's recording through the backend audio route (OWNER only, bearer token as a header). The audio is only fetched when
+// the user presses play. The player is released when the detail closes (expo-audio frees it on unmount).
 function PlayerCard({ call }: { call: CallTrackerEntry }) {
   const theme = useTheme();
+  const player = useAudioPlayer(null);
+  const status = useAudioPlayerStatus(player);
+  const [phase, setPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const blobUrl = useRef<string | null>(null);
+  const hasAudio = !!call.audioUrl;
+  const total = status.duration > 0 ? status.duration : call.durationSeconds;
+
+  useEffect(() => {
+    if (phase === 'loading' && status.isLoaded) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reacts to the player's loaded status
+      setPhase('ready');
+    }
+  }, [phase, status.isLoaded]);
+
+  // Release a web blob: URL when the detail closes.
+  useEffect(() => () => { if (blobUrl.current) URL.revokeObjectURL(blobUrl.current); }, []);
+
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    const t = setTimeout(() => {
+      player.pause();
+      setPhase('error');
+    }, LOAD_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [phase, player]);
+
+  const toggle = async () => {
+    if (!call.audioUrl || phase === 'loading') return;
+    if (phase === 'ready') {
+      if (status.playing) { player.pause(); return; }
+      if (status.didJustFinish) await player.seekTo(0);
+      player.play();
+      return;
+    }
+    setPhase('loading');
+    try {
+      const source = await callAudioSource(call.audioUrl);
+      if (source.uri.startsWith('blob:')) blobUrl.current = source.uri;
+      player.replace(source);
+      player.play();
+    } catch {
+      setPhase('error');
+    }
+  };
+
+  const note = !hasAudio ? 'No recording available for this call'
+    : phase === 'error' ? 'Could not load the recording. Tap to try again'
+      : phase === 'loading' ? 'Loading recording...'
+        : null;
+  const ratio = phase === 'ready' && total > 0 ? Math.min(1, status.currentTime / total) : 0;
+
   return (
     <View style={[styles.player, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <View style={styles.playerRow}>
-        <View style={[styles.play, { backgroundColor: withAlpha(theme.primary, 0.35) }]} accessibilityLabel="Play recording (unavailable)" accessibilityState={{ disabled: true }}>
-          <Ionicons name="play" size={24} color="#FFFFFF" style={styles.playIcon} />
-        </View>
+        <Pressable
+          onPress={toggle}
+          disabled={!hasAudio || phase === 'loading'}
+          accessibilityRole="button"
+          accessibilityLabel={!hasAudio ? 'Recording unavailable' : status.playing ? 'Pause recording' : 'Play recording'}
+          accessibilityState={{ disabled: !hasAudio || phase === 'loading' }}
+          style={({ pressed }) => [styles.play, { backgroundColor: hasAudio ? theme.primary : withAlpha(theme.primary, 0.35) }, pressed && { opacity: PRESSED_OPACITY }]}>
+          {phase === 'loading'
+            ? <ActivityIndicator color="#FFFFFF" />
+            : <Ionicons name={status.playing ? 'pause' : 'play'} size={24} color="#FFFFFF" style={status.playing ? undefined : styles.playIcon} />}
+        </Pressable>
         <View style={styles.flex1}>
-          <View style={[styles.progress, { backgroundColor: theme.border }]} />
-          <ThemedText themeColor="textMuted" style={[styles.time, TABULAR]}>0:00 / {formatClock(call.durationSeconds)}</ThemedText>
+          <View style={[styles.progress, { backgroundColor: theme.border }]}>
+            <View style={{ height: 4, borderRadius: 2, width: `${ratio * 100}%`, backgroundColor: theme.primary }} />
+          </View>
+          <ThemedText themeColor="textMuted" style={[styles.time, TABULAR]}>
+            {formatClock(phase === 'ready' ? status.currentTime : 0)} / {formatClock(total)}
+          </ThemedText>
         </View>
       </View>
-      <ThemedText themeColor="textMuted" style={styles.playerNote}>
-        {call.audioUrl ? 'Playback will be added soon' : 'Recording will be available when the backend is connected'}
-      </ThemedText>
+      {note ? <ThemedText themeColor={phase === 'error' ? undefined : 'textMuted'} style={[styles.playerNote, phase === 'error' && { color: theme.danger }]}>{note}</ThemedText> : null}
     </View>
   );
+}
+
+function SummaryBlock({ summary }: { summary: CallSummaryData }) {
+  if (summary.notice) return <ThemedText themeColor="textMuted" style={styles.prose}>{summary.notice}</ThemedText>;
+  const empty = !summary.intent && !summary.nextSteps && ![summary.keyPoints, summary.decisions, summary.actionItems, summary.objections].some((l) => l.length);
+  // Older records (before the current summary format) have none of the current fields: say so rather than show a blank tab.
+  if (empty) return <ThemedText themeColor="textMuted" style={styles.prose}>The saved summary has no usable content (older format or nothing was said).</ThemedText>;
+  const lists: { label: string; items: string[] }[] = [
+    { label: 'Key points', items: summary.keyPoints },
+    { label: 'Decisions', items: summary.decisions },
+    { label: 'Action items', items: summary.actionItems },
+    { label: 'Objections', items: summary.objections },
+  ];
+  return (
+    <View style={styles.sections}>
+      {summary.intent ? <Section label="Intent"><ThemedText style={styles.prose}>{summary.intent}</ThemedText></Section> : null}
+      {lists.filter((l) => l.items.length).map((l) => (
+        <Section key={l.label} label={l.label}>
+          {l.items.map((item, i) => <ThemedText key={i} style={styles.prose}>{`\u2022 ${item}`}</ThemedText>)}
+        </Section>
+      ))}
+      {summary.nextSteps ? <Section label="Next steps"><ThemedText style={styles.prose}>{summary.nextSteps}</ThemedText></Section> : null}
+    </View>
+  );
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <ThemedText themeColor="textMuted" style={styles.sectionLabel}>{label}</ThemedText>
+      {children}
+    </View>
+  );
+}
+
+// Speaker = recording channel: channel 0 is the salesman, channel 1 the customer.
+function TranscriptView({ turns }: { turns: CallTurn[] }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.sections}>
+      {turns.map((t, i) => (
+        <View key={i} style={styles.turn}>
+          <ThemedText style={[styles.speaker, { color: t.speaker === 'SALESMAN' ? theme.primary : theme.textSecondary }]}>
+            {t.speaker === 'SALESMAN' ? 'Salesman' : t.speaker === 'CUSTOMER' ? 'Customer' : t.speaker}
+          </ThemedText>
+          <ThemedText style={styles.prose}>{t.text}</ThemedText>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Why a tab has nothing to show, from the stage status (never a made-up placeholder).
+function emptyText(what: 'summary' | 'transcript', status: CallTrackerEntry['transcriptStatus'], failure?: string) {
+  if (status === 'failed') return `The ${what} failed${failure ? `: ${failure}` : '.'}`;
+  if (status === 'processing') return `The ${what} is still being prepared.`;
+  return `No ${what} yet for this call.`;
 }
 
 function KeyValue({ label, children, last }: { label: string; children: React.ReactNode; last?: boolean }) {
@@ -93,9 +217,21 @@ function CopyButton({ text }: { text: string }) {
 
 // The selected call: header, metrics, player and Summary / Transcript / Details.
 // Give it key={callId} so the tab resets when the call changes.
-export function CallDetail({ call }: { call: CallTrackerEntry }) {
+export function CallDetail({ call: listCall }: { call: CallTrackerEntry }) {
   const theme = useTheme();
   const [tab, setTab] = useState<DetailTab>('summary');
+  const [call, setCall] = useState(listCall);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const wantsDetail = !listCall.detailLoaded && (listCall.transcriptStatus === 'completed' || listCall.summaryStatus === 'completed');
+
+  useEffect(() => {
+    if (!wantsDetail) return;
+    let cancelled = false;
+    fetchCallTrackerDetail(listCall)
+      .then((full) => { if (!cancelled) setCall(full); })
+      .catch((err) => { if (!cancelled) setDetailError(getErrorMessage(err, 'Could not load the transcript and summary.')); });
+    return () => { cancelled = true; };
+  }, [listCall, wantsDetail]);
 
   return (
     <View style={styles.detail}>
@@ -125,9 +261,12 @@ export function CallDetail({ call }: { call: CallTrackerEntry }) {
       <View style={styles.tabBody}>
         <FadeIn key={tab}>
           {tab === 'summary' ? (
-            <ThemedText style={styles.prose}>{call.summary ?? 'No summary available.'}</ThemedText>
+            call.summaryData ? <SummaryBlock summary={call.summaryData} />
+              : <ThemedText themeColor="textMuted" style={styles.prose}>{detailError ?? (wantsDetail ? 'Loading...' : emptyText('summary', call.summaryStatus, call.failureReason))}</ThemedText>
           ) : tab === 'transcript' ? (
-            <ThemedText style={[styles.prose, styles.transcript]}>{call.transcript ?? 'No transcript available.'}</ThemedText>
+            call.turns ? <TranscriptView turns={call.turns} />
+              : call.transcript ? <ThemedText style={[styles.prose, styles.transcript]}>{call.transcript}</ThemedText>
+                : <ThemedText themeColor="textMuted" style={styles.prose}>{detailError ?? (wantsDetail ? 'Loading...' : emptyText('transcript', call.transcriptStatus, call.failureReason))}</ThemedText>
           ) : (
             <View>
               <KeyValue label="Call ID">
@@ -195,6 +334,11 @@ const styles = StyleSheet.create({
   tabBody: { minHeight: 240 },
   prose: { fontSize: 15, lineHeight: 22 },
   transcript: { lineHeight: 22 },
+  sections: { gap: Spacing.three },
+  section: { gap: 4 },
+  sectionLabel: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  turn: { gap: 2 },
+  speaker: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
   kv: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, minHeight: 48 },
   kvLabel: { width: 110, fontSize: 13, lineHeight: 18 },
   kvValue: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: Spacing.two },
