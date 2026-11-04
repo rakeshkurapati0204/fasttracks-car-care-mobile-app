@@ -185,6 +185,7 @@ import type {
   ReconcileReason,
   ReconciliationRecord,
   DraftReceipt,
+  PaymentReminderFull,
   InventoryListItem,
   InventoryListParams,
   SellerMatch,
@@ -2754,6 +2755,50 @@ export async function deletePaymentReminder(id: string) {
 export async function markPaymentReminderPaid(id: string) {
   const { data } = await api.post<ApiEnvelope<PaymentReminder>>(`/accounts/reminders/${id}/mark-paid`);
   return data.data;
+}
+
+// Accounts page (dashboard parity) — the same routes with the dashboard's own
+// bodies (nullable EMI fields, reminder reference/paid-by fields).
+export async function fetchPaymentRemindersFull() {
+  const { data } = await api.get<ApiEnvelope<PaymentReminderFull[]>>('/accounts/reminders');
+  return data.data;
+}
+
+export async function saveBankAccountRecord(id: string | null, body: Record<string, unknown>) {
+  const { data } = id
+    ? await api.put<ApiEnvelope<BankAccount>>(`/accounts/bank/${id}`, body)
+    : await api.post<ApiEnvelope<BankAccount>>('/accounts/bank', body);
+  return data.data;
+}
+
+export async function saveEmiRecord(id: string | null, body: Record<string, unknown>) {
+  const { data } = id
+    ? await api.put<ApiEnvelope<EMI>>(`/accounts/emis/${id}`, body)
+    : await api.post<ApiEnvelope<EMI>>('/accounts/emis', body);
+  return data.data;
+}
+
+export async function saveReminderRecord(id: string | null, body: Record<string, unknown>) {
+  const { data } = id
+    ? await api.put<ApiEnvelope<PaymentReminderFull>>(`/accounts/reminders/${id}`, body)
+    : await api.post<ApiEnvelope<PaymentReminderFull>>('/accounts/reminders', body);
+  return data.data;
+}
+
+// Streams a private bank-account / EMI document to the cache for the share sheet.
+export async function downloadAccountDocument(kind: 'bank' | 'emi', documentId: string, filename: string): Promise<{ uri: string }> {
+  const token = await tokenStorage.get();
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const dest = `${FileSystem.cacheDirectory}account-${documentId}-${safe}`;
+  const path = kind === 'bank' ? `/accounts/bank/documents/${documentId}/file` : `/accounts/emis/documents/${documentId}/file`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}${path}`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to open document');
+  }
+  return { uri: result.uri };
 }
 
 // ── ERP Finance — server-gated to OWNER/STORE_MANAGER/ACCOUNTING ───────────

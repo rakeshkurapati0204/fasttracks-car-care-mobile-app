@@ -3987,3 +3987,12 @@ export interface BarcodeLookup {
   receiptId?: string;
   remainingQty?: number;
 }
+
+// ── Accounts page: the reminder fields the dashboard reads beyond PaymentReminder ──
+export interface PaymentReminderFull extends PaymentReminder {
+  bankAccountId: string | null;
+  paymentMethod: string | null;
+  accountReference: string | null;
+  paidBy: { id: string; name: string } | null;
+  receiptUrl: string | null;
+}
