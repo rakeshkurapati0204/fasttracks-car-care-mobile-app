@@ -15,6 +15,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui';
 import { FontWeights, Spacing, withAlpha } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useContentWidth } from '@/lib/drawer-context';
 import { fetchCallTrackerEntries, type CallTrackerEntry } from '@/lib/call-tracker';
@@ -36,6 +37,7 @@ export default function CallTrackerScreen() {
   const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
 
   const [calls, setCalls] = useState<CallTrackerEntry[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -43,7 +45,14 @@ export default function CallTrackerScreen() {
 
   const load = useCallback(async () => {
     if (!isAuthorized) return;
-    setCalls(await fetchCallTrackerEntries());
+    try {
+      setCalls(await fetchCallTrackerEntries());
+      setLoadError(null);
+    } catch (err) {
+      // Nothing is shown in place of real data: the failure is stated (e.g. the backend route is not deployed yet).
+      setCalls((prev) => prev ?? []);
+      setLoadError(getErrorMessage(err, 'Could not load calls.'));
+    }
   }, [isAuthorized]);
 
   useEffect(() => {
@@ -115,7 +124,13 @@ export default function CallTrackerScreen() {
         />
       </View>
 
-      {loading ? (
+      {loadError ? (
+        <View style={[styles.gutter, styles.errorBox]}>
+          <ThemedText style={styles.emptyTitle}>Call Intelligence is not available</ThemedText>
+          <ThemedText themeColor="textMuted" style={styles.emptyText}>{loadError}</ThemedText>
+          <Button variant="outline" onPress={onRefresh}>Try again</Button>
+        </View>
+      ) : loading ? (
         <View>
           {[0, 1, 2, 3].map((i) => <CallRowSkeleton key={i} />)}
         </View>
@@ -185,6 +200,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 13, lineHeight: 18 },
   empty: { alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.five, paddingHorizontal: Spacing.four },
   emptyIcon: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.two },
+  errorBox: { alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.five },
   emptyTitle: { fontSize: 18, lineHeight: 24, fontFamily: FontWeights.semiBold },
   emptyText: { fontSize: 14, lineHeight: 20, marginBottom: Spacing.two },
 });

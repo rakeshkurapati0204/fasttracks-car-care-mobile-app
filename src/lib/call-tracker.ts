@@ -1,4 +1,12 @@
-export type CallTrackerStatus = 'completed' | 'processing' | 'failed' | 'none';
+import { Platform } from 'react-native';
+
+import { api } from '@/lib/api';
+import { tokenStorage } from '@/lib/token-storage';
+import type { ApiEnvelope } from '@/types/api';
+
+import { toEntry, withDetail, type CallIntelligenceItem } from './call-intelligence';
+
+export type CallTrackerStatus = 'completed' | 'processing' | 'pending' | 'failed' | 'none';
 
 export type CallTrackerEntry = {
   callId: string;
@@ -16,78 +24,59 @@ export type CallTrackerEntry = {
   audioUrl?: string;
   transcriptStatus: CallTrackerStatus;
   summaryStatus: CallTrackerStatus;
+  /** Plain transcript text ("SALESMAN: ...\nCUSTOMER: ..."), only after the detail is loaded. */
   transcript?: string;
+  /** Speaker-labelled turns parsed from the transcript. Speaker = recording channel (channel 0 SALESMAN, channel 1 CUSTOMER). */
+  turns?: CallTurn[];
+  /** One line: the summary's intent (or the "not enough speech" notice). */
   summary?: string;
+  summaryData?: CallSummaryData;
+  /** Why a stage failed, when the service says so. */
+  failureReason?: string;
+  /** True once /call-intelligence/recordings/:id has been merged in. */
+  detailLoaded?: boolean;
 };
 
-const SAMPLE_TRANSCRIPT =
-  'Salesperson: Hello, this is a follow-up from FastTracks Car Care about your vehicle.\n' +
-  'Customer: Yes, tell me.\n' +
-  'Salesperson: Your car is ready for pickup. Would you like to collect it today?\n' +
-  'Customer: I will come in the evening.';
+export type CallTurn = { speaker: 'SALESMAN' | 'CUSTOMER' | 'UNKNOWN' | string; text: string };
 
-const SAMPLE_SUMMARY =
-  'Follow-up call to tell the customer the car is ready. Customer confirmed pickup in the evening.';
+export type CallSummaryData = {
+  intent: string;
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: string[];
+  objections: string[];
+  nextSteps: string;
+  /** Set when the call was too short to summarise; the other fields are then empty. */
+  notice?: string;
+};
 
-const SAMPLE: CallTrackerEntry[] = [
-  {
-    callId: '21469de064ad4f1c8b5e0a7d93c2e611',
-    salesperson: 'Salesman 2',
-    salespersonPhoneMasked: '****5252',
-    customerPhoneMasked: '****1086',
-    direction: 'OUTBOUND',
-    source: 'Exotel',
-    startedAt: '2026-10-28T11:34:49',
-    endedAt: '2026-10-28T11:35:45',
-    durationSeconds: 56,
-    talkTimeSeconds: 44,
-    recordingStatus: 'available',
-    transcriptStatus: 'completed',
-    summaryStatus: 'completed',
-    transcript: SAMPLE_TRANSCRIPT,
-    summary: SAMPLE_SUMMARY,
-  },
-  {
-    callId: 'cd847b1d001d49a2a6f3e8b0c5174d92',
-    salesperson: 'Salesman 2',
-    salespersonPhoneMasked: '****5252',
-    customerPhoneMasked: '****1086',
-    direction: 'OUTBOUND',
-    source: 'Exotel',
-    startedAt: '2026-10-26T10:58:39',
-    endedAt: '2026-10-26T10:59:13',
-    durationSeconds: 35,
-    talkTimeSeconds: 18,
-    recordingStatus: 'available',
-    transcriptStatus: 'completed',
-    summaryStatus: 'completed',
-    transcript: SAMPLE_TRANSCRIPT,
-    summary: SAMPLE_SUMMARY,
-  },
-  {
-    callId: '3758ae3c9be84d07b1c2f6a9e0d35c78',
-    salesperson: 'Salesman 1',
-    salespersonPhoneMasked: '****4902',
-    customerPhoneMasked: '****1086',
-    direction: 'OUTBOUND',
-    source: 'Exotel',
-    startedAt: '2026-10-24T17:44:13',
-    endedAt: '2026-10-24T17:44:52',
-    durationSeconds: 39,
-    talkTimeSeconds: 17,
-    recordingStatus: 'available',
-    transcriptStatus: 'completed',
-    summaryStatus: 'completed',
-    transcript: SAMPLE_TRANSCRIPT,
-    summary: SAMPLE_SUMMARY,
-  },
-];
+const PAGE_SIZE = 100;
 
-// TODO: replace with a real backend API call once one exists (there is no
-// call-tracker endpoint yet). Numbers must stay masked in the response.
+// GET /call-intelligence/recordings (Node backend, OWNER only) -> list items without transcript or summary.
 export async function fetchCallTrackerEntries(): Promise<CallTrackerEntry[]> {
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  return SAMPLE.map((entry) => ({ ...entry }));
+  const { data } = await api.get<ApiEnvelope<{ items: CallIntelligenceItem[] }>>('/call-intelligence/recordings', { params: { limit: PAGE_SIZE } });
+  return (data.data?.items ?? []).map(toEntry);
+}
+
+// GET /call-intelligence/recordings/:id -> the same item plus transcriptText and summary. Fetched when a call is opened.
+export async function fetchCallTrackerDetail(entry: CallTrackerEntry): Promise<CallTrackerEntry> {
+  const { data } = await api.get<ApiEnvelope<CallIntelligenceItem>>(`/call-intelligence/recordings/${encodeURIComponent(entry.callId)}`);
+  return withDetail(entry, data.data);
+}
+
+// Playback source for expo-audio: the backend's own audio route (same origin as the API) plus the login token as a header. The service's
+// token and its recording URLs never reach the app. Only a path on the API's own host is accepted, so the token cannot be sent elsewhere.
+// A browser <audio> element cannot send headers, so on web (a preview target, not a shipped one) the file is fetched with the normal
+// authenticated client and played from a blob: URL instead.
+export async function callAudioSource(audioUrl: string): Promise<{ uri: string; headers: Record<string, string> }> {
+  if (!audioUrl.startsWith('/') || audioUrl.startsWith('//')) throw new Error('Unexpected audio location');
+  const url = new URL(audioUrl, api.defaults.baseURL).toString();
+  if (Platform.OS === 'web') {
+    const { data } = await api.get<Blob>(url, { responseType: 'blob' });
+    return { uri: URL.createObjectURL(data), headers: {} };
+  }
+  const token = await tokenStorage.get();
+  return { uri: url, headers: token ? { Authorization: `Bearer ${token}` } : {} };
 }
 
 // m:ss, e.g. 56 -> "0:56".

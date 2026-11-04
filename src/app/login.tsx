@@ -22,7 +22,9 @@ export default function LoginScreen() {
     try {
       await signIn(username.trim(), password);
     } catch (err: any) {
-      setError(err?.response?.data?.message ?? 'Login failed — check your username and password.');
+      // The backend answers { success:false, error }, so read `error` too. With no response at all it is a network problem, not a bad password.
+      const fromServer = err?.response?.data?.error ?? err?.response?.data?.message;
+      setError(fromServer ?? (err?.response ? `Login failed (HTTP ${err.response.status}).` : `Cannot reach the server: ${err?.message ?? 'network error'}`));
     } finally {
       setIsSubmitting(false);
     }
@@ -58,6 +60,9 @@ export default function LoginScreen() {
           placeholder="Password"
           placeholderTextColor={theme.textSecondary}
           secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="off"
           style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
         />
 

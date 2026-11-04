@@ -2,6 +2,7 @@ import * as axios from 'axios';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { tokenStorage } from '@/lib/token-storage';
+import type { VoipPrepared, VoipStarted, VoipToken } from '@/lib/voip/types';
 import type {
   ApiEnvelope,
   AppNotification,
@@ -46,6 +47,7 @@ import type {
   TaskStatus,
   CallCapabilities,
   CallInitiateResult,
+  DialResult,
   AgentStatus,
   AgentActivity,
   AllTimesheetRow,
@@ -1248,6 +1250,36 @@ export async function submitTimesheet(id: string) {
 export async function fetchCallCapabilities() {
   const { data } = await api.get<ApiEnvelope<CallCapabilities>>('/calls/capabilities');
   return data.data;
+}
+
+// The dial pad: a typed number, never a customer id. The backend rings the signed-in user's own phone first, then connects this number.
+// `target` is a typed number, or `{ fromCallId }` for "call back" from the history: the list only has masked numbers, so the server looks the real one up.
+export async function dialNumber(target: string | { phone: string } | { fromCallId: string }, idempotencyKey: string) {
+  const who = typeof target === 'string' ? { phone: target } : target;
+  const { data } = await api.post<ApiEnvelope<DialResult>>('/calls/dial', { ...who, idempotencyKey, confirm: true });
+  return data.data;
+}
+
+// In-app VoIP (app-originated). `prepare` validates the customer's number and returns the callRef the SDK dials with; `token` is the Exotel subscriber
+// token for THIS user (a mock in local testing). Neither places a call: the SDK does, through Exotel.
+export async function voipPrepare(phoneE164: string, idempotencyKey: string) {
+  const { data } = await api.post<ApiEnvelope<VoipPrepared>>('/calls/voip/prepare', { phone: phoneE164, idempotencyKey });
+  return data.data;
+}
+
+export async function voipToken() {
+  const { data } = await api.post<ApiEnvelope<VoipToken>>('/calls/voip/token', {});
+  return data.data;
+}
+
+// CCM flow: place the call at Exotel (idempotent per callRef) and tell the backend when the app gives up.
+export async function voipStart(callRef: string) {
+  const { data } = await api.post<ApiEnvelope<VoipStarted>>('/calls/voip/start', { callRef });
+  return data.data;
+}
+
+export async function voipCancel(callRef: string, reason: string) {
+  await api.post('/calls/voip/cancel', { callRef, reason });
 }
 
 export async function initiateCall(customerId: string) {
