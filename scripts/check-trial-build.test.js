@@ -52,9 +52,10 @@ test('eas.json: sales-trial is a release APK with internal distribution, no dev 
   for (const k of Object.keys(p.env)) assert.ok(['FASTTRACKS_DIALER', 'FASTTRACKS_TRIAL', 'EXPO_PUBLIC_API_URL'].includes(k), `unexpected env ${k}`);
 });
 
-test('eas.json: the placeholder URL cannot be built (the guard refuses it until a real staging URL is set)', () => {
+test('eas.json: the sales-trial URL is the staging dashboard and passes the guard', () => {
   const p = eas.build['sales-trial'];
-  assert.ok(check({ ...p.env }).length > 0);
+  assert.equal(new URL(p.env.EXPO_PUBLIC_API_URL).host, 'staging.dashboard.fasttrackscarcare.in');
+  assert.deepEqual(check({ ...p.env }), []);
 });
 
 test('eas.json: every existing profile is exactly as before', () => {

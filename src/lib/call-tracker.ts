@@ -46,6 +46,14 @@ export type CallSummaryData = {
   actionItems: string[];
   objections: string[];
   nextSteps: string;
+  /** Two or three lines, then the long account of the call (what each side said), both in English. Empty on older records. */
+  brief: string;
+  detailedSummary: string;
+  /** What the salesman and the customer each said, one point per entry. */
+  salesmanSaid: string[];
+  customerSaid: string[];
+  /** Prices, amounts, dates and quantities. `verified` is false when the number could not be matched to the transcript. */
+  numbers: { what: string; value: string; saidBy: string; quote: string; verified: boolean }[];
   /** Set when the call was too short to summarise; the other fields are then empty. */
   notice?: string;
 };
