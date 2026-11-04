@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deliberately empty. Permissions and the foreground service are added by plugins/with-exotel-voice.js ONLY for builds made with FASTTRACKS_VOIP_NATIVE=1
+     (EAS profile "development-voip"), so every other build keeps its current manifest. -->
+<manifest />

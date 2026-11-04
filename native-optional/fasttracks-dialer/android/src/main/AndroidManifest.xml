@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deliberately empty. The phone-app declarations (InCallService, dialer activities, permissions) are added by plugins/with-fasttracks-dialer.js ONLY for builds
+     made with FASTTRACKS_DIALER=1 (EAS profile "development-dialer"), so every other build keeps its current manifest and never becomes a phone app. -->
+<manifest />

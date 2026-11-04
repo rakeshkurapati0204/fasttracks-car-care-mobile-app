@@ -6,7 +6,7 @@ import type { ApiEnvelope } from '@/types/api';
 
 import { toEntry, withDetail, type CallIntelligenceItem } from './call-intelligence';
 
-export type CallTrackerStatus = 'completed' | 'processing' | 'failed' | 'none';
+export type CallTrackerStatus = 'completed' | 'processing' | 'pending' | 'failed' | 'none';
 
 export type CallTrackerEntry = {
   callId: string;

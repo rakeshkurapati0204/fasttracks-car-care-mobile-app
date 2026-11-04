@@ -15,6 +15,21 @@ mobile app  --JWT-->  Node/Express backend (dashboard repo)  --bearer token-->  
   purpose: `GET /api/recordings`, `GET /api/recordings/{id}`, `GET /api/recordings/{id}/audio`, all with `Authorization: Bearer <DASHBOARD_API_TOKEN>`.
 - Exotel and Sarvam credentials stay in the service's own `.env`. Nothing secret goes into this app.
 
+## The Call Intelligence service is bundled in this repo
+
+`services/call-intelligence/` is a copy of the Python PoC (Exotel callbacks, recording retrieval, Sarvam transcription with SALESMAN/CUSTOMER
+channel labels, structured summary, cost tracking, mock/demo mode). It is NOT part of the app bundle (Metro only bundles what the app imports) and
+its `.venv`, `.env*`, `data*` and real salesperson numbers are git-ignored. Mock-only commands (no real Exotel, no Sarvam, no credits):
+
+```bash
+npm run ci:setup   # once: virtual environment + dependencies inside services/call-intelligence
+npm run ci:test    # the service's tests
+npm run ci:stack   # mock Exotel + fake Sarvam + the read API on port 4437 (writes /tmp/call-intel-stack.json)
+npm run ci:e2e     # 20 scenarios against that stack: outgoing, incoming, duplicates, retry, unanswered
+```
+
+Real provider use stays in that folder's own `.env` (never committed) and its CLI (`README.md` there), and always needs explicit approval.
+
 ## Backend routes (dashboard repo, branch `feature/call-intelligence`, not committed yet)
 
 `backend/src/routes/callIntelligence.ts`, mounted at `/api/v1/call-intelligence`, behind `verifyToken` and `requireRoles('OWNER')`. Read-only proxy to the service:
@@ -52,3 +67,19 @@ older format (before 28 Oct) have none of the current fields and show "no conten
 - NOT verified: the app on a device or emulator against the running backend, a real call placed from the app, audio playback.
 - Audio playback is NOT in the app: the backend streams audio, but the Call Tracker player is still a disabled stub (`expo-audio` is in package.json but unused, and an authenticated source was not tested on a device).
 - The customer-page call button and the dialer pad are unchanged and separate: the dialer pad still only shows an alert.
+
+## In-app VoIP calling (Option A, mock only so far)
+
+Flow: Salesman app > Call > Exotel Voice SDK dials the SIP Exophone > Exotel asks our backend "Dial Whom" > Exotel rings the CUSTOMER. The salesman is never called (no SIM call, no in-app incoming call). Audio uses the app microphone and speaker. Recording, transcription and summary stay on the existing Exotel + Python + Sarvam pipeline.
+
+Built and tested in mock mode (`CALLS_VOIP_ENABLED=true CALLS_VOIP_MOCK=true` on the backend, `EXPO_PUBLIC_VOIP_MOCK=true` in the app):
+- Backend: `POST /calls/voip/prepare`, `POST /calls/voip/token`, `GET /calls/voip/dialwhom/:secret` (no schema change; context kept in `exotel_outbound_request`).
+- App: `src/lib/voip/*` (state machine, engine interface, mock engine, orchestrator), `InCallModal`, dialer wiring. Old click-to-call flow is untouched when VoIP is off.
+
+NOT verified (needs Exotel support, I cannot contact them):
+1. Can Dial Whom for an SDK call return a plain PSTN number? Exotel's SDK page documents only `sip:<id>` and says SIP/PSTN intermixing is not supported.
+2. How are subscriber tokens issued (Subscriber Management API), and which hostname/cluster applies?
+3. Are recording and status callbacks sent for SDK-originated calls, and do `record` / dual-channel recording apply?
+4. Does Exotel list these calls in the Calls API so our sweep can find them?
+
+Still to build after approval: native Kotlin Expo module for the Exotel Android SDK + EAS dev build, and the real Subscriber API client. No real calls, paid APIs, migrations or deploys were done.

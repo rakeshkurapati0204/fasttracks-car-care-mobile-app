@@ -940,10 +940,30 @@ export interface TimesheetDetail {
 
 export interface CallCapabilities {
   callingEnabled: boolean;
+  /** Dial pad flag and permission; absent on a backend that predates POST /calls/dial. */
+  dialPadEnabled?: boolean;
+  canDial?: boolean;
+  /** In-app VoIP calling is switched on and set up on the server. */
+  voipEnabled?: boolean;
+  /** The backend's CCM flow (agent leg answered silently in the app, then Exotel rings the customer) is on. */
+  voipCcmEnabled?: boolean;
+  /** Click-to-call auto-answer is on: a company phone where Fasttracks is the phone app can answer the Exotel call silently. */
+  c2cAutoAnswerEnabled?: boolean;
   canInitiate: boolean;
   canListenRecordings: boolean;
   canDownloadRecordings: boolean;
   canViewAllCalls: boolean;
+}
+
+export interface DialResult {
+  ok: boolean;
+  callId?: string | null;
+  callSid?: string;
+  status?: string;
+  deduped?: boolean;
+  toDisplay?: string;
+  /** Present only for a newly placed call when the backend's auto-answer flag is on: the ExoPhone that will ring this phone and how long to trust it. */
+  autoAnswer?: { callerIds: string[]; windowSeconds: number };
 }
 
 export interface CallInitiateResult {

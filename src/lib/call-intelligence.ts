@@ -17,6 +17,7 @@ export type CallIntelligenceItem = {
   toMasked: string | null;
   startedAt: string | null;
   endedAt: string | null;
+  createdAt?: string | null;
   durationSeconds: number | null;
   conversationSeconds: number | null;
   status: { recording: string; transcription: string; summary: string };
@@ -29,15 +30,26 @@ export type CallIntelligenceItem = {
 const SPEAKER_LINE = /^(SALESMAN|CUSTOMER|SPEAKER_\d+):\s*(.*)$/;
 
 // The service stores "2026-10-28 11:34:49" (India time, no offset); the screens expect "2026-10-28T11:34:49".
+const VALID_STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+
+// An ISO instant ("2026-10-30T07:09:00+00:00") as India wall-clock time, the form the screens use. null when it is not a date.
+export function istStampFromIso(iso: string | null | undefined): string | null {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return null;
+  return new Date(t + 330 * 60_000).toISOString().slice(0, 19);
+}
+
 export function toLocalStamp(value: string | null | undefined): string {
   return (value ?? '').trim().replace(' ', 'T');
 }
 
-// Pipeline stage status -> badge status. "pending" means the stage has not run, which is not "processing".
+// Pipeline stage status -> badge status: pending (not started), processing (running or queued), completed, failed. "pending" is never shown
+// as "processing": a stage that has not run is not being worked on.
 export function mapStageStatus(value: string | undefined): CallTrackerStatus {
   if (value === 'completed') return 'completed';
   if (value === 'failed' || value === 'unavailable') return 'failed';
   if (value === 'running' || value === 'queued') return 'processing';
+  if (value === 'pending') return 'pending';
   return 'none';
 }
 
@@ -89,7 +101,9 @@ export function parseSummary(raw: unknown): CallSummaryData | null {
 }
 
 export function toEntry(item: CallIntelligenceItem): CallTrackerEntry {
-  const started = toLocalStamp(item.startedAt);
+  // The screens need a real timestamp: a call Exotel gave no StartTime for (e.g. never answered) falls back to when the pipeline first saw it.
+  const given = toLocalStamp(item.startedAt);
+  const started = VALID_STAMP.test(given) ? given : (istStampFromIso(item.createdAt) ?? '1970-01-01T00:00:00');
   const entry: CallTrackerEntry = {
     callId: item.recordingId,
     salesperson: item.salesperson ?? 'Unknown',
@@ -98,7 +112,7 @@ export function toEntry(item: CallIntelligenceItem): CallTrackerEntry {
     direction: item.direction?.startsWith('inbound') ? 'INBOUND' : 'OUTBOUND',
     source: item.source === 'android_native' ? 'Android' : 'Exotel',
     startedAt: started,
-    endedAt: toLocalStamp(item.endedAt) || started,
+    endedAt: VALID_STAMP.test(toLocalStamp(item.endedAt)) ? toLocalStamp(item.endedAt) : started,
     durationSeconds: item.durationSeconds ?? 0,
     talkTimeSeconds: item.conversationSeconds ?? 0,
     recordingStatus: mapRecordingStatus(item.status?.recording),

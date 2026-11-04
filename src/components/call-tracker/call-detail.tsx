@@ -27,6 +27,7 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   available: 'success',
   completed: 'success',
   processing: 'warning',
+  pending: 'muted',
   failed: 'danger',
   missing: 'danger',
   none: 'muted',

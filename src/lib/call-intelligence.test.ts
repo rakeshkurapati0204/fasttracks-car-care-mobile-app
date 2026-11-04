@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { mapRecordingStatus, mapStageStatus, parseSummary, parseTurns, toEntry, toLocalStamp, type CallIntelligenceItem } from './call-intelligence.ts';
+import { istStampFromIso, mapRecordingStatus, mapStageStatus, parseSummary, parseTurns, toEntry, toLocalStamp, type CallIntelligenceItem } from './call-intelligence.ts';
 
 const ITEM: CallIntelligenceItem = {
   recordingId: 'abc123-457000031e',
@@ -75,8 +75,11 @@ test('a short call shows the service notice and no invented summary', () => {
   assert.deepEqual(s?.keyPoints, []);
 });
 
-test('stage statuses: pending is "none", never "processing"', () => {
-  assert.equal(mapStageStatus('pending'), 'none');
+test('stage statuses: pending, processing, completed, failed; pending is never "processing"', () => {
+  assert.equal(mapStageStatus('pending'), 'pending');
+  assert.equal(mapStageStatus('running'), 'processing');
+  assert.equal(mapStageStatus('queued'), 'processing');
+  assert.equal(mapStageStatus('completed'), 'completed');
   assert.equal(mapStageStatus('failed'), 'failed');
   assert.equal(mapStageStatus('unavailable'), 'failed');
   assert.equal(mapStageStatus(undefined), 'none');
@@ -112,4 +115,13 @@ test('current format wins over old names when both exist', () => {
   const s = parseSummary({ intent: 'New', call_objective: 'Old', key_points: ['k'], main_discussion_points: ['m'] });
   assert.equal(s?.intent, 'New');
   assert.deepEqual(s?.keyPoints, ['k']);
+});
+
+test('a call without a start time (never answered) falls back to when the pipeline saw it, so the screens never get an empty time', () => {
+  const e = toEntry({ ...ITEM, startedAt: null, endedAt: null, createdAt: '2026-10-30T07:09:19.100+00:00', durationSeconds: 0 });
+  assert.equal(e.startedAt, '2026-10-30T12:39:19');
+  assert.equal(e.endedAt, e.startedAt);
+  assert.match(e.startedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+  assert.equal(istStampFromIso('not a date'), null);
+  assert.equal(toEntry({ ...ITEM, startedAt: null, endedAt: null, createdAt: null }).startedAt, '1970-01-01T00:00:00'); // last resort, never empty
 });
