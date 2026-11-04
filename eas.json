@@ -20,6 +20,15 @@
         "EXPO_PUBLIC_API_URL": "https://dashboard.fasttrackscarcare.in/api/v1"
       }
     },
+    "staging": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://staging.dashboard.fasttrackscarcare.in/api/v1"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "env": {
