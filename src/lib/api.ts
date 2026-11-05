@@ -80,6 +80,7 @@ import type {
   ExpenseReply,
   ExpenseStatus,
   ExpenseSummary,
+  MentionableUser,
   ExtractedReceiptFields,
   ExtractedStatementResult,
   ResolvedPermissions,
@@ -1230,6 +1231,51 @@ export async function fetchExpenseAttachmentDataUri(attachmentId: string, mimeTy
 export async function replyToExpense(expenseId: string, message: string) {
   const { data } = await api.post<ApiEnvelope<ExpenseReply>>(`/expenses/${expenseId}/replies`, { message, mentions: [] });
   return data.data;
+}
+
+// ── Expenses page parity: @-mentions, tagged replies, bill download ─────────
+export async function fetchMentionableUsers() {
+  const { data } = await api.get<ApiEnvelope<MentionableUser[]>>('/employees/mentionable');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Same as submitExpense plus the dashboard's `mentions` field (ids picked in the @ dropdown).
+export async function submitExpenseTagged(
+  input: { amount: number; category: ExpenseCategory; description: string; date: string; mentions: string[] },
+  file?: { uri: string; name: string; mimeType: string },
+) {
+  const form = new FormData();
+  form.append('amount', String(input.amount));
+  form.append('category', input.category);
+  form.append('description', input.description);
+  form.append('date', input.date);
+  form.append('mentions', JSON.stringify(input.mentions));
+  if (file) form.append('file', { uri: file.uri, name: file.name, type: file.mimeType } as any);
+  const { data } = await api.post<ApiEnvelope<Expense>>('/expenses', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+  return data.data;
+}
+
+export async function replyToExpenseTagged(expenseId: string, message: string, mentions: string[]) {
+  const { data } = await api.post<ApiEnvelope<ExpenseReply>>(`/expenses/${expenseId}/replies`, { message, mentions });
+  return data.data;
+}
+
+// Streams a private bill to the cache so it can be opened in the share sheet.
+export async function downloadExpenseAttachment(attachmentId: string, filename: string): Promise<{ uri: string }> {
+  const token = await tokenStorage.get();
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const dest = `${FileSystem.cacheDirectory}expense-${attachmentId}-${safe}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/expenses/attachments/${attachmentId}/file`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to open bill');
+  }
+  return { uri: result.uri };
 }
 
 export async function fetchMyMonthTimesheets(month: number, year: number) {

@@ -831,6 +831,9 @@ export interface ExpenseSummary {
   byDay: ExpenseSummaryByDay[];
 }
 
+// GET /employees/mentionable — the @-tag autocomplete list (any signed-in user).
+export interface MentionableUser { id: string; name: string; role: string }
+
 // Extract/bulk-import — added 2026-09-24, closing the gap flagged when
 // Expenses' core submit/approve flow was built earlier this pass. Neither
 // /extract nor /extract-statement ever persists anything — pure read, the
