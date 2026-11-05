@@ -1,3 +1,4 @@
+import { callMatchesSearch } from '@/lib/call-search';
 import { directionLabel, type CallTrackerEntry } from '@/lib/call-tracker';
 
 export type Filters = {
@@ -21,10 +22,7 @@ const matches = (filter: string, status: string, yes: string) => filter === ALL 
 export function applyFilters(calls: CallTrackerEntry[], f: Filters) {
   const q = f.search.trim().toLowerCase();
   return calls.filter((c) => {
-    if (q) {
-      const haystack = [c.callId, c.salesperson, c.salespersonPhoneMasked, c.customerPhoneMasked, c.transcript, c.summary].filter(Boolean).join(' ').toLowerCase();
-      if (!haystack.includes(q)) return false;
-    }
+    if (!callMatchesSearch(c, q)) return false;
     if (f.direction !== ALL && c.direction !== f.direction) return false;
     if (f.salesperson !== ALL && c.salesperson !== f.salesperson) return false;
     if (f.source !== ALL && c.source !== f.source) return false;

@@ -209,7 +209,7 @@ function KeyValue({ label, children, last }: { label: string; children: React.Re
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label = 'Copy call ID' }: { text: string; label?: string }) {
   const theme = useTheme();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -223,7 +223,7 @@ function CopyButton({ text }: { text: string }) {
   };
 
   return (
-    <Pressable onPress={copy} hitSlop={Spacing.two} accessibilityRole="button" accessibilityLabel="Copy call ID" style={({ pressed }) => [styles.copy, pressed && { opacity: PRESSED_OPACITY }]}>
+    <Pressable onPress={copy} hitSlop={Spacing.two} accessibilityRole="button" accessibilityLabel={label} style={({ pressed }) => [styles.copy, pressed && { opacity: PRESSED_OPACITY }]}>
       <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={18} color={copied ? theme.success : theme.textSecondary} />
     </Pressable>
   );
@@ -252,7 +252,7 @@ export function CallDetail({ call: listCall }: { call: CallTrackerEntry }) {
       <View style={styles.hero}>
         <Avatar name={call.salesperson} size={56} />
         <View style={styles.flex1}>
-          <ThemedText style={[styles.number, TABULAR]}>{call.customerPhoneMasked}</ThemedText>
+          <ThemedText style={[styles.number, TABULAR]} selectable>{call.customerPhone}</ThemedText>
           <ThemedText themeColor="textSecondary" style={styles.when}>{longDay(call.startedAt)} · {timeRange(call.startedAt, call.endedAt)}</ThemedText>
         </View>
       </View>
@@ -287,7 +287,14 @@ export function CallDetail({ call: listCall }: { call: CallTrackerEntry }) {
                 <ThemedText style={styles.mono} selectable numberOfLines={1} ellipsizeMode="middle">{call.callId}</ThemedText>
                 <CopyButton text={call.callId} />
               </KeyValue>
-              <KeyValue label="Salesperson no."><ThemedText style={[styles.kvText, TABULAR]}>{call.salespersonPhoneMasked}</ThemedText></KeyValue>
+              <KeyValue label="Customer no.">
+                <ThemedText style={[styles.kvText, TABULAR]} selectable>{call.customerPhone}</ThemedText>
+                {call.customerPhone ? <CopyButton text={call.customerPhone.replace(/[^\d+]/g, '')} label="Copy customer number" /> : null}
+              </KeyValue>
+              <KeyValue label="Salesperson no.">
+                <ThemedText style={[styles.kvText, TABULAR]} selectable>{call.salespersonPhone}</ThemedText>
+                {call.salespersonPhone ? <CopyButton text={call.salespersonPhone.replace(/[^\d+]/g, '')} label="Copy salesperson number" /> : null}
+              </KeyValue>
               <KeyValue label="Source"><ThemedText style={styles.kvText}>{call.source}</ThemedText></KeyValue>
               <KeyValue label="Recording"><Badge size="sm" variant={STATUS_VARIANT[call.recordingStatus]}>{call.recordingStatus}</Badge></KeyValue>
               <KeyValue label="Transcript"><Badge size="sm" variant={STATUS_VARIANT[call.transcriptStatus]}>{call.transcriptStatus}</Badge></KeyValue>
