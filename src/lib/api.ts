@@ -301,6 +301,7 @@ import type {
   ProbationCheckInDetail,
   ProbationMilestone,
   DeviceFull,
+  EmployeeTimesheetEntry,
   InvoiceFull,
   InvoiceRow,
   InvoiceStats,
@@ -4542,4 +4543,104 @@ export async function saveSimRaw(id: number | null, body: Record<string, unknown
     ? await api.post<ApiEnvelope<SimCard>>('/sims', body)
     : await api.put<ApiEnvelope<SimCard>>(`/sims/${id}`, body);
   return data.data;
+}
+
+// New Entry (dashboard /dashboard/entry) — exact dashboard shapes. Added for the New Entry parity pass.
+export interface NewEntryLookupCustomer {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string | null;
+  gstin?: string | null;
+  address?: string | null;
+  visitCount: number;
+  isRegular?: boolean;
+}
+
+// POST /job-cards body exactly as the dashboard sends it: every form field as a string, plus noVehicle/customerRole/owner*.
+export interface NewEntryDashboardPayload {
+  customerPhone: string;
+  customerName: string;
+  customerEmail: string;
+  customerAddress: string;
+  customerGSTIN: string;
+  customerSource: string;
+  vehicleNumber: string;
+  vehicleMake: string;
+  vehicleModel: string;
+  vehicleYear: string;
+  vehicleFuel: string;
+  vehicleColour: string;
+  reasonForVisit: string;
+  estimatedTotal: string;
+  handledById: string;
+  visitDate: string;
+  noVehicle: boolean;
+  customerRole: 'OWNER' | 'DRIVER';
+  ownerName?: string;
+  ownerPhone?: string;
+}
+
+export async function lookupNewEntryCustomer(phone: string) {
+  const { data } = await api.get<NewEntryLookupCustomer | null>('/job-cards/lookup', { params: { phone } });
+  return data;
+}
+
+export async function fetchNewEntryHandledBy() {
+  const { data } = await api.get<{ id: string; name: string; role: string; designation?: string }[] | { employees?: { id: string; name: string; role: string; designation?: string }[] }>('/employees/handled-by');
+  return Array.isArray(data) ? data : (data?.employees ?? []);
+}
+
+export async function submitNewEntryJobCard(payload: NewEntryDashboardPayload) {
+  const { data } = await api.post<{ jobCard: { id: string; jobNumber: string }; invoice?: { id: string } }>('/job-cards', payload);
+  return data;
+}
+
+// Dashboard uploads every picked file in ONE multipart request, field name 'files' (max 20), 120 s timeout.
+export async function uploadNewEntryInspectionFiles(jobId: string, files: { uri: string; name: string; mimeType: string }[]) {
+  const form = new FormData();
+  files.forEach((f) => form.append('files', { uri: f.uri, name: f.name, type: f.mimeType } as any));
+  const { data } = await api.post(`/job-cards/${jobId}/inspection-media`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+  return data;
+}
+
+// ── All Timesheets (dashboard /dashboard/timesheets parity) ────────────────
+// GET /timesheets/summary — requireManagerOrOwner; the page's "Pending Review" card.
+export async function fetchTimesheetSummaryCounts() {
+  const { data } = await api.get<ApiEnvelope<{ submittedToday: number; pendingApproval: number; notSubmittedToday: unknown }>>('/timesheets/summary');
+  return data.data;
+}
+
+// Same route as replyToTimesheetEntry plus the dashboard's `mentions` (ids picked in the @ dropdown).
+export async function replyToTimesheetEntryMentions(timesheetId: string, entryId: string, message: string, mentions: string[]) {
+  const { data } = await api.post<ApiEnvelope<TimesheetEntryReply>>(`/timesheets/${timesheetId}/entries/${entryId}/reply`, { message, mentions });
+  return data.data;
+}
+
+export async function replyToWorkDocMentions(workDocId: string, message: string, mentions: string[]) {
+  const { data } = await api.post<ApiEnvelope<{ reply: WorkDocReply; task: TimesheetFollowUpTask }>>(`/work-docs/${workDocId}/reply`, { message, mentions });
+  return data.data;
+}
+
+// GET /timesheets (manager: everyone) paged at the server max of 200, for the phone-built CSV export that
+// stands in for the dashboard's server-side GET /timesheets/export .xlsx (same rows/columns, see the screen).
+export async function fetchTimesheetsForCsvExport(dateFrom: string, dateTo: string) {
+  type Row = { date: string; entries: { task: string; hours: number; notes?: string }[] | null; totalHours: number; notes: string | null; status: string; user: { name: string; designation: string | null } };
+  const all: Row[] = [];
+  for (let page = 1; page <= 50; page++) {
+    const { data } = await api.get<ApiEnvelope<{ timesheets: Row[]; totalPages: number }>>('/timesheets', { params: { dateFrom, dateTo, page, limit: 200 } });
+    all.push(...data.data.timesheets);
+    if (page >= data.data.totalPages) break;
+  }
+  return all;
+}
+
+// GET /timesheets?userId=… — one employee's timesheets, newest first, capped at 200 like the dashboard's Timesheet tab.
+// (Managers only see another person's rows; the server scopes everyone else to their own.)
+export async function fetchEmployeeTimesheetEntries(userId: string) {
+  const { data } = await api.get<ApiEnvelope<{ timesheets: EmployeeTimesheetEntry[] }>>('/timesheets', { params: { userId, limit: 200 } });
+  return data.data?.timesheets ?? [];
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { EmployeeTimesheetTab } from '@/components/employees/employee-timesheet-tab';
 import { EmployeeOverviewTab, type OverviewStats } from '@/components/employees/employee-overview-tab';
 import { getAvatarColor, getInitials } from '@/components/employees/employee-format';
 import { ThemedText } from '@/components/themed-text';
@@ -170,6 +171,8 @@ export function EmployeeDetailPanel({ employee, canEdit, initialTab, onClose, on
                 onReload={loadOverview}
                 wide={wide}
               />
+            ) : tab === 'timesheet' && canEdit ? (
+              <EmployeeTimesheetTab employeeId={employee.id} employeeName={employee.name} />
             ) : (
               <View style={styles.placeholder}>
                 <ThemedText style={styles.placeholderTitle}>Coming next</ThemedText>

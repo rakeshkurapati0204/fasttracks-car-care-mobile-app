@@ -4236,3 +4236,14 @@ export interface OpenInvoiceRow {
   vehicleNumber: string | null; vehicleBrand: string | null; vehicleModel: string | null;
   grandTotal: number; paidAmount: number; balanceDue: number; status: string; createdAt: string; updatedAt: string;
 }
+
+// ── Employee detail → Timesheet tab (dashboard employees/page.tsx TimesheetBlock) ──
+export interface EmployeeTimesheetEntry {
+  id: string;
+  date: string;
+  status: string;
+  totalHours: number;
+  notes: string | null;
+  entries: { task: string; hours: number; notes?: string | null }[];
+  approvedBy?: { id: string; name: string } | null;
+}
