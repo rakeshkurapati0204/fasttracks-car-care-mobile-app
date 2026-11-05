@@ -422,6 +422,19 @@ export interface TeamChat {
   pinnedAt?: string | null;
 }
 
+// POST /team-chat/upload — documents come back as type 'file' with the original name in the url's #name=.
+export interface TeamChatUpload {
+  url: string;
+  type: 'image' | 'audio' | 'file';
+  mimeType: string;
+  fileName?: string;
+  name?: string;
+  size?: number;
+}
+
+export interface TeamChatForwardResult { chatId: string; message: TeamChatMessage }
+export interface TeamChatLeaveResult { outcome: string; newAdminId?: string | null }
+
 export interface TeamChatEmployee {
   id: string;
   name: string;

@@ -121,6 +121,9 @@ import type {
   TeamChat,
   TeamChatEmployee,
   TeamChatMessage,
+  TeamChatUpload,
+  TeamChatForwardResult,
+  TeamChatLeaveResult,
   TrackerJob,
   FinancialOverview,
   FinancialKpis,
@@ -956,6 +959,65 @@ export async function uploadTeamChatMedia(
     onUploadProgress: (evt) => ctrl.onProgress(progressToPercent(evt)),
   });
   return data;
+}
+
+// Team Chat phase 2 — same upload route as above, but typed for documents too
+// (images, voice notes and PDF/Word/Excel/PPT/TXT/CSV/ZIP; the server picks by MIME or extension).
+export async function uploadTeamChatAttachment(
+  file: { uri: string; name: string; mimeType: string },
+  ctrl: { onProgress: (pct: number | null) => void; signal: AbortSignal },
+) {
+  const form = new FormData();
+  form.append('file', { uri: file.uri, name: file.name, type: file.mimeType } as any);
+  const { data } = await api.post<TeamChatUpload>('/team-chat/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000,
+    signal: ctrl.signal,
+    onUploadProgress: (evt) => ctrl.onProgress(progressToPercent(evt)),
+  });
+  return data;
+}
+
+// { messageId, chatIds[] } — the forwarder must be in the source chat and every destination
+// (checked server-side, all-or-nothing); each destination gets a copy marked forwarded.
+export async function forwardTeamChatMessage(messageId: string, chatIds: string[]) {
+  const { data } = await api.post<TeamChatForwardResult[]>('/team-chat/forward', { messageId, chatIds });
+  return data;
+}
+
+// Group admin only (server re-checks on every one of these and answers 403 otherwise).
+export async function renameTeamChatGroup(chatId: string, name: string) {
+  const { data } = await api.patch<TeamChat>(`/team-chat/${chatId}`, { name });
+  return data;
+}
+
+export async function addTeamChatMembers(chatId: string, memberIds: string[]) {
+  const { data } = await api.post<TeamChat>(`/team-chat/${chatId}/members`, { memberIds });
+  return data;
+}
+
+export async function removeTeamChatMember(chatId: string, userId: string) {
+  const { data } = await api.delete<TeamChat>(`/team-chat/${chatId}/members/${userId}`);
+  return data;
+}
+
+// Any member can leave; the server decides whether admin passes on or the group is archived.
+export async function leaveTeamChat(chatId: string) {
+  const { data } = await api.post<TeamChatLeaveResult>(`/team-chat/${chatId}/leave`);
+  return data;
+}
+
+// A shared document lives at a public storage URL (the dashboard opens it with a plain link),
+// so it downloads to the cache without auth and then goes to the share sheet.
+export async function downloadTeamChatDocument(url: string, filename: string): Promise<{ uri: string }> {
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'document';
+  const dest = `${FileSystem.cacheDirectory}chat-${Date.now()}-${safe}`;
+  const result = await FileSystem.downloadAsync(url.split('#')[0], dest);
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to open document');
+  }
+  return { uri: result.uri };
 }
 
 // Per-owner, upserted (empty nickname deletes it) — the GET /employees list

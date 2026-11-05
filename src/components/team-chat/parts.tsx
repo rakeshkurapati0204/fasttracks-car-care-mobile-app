@@ -54,12 +54,14 @@ export function Linkified({ text, isMine }: { text: string; isMine: boolean }) {
 }
 
 /** Searchable multi-select of employees (dashboard MemberPicker). */
-export function MemberPicker({ employees, selected, onToggle, search, onSearchChange }: {
-  employees: TeamChatEmployee[]; selected: string[]; onToggle: (id: string) => void; search: string; onSearchChange: (s: string) => void;
+export function MemberPicker({ employees, groups = [], selected, onToggle, search, onSearchChange }: {
+  employees: TeamChatEmployee[]; groups?: { id: string; name: string; memberCount: number }[];
+  selected: string[]; onToggle: (id: string) => void; search: string; onSearchChange: (s: string) => void;
 }) {
   const theme = useTheme();
   const needle = search.toLowerCase();
   const shown = search ? employees.filter((e) => displayName(e).toLowerCase().includes(needle)) : employees;
+  const shownGroups = search ? groups.filter((g) => g.name.toLowerCase().includes(needle)) : groups;
   return (
     <View>
       <TextInput
@@ -70,6 +72,26 @@ export function MemberPicker({ employees, selected, onToggle, search, onSearchCh
         style={[styles.search, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
       />
       <View style={styles.pickList}>
+        {/* Groups first; a picked group is reported as "group:<chatId>" so it can't be confused with an employee id. */}
+        {shownGroups.map((g) => {
+          const key = `group:${g.id}`;
+          const sel = selected.includes(key);
+          return (
+            <Pressable
+              key={key}
+              onPress={() => onToggle(key)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: sel }}
+              style={[styles.pickRow, { backgroundColor: sel ? withAlpha(theme.primary, 0.1) : 'transparent', borderColor: sel ? withAlpha(theme.primary, 0.3) : 'transparent' }]}>
+              <Avatar group size={32} />
+              <View style={styles.flex1}>
+                <ThemedText numberOfLines={1} style={styles.pickName}>{g.name}</ThemedText>
+                <ThemedText themeColor="textMuted" style={styles.pickSub}>Group · {g.memberCount} members</ThemedText>
+              </View>
+              {sel ? <Ionicons name="checkmark" size={18} color={theme.primary} /> : null}
+            </Pressable>
+          );
+        })}
         {shown.map((emp) => {
           const sel = selected.includes(emp.id);
           return (
@@ -88,7 +110,7 @@ export function MemberPicker({ employees, selected, onToggle, search, onSearchCh
             </Pressable>
           );
         })}
-        {shown.length === 0 ? <ThemedText themeColor="textMuted" style={styles.none}>No one to show</ThemedText> : null}
+        {shown.length === 0 && shownGroups.length === 0 ? <ThemedText themeColor="textMuted" style={styles.none}>No one to show</ThemedText> : null}
       </View>
     </View>
   );

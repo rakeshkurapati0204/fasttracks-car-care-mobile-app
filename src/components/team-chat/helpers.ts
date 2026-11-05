@@ -177,3 +177,33 @@ export function personForChat(chat: TeamChat, myId: string, employees: TeamChatE
     nickname: null,
   };
 }
+
+// ── Sending media (dashboard: DOC_ACCEPT / DOC_MAX_BYTES / MAX_FILES_PER_PICK) ──
+export const DOC_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'ppt', 'pptx', 'txt', 'zip'];
+export const DOC_MAX_BYTES = 25 * 1024 * 1024;
+export const MAX_FILES_PER_PICK = 10;
+
+export const DOC_PICKER_TYPES = [
+  'application/pdf', 'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv', 'text/comma-separated-values',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain', 'application/zip', 'application/x-zip-compressed',
+];
+
+const DOC_MIME: Record<string, string> = {
+  pdf: 'application/pdf', doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  csv: 'text/csv', ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain', zip: 'application/zip',
+};
+
+export const docExtOf = (name: string) => (/\.([a-zA-Z0-9]+)$/.exec(name)?.[1] ?? '').toLowerCase();
+export const docMime = (name: string, mime?: string | null) =>
+  (mime && mime !== 'application/octet-stream' ? mime : DOC_MIME[docExtOf(name)] ?? 'application/octet-stream');

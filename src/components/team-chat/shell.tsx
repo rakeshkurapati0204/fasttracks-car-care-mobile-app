@@ -13,7 +13,7 @@ import { FontWeights } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getErrorMessage, updateTeamChatNickname } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import type { TeamChatEmployee, TeamChatMessage } from '@/types/api';
+import type { TeamChat, TeamChatEmployee, TeamChatMessage } from '@/types/api';
 
 import { ChatList } from './chat-list';
 import { ChatThread } from './thread';
@@ -65,6 +65,29 @@ export function TeamChatShell({ routeChatId }: { routeChatId?: string }) {
       : prev));
   }, [setChats]);
 
+  // A group changed (renamed / members) — keep my own unread count, pin and the list preview.
+  const onChatUpdated = useCallback((updated: TeamChat) => {
+    setChats((prev) => (prev.some((c) => c.id === updated.id)
+      ? prev.map((c) => (c.id === updated.id
+        ? { ...updated, unreadCount: c.unreadCount, pinnedAt: c.pinnedAt, messages: updated.messages?.length ? updated.messages : c.messages }
+        : c))
+      : [updated, ...prev]));
+  }, [setChats]);
+
+  const onChatStarted = useCallback((chat: TeamChat) => {
+    setChats((prev) => (prev.some((c) => c.id === chat.id) ? prev : [chat, ...prev]));
+  }, [setChats]);
+
+  // I left a group: drop it from the list and leave the chat.
+  const onLeft = useCallback((chatId: string) => {
+    setChats((prev) => prev.filter((c) => c.id !== chatId));
+    setActiveId(null);
+    if (!wide) {
+      if (router.canGoBack()) router.back();
+      else router.replace('/more/team-chat');
+    }
+  }, [setChats, wide, router]);
+
   const editNick = (emp: TeamChatEmployee) => { setNickEmp(emp); setNickInput(emp.nickname ?? ''); setNickError(''); };
   const saveNick = async () => {
     if (!nickEmp) return;
@@ -112,13 +135,20 @@ export function TeamChatShell({ routeChatId }: { routeChatId?: string }) {
         <ChatThread
           key={active.id}
           chat={active}
+          chats={chats}
           employees={employees}
           myId={myId}
           topInset={wide ? 0 : topInset}
+          bottomInset={wide ? 0 : insets.bottom}
+          screenGap={wide ? Math.max(16, insets.bottom + 8) : 0}
           onBack={wide ? undefined : closeChat}
           onEditNick={editNick}
           onSent={onSent}
           onRead={onRead}
+          onChatUpdated={onChatUpdated}
+          onChatStarted={onChatStarted}
+          onForwarded={list.refreshChats}
+          onLeft={onLeft}
         />
       );
     }
@@ -131,7 +161,7 @@ export function TeamChatShell({ routeChatId }: { routeChatId?: string }) {
   let body;
   if (wide) {
     body = (
-      <View style={[styles.panes, { borderColor: theme.border }]}>
+      <View style={[styles.panes, { borderColor: theme.border, marginBottom: Math.max(16, insets.bottom + 8) }]}>
         <View style={[styles.listCol, { width: LIST_W, borderRightColor: theme.border }]}>{listPane}</View>
         <View style={styles.flex1}>{threadPane()}</View>
       </View>
