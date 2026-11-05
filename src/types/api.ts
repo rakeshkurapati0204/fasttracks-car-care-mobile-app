@@ -369,7 +369,7 @@ export interface TeamChatMember {
   id: string;
   userId: string;
   lastReadAt: string | null;
-  user: { id: string; name: string; phone: string | null; designation: string | null };
+  user: { id: string; name: string; phone: string | null; designation: string | null; role?: string };
 }
 
 // Server soft-deletes (deleted:true, content/mediaUrl/mediaType scrubbed to
@@ -394,6 +394,8 @@ export interface TeamChatMessage {
   content: string | null;
   mediaUrl: string | null;
   mediaType: string | null;
+  /** A document's original file name (the server also fills it from the url's #name=). */
+  mediaName?: string | null;
   sentAt: string;
   sender: { id: string; name: string };
   deleted?: boolean;

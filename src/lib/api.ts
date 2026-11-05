@@ -849,6 +849,16 @@ export async function sendTeamChatMessage(
   return data;
 }
 
+// Newest `limit` messages (oldest-first); pass `before` (id of the oldest message
+// you hold) for the next older page. X-Has-More says whether anything older exists.
+export async function fetchTeamChatMessagesPage(chatId: string, opts?: { before?: string; limit?: number }) {
+  const { data, headers } = await api.get<TeamChatMessage[]>(`/team-chat/${chatId}/messages`, {
+    params: { limit: opts?.limit ?? 60, before: opts?.before },
+  });
+  const raw = (headers as Record<string, unknown> | undefined)?.['x-has-more'];
+  return { messages: Array.isArray(data) ? data : [], hasMore: raw === 'true' };
+}
+
 export async function markTeamChatRead(chatId: string) {
   await api.post(`/team-chat/${chatId}/read`);
 }
