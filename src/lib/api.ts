@@ -300,6 +300,11 @@ import type {
   PreJoiningTermsInput,
   ProbationCheckInDetail,
   ProbationMilestone,
+  QuotationFull,
+  QuotationStaffOption,
+  QuotationItemSearchResult,
+  QuotationGstData,
+  QuotationVehicleData,
 } from '@/types/api';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -4376,5 +4381,55 @@ export async function fetchWabaNumbers() {
 
 export async function saveStaffPhoneNumber(input: { phoneNumberId: string; displayPhone: string; employeeId: string | null }) {
   const { data } = await api.post<ApiEnvelope<StaffPhoneNumberRow>>('/staff-phone-numbers', input);
+  return data.data;
+}
+
+// ── Quotations, dashboard parity ──
+// The list the dashboard page reads: server paging (page/limit/search/status) with the total count.
+export async function fetchQuotationsPage(params: { page: number; limit: number; search?: string; status?: string }) {
+  const { data } = await api.get<ApiEnvelope<PaginatedResponse<QuotationListItem> | QuotationListItem[]>>('/quotations', {
+    params: { page: params.page, limit: params.limit, search: params.search || undefined, status: params.status || undefined },
+  });
+  const body = data.data;
+  if (Array.isArray(body)) return { items: body, total: body.length };
+  return { items: body?.data ?? [], total: body?.total ?? 0 };
+}
+
+// GET /quotations/:id with the supplier block, per-line GST and salesperson (what the dashboard edit modal and print page read).
+export async function fetchQuotationFull(id: string) {
+  const { data } = await api.get<ApiEnvelope<QuotationFull>>(`/quotations/${id}`);
+  return data.data;
+}
+
+// POST /quotations / PUT /quotations/:id with the dashboard's own payload shape (the wizard adds manualAmounts, the edit modal gstRate).
+export async function createQuotationRaw(body: Record<string, unknown>) {
+  const { data } = await api.post<ApiEnvelope<{ id: string; quotationNumber: string }>>('/quotations', body);
+  return data.data;
+}
+
+export async function updateQuotationRaw(id: string, body: Record<string, unknown>) {
+  const { data } = await api.put<ApiEnvelope<unknown>>(`/quotations/${id}`, body);
+  return data.data;
+}
+
+// Salesperson picker source (the dashboard reuses the invoices endpoint).
+export async function fetchQuotationStaff() {
+  const { data } = await api.get<ApiEnvelope<QuotationStaffOption[]>>('/invoices/staff-directory');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Line-item picker search — local inventory, 2+ characters.
+export async function searchQuotationItems(q: string) {
+  const { data } = await api.get<ApiEnvelope<QuotationItemSearchResult[]>>('/inventory-items/search', { params: { q } });
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function verifyQuotationGstin(gstin: string) {
+  const { data } = await api.get<ApiEnvelope<QuotationGstData>>(`/gst/verify/${encodeURIComponent(gstin)}`);
+  return data.data;
+}
+
+export async function lookupQuotationVehicle(regNo: string) {
+  const { data } = await api.get<ApiEnvelope<QuotationVehicleData>>(`/vehicle/${encodeURIComponent(regNo)}`);
   return data.data;
 }

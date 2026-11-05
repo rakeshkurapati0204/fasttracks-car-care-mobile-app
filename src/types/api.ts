@@ -4034,3 +4034,85 @@ export interface PaymentReminderFull extends PaymentReminder {
   paidBy: { id: string; name: string } | null;
   receiptUrl: string | null;
 }
+
+// ── Quotations, dashboard parity (quotations/page.tsx, new/page.tsx, [id]/print/page.tsx) ──
+// GET /quotations/:id as the dashboard reads it: the raw row plus the supplier block and per-line GST
+// that the route adds for the print page.
+export interface QuotationFullLineItem {
+  id: string;
+  description: string;
+  hsnSacCode: string | null;
+  quantity: number;
+  unitPrice: number;
+  discountPct: number;
+  discountAmount?: number;
+  discountMode?: 'PERCENT' | 'FIXED';
+  amount: number;
+  sortOrder: number;
+  gstPercent?: number;
+  inventoryItemId?: string | null;
+  sku?: string | null;
+  erpItemId?: string | null;
+}
+
+export interface QuotationFull {
+  id: string;
+  quotationNumber: string;
+  status: QuotationStatus;
+  createdAt: string;
+  validUntil: string | null;
+  companyName: string;
+  companyAddress: string;
+  companyCity: string;
+  companyState: string;
+  companyPin: string;
+  companyGstin: string;
+  companyStateCode: string;
+  companyPhone: string;
+  companyEmail: string;
+  customerName: string;
+  customerPhone: string | null;
+  customerEmail: string | null;
+  customerAddress: string | null;
+  customerGSTIN: string | null;
+  vehicleNumber: string | null;
+  vehicleBrand: string | null;
+  vehicleModel: string | null;
+  vehicleYear: string | number | null;
+  vehicleColour: string | null;
+  subtotal: number;
+  discountAmount: number;
+  overallDiscountAmount?: number;
+  overallDiscountMode?: string;
+  gstRate?: number;
+  cgstRate: number;
+  cgstAmount: number;
+  sgstRate: number;
+  sgstAmount: number;
+  roundOff: number;
+  grandTotal: number;
+  notes: string | null;
+  termsConditions: string | null;
+  lineItems: QuotationFullLineItem[];
+  createdBy: { id: string; name: string; username: string } | null;
+  salesperson: { id: string; name: string; phone: string | null } | null;
+}
+
+export interface QuotationStaffOption { id: string; name: string; phone: string | null }
+
+export interface QuotationItemSearchResult {
+  id: string;
+  name: string;
+  quantity?: number;
+  unit?: string;
+  sellingPrice?: number;
+  gstApplicable?: boolean;
+  gstPercent?: number;
+}
+
+export interface QuotationGstData {
+  tradeName?: string; legalName?: string; businessName?: string; address?: string; stateName?: string;
+  gstinStatus?: string; taxPayerType?: string; dateOfRegistration?: string; isActive?: boolean;
+}
+
+export interface QuotationVehicleData { make?: string; model?: string; year?: string | number; fuelType?: string }

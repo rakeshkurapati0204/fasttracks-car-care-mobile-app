@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
+import { Sheet } from '@/components/customers/sheet';
 import { PWD_CATEGORIES } from '@/components/password-manager/entry-cards';
-import { GlassCard } from '@/components/home/glass-card';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Button, Input, Select } from '@/components/ui';
+import { FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { CardEntry, CardEntryInput, CardType, PasswordEntry, PasswordEntryInput } from '@/types/api';
 
@@ -16,89 +17,50 @@ type CardForm = {
   cardNumber: string; expiry: string; cvv: string; billingAddress: string; notes: string;
 };
 
-function Label({ children }: { children: React.ReactNode }) {
-  return <ThemedText type="small" themeColor="textSecondary" style={styles.label}>{children}</ThemedText>;
-}
-
-function Field({
-  value, onChangeText, placeholder, multiline, rows, keyboardType, maxLength, autoCapitalize,
-}: {
-  value: string; onChangeText: (v: string) => void; placeholder?: string; multiline?: boolean; rows?: number;
-  keyboardType?: 'default' | 'number-pad' | 'url' | 'email-address'; maxLength?: number; autoCapitalize?: 'none' | 'sentences' | 'words';
-}) {
-  const theme = useTheme();
-  return (
-    <TextInput
-      value={value}
-      onChangeText={onChangeText}
-      placeholder={placeholder}
-      placeholderTextColor={theme.textSecondary}
-      multiline={multiline}
-      keyboardType={keyboardType}
-      maxLength={maxLength}
-      autoCapitalize={autoCapitalize ?? 'sentences'}
-      autoCorrect={false}
-      style={[
-        styles.input,
-        multiline && { height: 28 * (rows ?? 3) + 18, textAlignVertical: 'top', paddingTop: Spacing.two },
-        { color: theme.text, backgroundColor: theme.backgroundElement },
-      ]}
-    />
-  );
-}
-
 // The dashboard's PwdInput: masked field with a show/hide toggle.
-function PwdInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+function PwdInput({ label, hint, value, onChange, placeholder, error }: {
+  label: string; hint?: string; value: string; onChange: (v: string) => void; placeholder: string; error?: string;
+}) {
   const theme = useTheme();
   const [show, setShow] = useState(false);
   return (
-    <View style={[styles.pwdWrap, { backgroundColor: theme.backgroundElement }]}>
-      <TextInput
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor={theme.textSecondary}
-        secureTextEntry={!show}
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={[styles.pwdInput, { color: theme.text }]}
-      />
-      <Pressable onPress={() => setShow((s) => !s)} hitSlop={10}>
-        <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={18} color={theme.textSecondary} />
-      </Pressable>
-    </View>
-  );
-}
-
-function Chips<T extends string>({ options, value, onChange }: { options: { key: T; label: string }[]; value: T; onChange: (v: T) => void }) {
-  const theme = useTheme();
-  return (
-    <View style={styles.chipRow}>
-      {options.map((o) => (
-        <Pressable key={o.key} onPress={() => onChange(o.key)} style={[styles.chip, { backgroundColor: value === o.key ? theme.primary : theme.backgroundElement }]}>
-          <ThemedText type="small" style={value === o.key ? styles.chipActive : undefined}>{o.label}</ThemedText>
+    <View>
+      <ThemedText themeColor={error ? 'danger' : 'textSecondary'} style={styles.label}>
+        {label}{hint ? <ThemedText themeColor="textMuted" style={styles.hint}> {hint}</ThemedText> : null}
+      </ThemedText>
+      <View style={[styles.pwdWrap, { backgroundColor: theme.surface, borderColor: error ? theme.danger : theme.border }]}>
+        <TextInput
+          value={value}
+          onChangeText={onChange}
+          placeholder={placeholder}
+          placeholderTextColor={theme.textMuted}
+          secureTextEntry={!show}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="off"
+          importantForAutofill="no"
+          style={[styles.pwdInput, { color: theme.text }]}
+        />
+        <Pressable onPress={() => setShow((s) => !s)} hitSlop={10} accessibilityRole="button" accessibilityLabel={show ? 'Hide' : 'Show'}>
+          <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={18} color={theme.textMuted} />
         </Pressable>
-      ))}
+      </View>
+      {error ? <ThemedText themeColor="danger" style={styles.helper}>{error}</ThemedText> : null}
     </View>
   );
 }
 
-function Actions({ saving, submitLabel, onCancel, onSubmit }: { saving: boolean; submitLabel: string; onCancel: () => void; onSubmit: () => void }) {
+function FormFooter({ saving, submitLabel, onCancel, onSubmit }: { saving: boolean; submitLabel: string; onCancel: () => void; onSubmit: () => void }) {
   return (
-    <View style={styles.actions}>
-      <Pressable onPress={onCancel} disabled={saving} style={[styles.btn, styles.cancel, styles.flex1]}>
-        <ThemedText style={styles.btnLabel}>Cancel</ThemedText>
-      </Pressable>
-      <Pressable onPress={onSubmit} disabled={saving} style={[styles.btn, styles.flex1]}>
-        {saving ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.btnLabel}>{submitLabel}</ThemedText>}
-      </Pressable>
+    <View style={styles.footer}>
+      <View style={styles.flex1}><Button variant="outline" onPress={onCancel} disabled={saving} fullWidth>Cancel</Button></View>
+      <View style={styles.flex1}><Button onPress={onSubmit} loading={saving} fullWidth>{saving ? 'Saving...' : submitLabel}</Button></View>
     </View>
   );
 }
 
-// Add / Edit Password — fields, labels and placeholders as on the dashboard.
-// Editing leaves the password blank (blank = keep current); the real value is
-// never fetched into the form.
+// Add / Edit Password — fields, labels and placeholders as on the dashboard. Editing leaves the password
+// blank (blank = keep current); the real value is never fetched into the form.
 export function PasswordForm({ editing, saving, error, onCancel, onSubmit }: {
   editing: PasswordEntry | null;
   saving: boolean;
@@ -111,14 +73,16 @@ export function PasswordForm({ editing, saving, error, onCancel, onSubmit }: {
       ? { title: editing.title, category: editing.category, url: editing.url || '', username: editing.username, password: '', notes: editing.notes || '' }
       : { title: '', category: 'Social Media', url: '', username: '', password: '', notes: '' },
   );
-  const [formError, setFormError] = useState<string | null>(null);
+  const [errs, setErrs] = useState<Partial<Record<keyof PwdForm, string>>>({});
   const set = (k: keyof PwdForm) => (v: string) => setF((x) => ({ ...x, [k]: v }));
 
   const submit = () => {
-    if (!f.title.trim()) { setFormError('Title is required.'); return; }
-    if (!f.username.trim()) { setFormError('Username / Email is required.'); return; }
-    if (!editing && !f.password) { setFormError('Password is required.'); return; }
-    setFormError(null);
+    const e: typeof errs = {};
+    if (!f.title.trim()) e.title = 'Title is required.';
+    if (!f.username.trim()) e.username = 'Username / Email is required.';
+    if (!editing && !f.password) e.password = 'Password is required.';
+    setErrs(e);
+    if (Object.keys(e).length) return;
     // Edit: only send the password when one was typed, like the dashboard.
     const body: PasswordEntryInput = { title: f.title, category: f.category, url: f.url, username: f.username, notes: f.notes };
     if (!editing || f.password) body.password = f.password;
@@ -126,35 +90,28 @@ export function PasswordForm({ editing, saving, error, onCancel, onSubmit }: {
   };
 
   return (
-    <GlassCard>
-      <ThemedText type="smallBold">{editing ? 'Edit Password' : 'Add Password'}</ThemedText>
-
-      <Label>Title *</Label>
-      <Field value={f.title} onChangeText={set('title')} placeholder="e.g. Google Account" />
-
-      <Label>Category *</Label>
-      <Chips options={PWD_CATEGORIES.map((c) => ({ key: c, label: c }))} value={f.category} onChange={set('category')} />
-
-      <Label>URL</Label>
-      <Field value={f.url} onChangeText={set('url')} placeholder="https://..." keyboardType="url" autoCapitalize="none" />
-
-      <Label>Username / Email *</Label>
-      <Field value={f.username} onChangeText={set('username')} placeholder="username@example.com" keyboardType="email-address" autoCapitalize="none" />
-
-      <Label>{editing ? 'Password (leave blank to keep current)' : 'Password *'}</Label>
-      <PwdInput value={f.password} onChange={set('password')} placeholder={editing ? 'Leave blank to keep' : 'Enter password'} />
-
-      <Label>Notes</Label>
-      <Field value={f.notes} onChangeText={set('notes')} placeholder="Optional notes..." multiline rows={3} />
-
-      {(formError || error) && <ThemedText style={styles.error}>{formError ?? error}</ThemedText>}
-      <Actions saving={saving} submitLabel={editing ? 'Save Changes' : 'Add Password'} onCancel={onCancel} onSubmit={submit} />
-    </GlassCard>
+    <Sheet visible fullHeight onClose={onCancel} locked={saving} title={editing ? 'Edit Password' : 'Add Password'}
+      footer={<FormFooter saving={saving} submitLabel={editing ? 'Save Changes' : 'Add Password'} onCancel={onCancel} onSubmit={submit} />}>
+      <Input label="Title" required value={f.title} onChangeText={set('title')} placeholder="e.g. Google Account" error={errs.title} />
+      <Select label="Category" required value={f.category} onChange={set('category')} options={PWD_CATEGORIES.map((c) => ({ value: c, label: c }))} />
+      <Input label="URL" value={f.url} onChangeText={set('url')} placeholder="https://..." keyboardType="url" autoCapitalize="none" autoCorrect={false} />
+      <Input label="Username / Email" required value={f.username} onChangeText={set('username')} placeholder="username@example.com" autoCapitalize="none" autoCorrect={false} error={errs.username} />
+      <PwdInput
+        label={editing ? 'Password' : 'Password *'}
+        hint={editing ? '(leave blank to keep current)' : undefined}
+        value={f.password}
+        onChange={set('password')}
+        placeholder={editing ? 'Leave blank to keep' : 'Enter password'}
+        error={errs.password}
+      />
+      <Input label="Notes" value={f.notes} onChangeText={set('notes')} placeholder="Optional notes..." multiline numberOfLines={3} />
+      {error ? <ThemedText themeColor="danger" style={styles.helper}>{error}</ThemedText> : null}
+    </Sheet>
   );
 }
 
-// Add / Edit Card — fields, labels, placeholders and input masks as on the
-// dashboard (16-digit number, MM/YY auto-slash, 4-digit CVV).
+// Add / Edit Card — fields, labels, placeholders and input masks as on the dashboard
+// (16-digit number, MM/YY auto-slash, 4-digit CVV).
 export function CardFormView({ editing, saving, error, onCancel, onSubmit }: {
   editing: CardEntry | null;
   saving: boolean;
@@ -170,17 +127,19 @@ export function CardFormView({ editing, saving, error, onCancel, onSubmit }: {
         }
       : { label: '', cardType: 'CREDIT', bankName: '', cardholderName: '', cardNumber: '', expiry: '', cvv: '', billingAddress: '', notes: '' },
   );
-  const [formError, setFormError] = useState<string | null>(null);
+  const [errs, setErrs] = useState<Partial<Record<keyof CardForm, string>>>({});
   const set = <K extends keyof CardForm>(k: K) => (v: CardForm[K]) => setF((x) => ({ ...x, [k]: v }));
 
   const submit = () => {
-    if (!f.label.trim()) { setFormError('Card Label is required.'); return; }
-    if (!f.bankName.trim()) { setFormError('Bank Name is required.'); return; }
-    if (!f.cardholderName.trim()) { setFormError('Cardholder Name is required.'); return; }
-    if (!editing && !f.cardNumber) { setFormError('Card Number is required.'); return; }
-    if (!f.expiry.trim()) { setFormError('Expiry (MM/YY) is required.'); return; }
-    if (!editing && !f.cvv) { setFormError('CVV is required.'); return; }
-    setFormError(null);
+    const e: typeof errs = {};
+    if (!f.label.trim()) e.label = 'Card Label is required.';
+    if (!f.bankName.trim()) e.bankName = 'Bank Name is required.';
+    if (!f.cardholderName.trim()) e.cardholderName = 'Cardholder Name is required.';
+    if (!editing && !f.cardNumber) e.cardNumber = 'Card Number is required.';
+    if (!f.expiry.trim()) e.expiry = 'Required.';
+    if (!editing && !f.cvv) e.cvv = 'Required.';
+    setErrs(e);
+    if (Object.keys(e).length) return;
     // Edit: number / CVV are only sent when typed (blank = keep).
     const body: CardEntryInput = {
       label: f.label, cardType: f.cardType, bankName: f.bankName, cardholderName: f.cardholderName,
@@ -192,34 +151,29 @@ export function CardFormView({ editing, saving, error, onCancel, onSubmit }: {
   };
 
   return (
-    <GlassCard>
-      <ThemedText type="smallBold">{editing ? 'Edit Card' : 'Add Card'}</ThemedText>
-
-      <Label>Card Label *</Label>
-      <Field value={f.label} onChangeText={set('label')} placeholder="e.g. HDFC Business Card" />
-
-      <Label>Card Type *</Label>
-      <Chips options={[{ key: 'CREDIT', label: 'Credit' }, { key: 'DEBIT', label: 'Debit' }]} value={f.cardType} onChange={set('cardType')} />
-
-      <Label>Bank Name *</Label>
-      <Field value={f.bankName} onChangeText={set('bankName')} placeholder="e.g. HDFC Bank" />
-
-      <Label>Cardholder Name *</Label>
-      <Field value={f.cardholderName} onChangeText={set('cardholderName')} placeholder="Name on card" />
-
-      <Label>{editing ? 'Card Number (leave blank to keep)' : 'Card Number *'}</Label>
-      <Field
+    <Sheet visible fullHeight onClose={onCancel} locked={saving} title={editing ? 'Edit Card' : 'Add Card'}
+      footer={<FormFooter saving={saving} submitLabel={editing ? 'Save Changes' : 'Add Card'} onCancel={onCancel} onSubmit={submit} />}>
+      <Input label="Card Label" required value={f.label} onChangeText={set('label')} placeholder="e.g. HDFC Business Card" error={errs.label} />
+      <Select label="Card Type" required value={f.cardType} onChange={(v) => set('cardType')(v as CardType)} options={[{ value: 'CREDIT', label: 'Credit' }, { value: 'DEBIT', label: 'Debit' }]} />
+      <Input label="Bank Name" required value={f.bankName} onChangeText={set('bankName')} placeholder="e.g. HDFC Bank" error={errs.bankName} />
+      <Input label="Cardholder Name" required value={f.cardholderName} onChangeText={set('cardholderName')} placeholder="Name on card" error={errs.cardholderName} />
+      <Input
+        label={editing ? 'Card Number (leave blank to keep)' : 'Card Number'}
+        required={!editing}
         value={f.cardNumber}
         onChangeText={(v) => set('cardNumber')(v.replace(/\D/g, '').slice(0, 16))}
         placeholder={editing ? 'Leave blank to keep' : '16-digit card number'}
         keyboardType="number-pad"
         maxLength={16}
+        autoComplete="off"
+        importantForAutofill="no"
+        error={errs.cardNumber}
       />
-
       <View style={styles.twoCol}>
         <View style={styles.flex1}>
-          <Label>Expiry (MM/YY) *</Label>
-          <Field
+          <Input
+            label="Expiry (MM/YY)"
+            required
             value={f.expiry}
             onChangeText={(v) => {
               let d = v.replace(/\D/g, '');
@@ -229,39 +183,34 @@ export function CardFormView({ editing, saving, error, onCancel, onSubmit }: {
             placeholder="MM/YY"
             keyboardType="number-pad"
             maxLength={5}
+            error={errs.expiry}
           />
         </View>
         <View style={styles.flex1}>
-          <Label>{editing ? 'CVV (leave blank)' : 'CVV *'}</Label>
-          <PwdInput value={f.cvv} onChange={(v) => set('cvv')(v.replace(/\D/g, '').slice(0, 4))} placeholder={editing ? 'Leave blank' : 'CVV'} />
+          <PwdInput
+            label={editing ? 'CVV' : 'CVV *'}
+            hint={editing ? '(leave blank)' : undefined}
+            value={f.cvv}
+            onChange={(v) => set('cvv')(v.replace(/\D/g, '').slice(0, 4))}
+            placeholder={editing ? 'Leave blank' : 'CVV'}
+            error={errs.cvv}
+          />
         </View>
       </View>
-
-      <Label>Billing Address</Label>
-      <Field value={f.billingAddress} onChangeText={set('billingAddress')} placeholder="Optional" multiline rows={2} />
-
-      <Label>Notes</Label>
-      <Field value={f.notes} onChangeText={set('notes')} placeholder="Optional notes..." multiline rows={2} />
-
-      {(formError || error) && <ThemedText style={styles.error}>{formError ?? error}</ThemedText>}
-      <Actions saving={saving} submitLabel={editing ? 'Save Changes' : 'Add Card'} onCancel={onCancel} onSubmit={submit} />
-    </GlassCard>
+      <Input label="Billing Address" value={f.billingAddress} onChangeText={set('billingAddress')} placeholder="Optional" multiline numberOfLines={2} />
+      <Input label="Notes" value={f.notes} onChangeText={set('notes')} placeholder="Optional notes..." multiline numberOfLines={2} />
+      {error ? <ThemedText themeColor="danger" style={styles.helper}>{error}</ThemedText> : null}
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  flex1: { flex: 1 },
-  label: { marginTop: Spacing.two, marginBottom: Spacing.one },
-  input: { minHeight: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
-  pwdWrap: { flexDirection: 'row', alignItems: 'center', height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, gap: Spacing.two },
-  pwdInput: { flex: 1, fontSize: 15, paddingVertical: 0 },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
-  chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, borderRadius: Spacing.four },
-  chipActive: { color: '#ffffff', fontWeight: '600' },
-  twoCol: { flexDirection: 'row', gap: Spacing.two },
-  error: { color: '#B83030', marginTop: Spacing.two },
-  actions: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.three },
-  btn: { height: 48, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  cancel: { backgroundColor: '#8A8A8E' },
-  btnLabel: { color: '#ffffff', fontWeight: '600' },
+  flex1: { flex: 1, minWidth: 0 },
+  label: { fontSize: 13, lineHeight: 18, fontFamily: FontWeights.medium, marginBottom: 4 },
+  hint: { fontSize: 12, lineHeight: 18, fontFamily: FontWeights.regular },
+  helper: { fontSize: 12, lineHeight: 16, marginTop: 4 },
+  pwdWrap: { flexDirection: 'row', alignItems: 'center', minHeight: 44, borderWidth: 1, borderRadius: Radii.sm, paddingHorizontal: 14, gap: 8 },
+  pwdInput: { flex: 1, fontSize: 14, paddingVertical: 10, fontFamily: FontWeights.regular },
+  twoCol: { flexDirection: 'row', gap: 12 },
+  footer: { flexDirection: 'row', gap: 8, flex: 1 },
 });
