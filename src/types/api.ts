@@ -4116,3 +4116,123 @@ export interface QuotationGstData {
 }
 
 export interface QuotationVehicleData { make?: string; model?: string; year?: string | number; fuelType?: string }
+
+// ── Devices, dashboard parity (devices/page.tsx, alerts, location, policies) ──
+export interface DeviceFull {
+  id: string;
+  deviceName: string;
+  deviceType: 'WINDOWS' | 'ANDROID' | 'IOS' | 'MAC';
+  deviceModel?: string | null;
+  osVersion?: string | null;
+  isCompanyOwned: boolean;
+  isActive: boolean;
+  isOnline: boolean;
+  isLocked: boolean;
+  enrollmentCode?: string;
+  lastSeen?: string | null;
+  currentLocation?: { latitude: number; longitude: number; timestamp?: string } | null;
+  registeredAt: string;
+  user?: { id: string; name: string; role: string } | null;
+  alerts?: { id: string; alertType: string }[];
+}
+
+export interface DeviceAlertFull {
+  id: string;
+  alertType: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+  device: { id: string; deviceName: string; deviceType: string };
+}
+
+// ── Sales Invoices, dashboard parity (invoices/page.tsx, new/page.tsx, open/page.tsx, [id]/print/page.tsx) ──
+export interface InvoiceFullLine {
+  id?: string;
+  description: string;
+  hsnSacCode?: string | null;
+  quantity: number;
+  unitPrice: number;
+  discountPct?: number;
+  discountAmount?: number;
+  discountMode?: 'PERCENT' | 'FIXED';
+  amount: number;
+  sortOrder?: number;
+  erpItemId?: string | null;
+}
+
+export interface InvoiceFull {
+  id: string;
+  invoiceNumber: string;
+  status: string;
+  paymentMode?: string | null;
+  paymentMethod?: string | null;
+  paymentRef?: string | null;
+  paymentNote?: string | null;
+  paidAmount: number;
+  subtotal: number;
+  cgst: number;
+  sgst: number;
+  roundOff?: number;
+  grandTotal: number;
+  balanceDue: number;
+  notes?: string | null;
+  termsConditions?: string | null;
+  createdAt: string;
+  paidAt?: string | null;
+  isPaid?: boolean;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  customerAddress?: string | null;
+  customerGstin?: string | null;
+  vehicleNumber?: string | null;
+  vehicleBrand?: string | null;
+  vehicleModel?: string | null;
+  vehicleYear?: string | number | null;
+  vehicleColour?: string | null;
+  vehicleFuel?: string | null;
+  lineItems?: InvoiceFullLine[];
+  gstRate?: number;
+  displayGstPercent?: number | null;
+  cgstRate?: number | null;
+  sgstRate?: number | null;
+  cgstAmount?: number;
+  sgstAmount?: number;
+  waybillNo?: string | null;
+  emailSent?: boolean;
+  whatsappSent?: boolean;
+  serviceCharges?: { description: string; amount: number }[];
+  splitPayments?: { mode: string; label: string; amount: number }[];
+  overallDiscountAmount?: number;
+  overallDiscountMode?: 'PERCENT' | 'FIXED';
+  discountAmount?: number;
+  companyName?: string;
+  companyAddress?: string;
+  companyCity?: string;
+  companyState?: string;
+  companyPin?: string;
+  companyStateCode?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+  salesperson?: { id: string; name: string; phone: string | null } | null;
+}
+
+export interface InvoiceRow extends InvoiceFull {
+  vehicleBrand?: string | null;
+}
+
+export interface InvoiceStats { total: number; monthRevenue: number; todayRevenue: number; totalOutstanding: number; totalCollected: number }
+
+export interface InvoiceReport {
+  totalInvoices: number; totalBilled: number; totalCollected: number; totalOutstanding: number; invoices: InvoiceRow[];
+}
+
+export interface InvoicePaymentHistoryRow {
+  _type?: string; createdAt: string; amount: number; paymentMode?: string | null; notes?: string | null; confirmedBy?: { name: string } | null;
+}
+
+export interface OpenInvoiceRow {
+  id: string; invoiceNumber: string; customerName: string | null; customerPhone?: string | null;
+  vehicleNumber: string | null; vehicleBrand: string | null; vehicleModel: string | null;
+  grandTotal: number; paidAmount: number; balanceDue: number; status: string; createdAt: string; updatedAt: string;
+}

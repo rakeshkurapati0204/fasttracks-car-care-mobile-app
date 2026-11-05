@@ -19,7 +19,7 @@ interface GstData {
   gstinStatus?: string; taxPayerType?: string; dateOfRegistration?: string; isActive?: boolean;
 }
 
-interface WizardState {
+export interface WizardState {
   step: 1 | 2 | 3;
   customerType: 'INDIVIDUAL' | 'BUSINESS';
   customerName: string; customerPhone: string; customerEmail: string; customerAddress: string; customerGSTIN: string;
@@ -35,12 +35,12 @@ interface WizardState {
 // The dashboard keeps the last customer in sessionStorage ("Pre-filled from previous customer"); there is no
 // session storage on a phone, so it is kept in memory for as long as the app stays open.
 type SavedCustomer = Pick<WizardState, 'customerType' | 'customerName' | 'customerPhone' | 'customerEmail' | 'customerAddress' | 'customerGSTIN' | 'gstVerified' | 'gstData'>;
-const memory: { value: SavedCustomer | null } = { value: null };
-const getSaved = () => memory.value;
-const setSaved = (v: SavedCustomer | null) => { memory.value = v; };
+const memory: { value: Record<string, SavedCustomer | null> } = { value: {} };
+const getSaved = (key: string) => memory.value[key] ?? null;
+const setSaved = (key: string, v: SavedCustomer | null) => { memory.value = { ...memory.value, [key]: v }; };
 
-function initialState(salespersonId: string | null): WizardState {
-  const d = getSaved();
+export function initialState(salespersonId: string | null, memoryKey = 'quotation'): WizardState {
+  const d = getSaved(memoryKey);
   return {
     step: 1, customerType: d?.customerType || 'INDIVIDUAL',
     customerName: d?.customerName || '', customerPhone: d?.customerPhone || '', customerEmail: d?.customerEmail || '',
@@ -51,13 +51,12 @@ function initialState(salespersonId: string | null): WizardState {
   };
 }
 
-function StepIndicator({ step, onGoStep, wide }: { step: number; onGoStep: (s: 1 | 2 | 3) => void; wide: boolean }) {
+export function StepIndicator({ step, onGoStep, wide, steps = ['Customer & Vehicle', 'Items', 'Review & Generate'] }: { step: number; onGoStep: (s: 1 | 2 | 3 | 4) => void; wide: boolean; steps?: string[] }) {
   const theme = useTheme();
-  const steps = ['Customer & Vehicle', 'Items', 'Review & Generate'];
   return (
     <View style={styles.stepRow}>
       {steps.map((label, i) => {
-        const n = (i + 1) as 1 | 2 | 3;
+        const n = (i + 1) as 1 | 2 | 3 | 4;
         const active = step === n;
         const done = step > n;
         const bg = active ? theme.primary : done ? 'rgba(34,197,94,0.15)' : theme.backgroundElement;
@@ -93,14 +92,14 @@ function Seg({ value, onChange }: { value: 'INDIVIDUAL' | 'BUSINESS'; onChange: 
   );
 }
 
-function Step1({ state, set, onNext, wide }: { state: WizardState; set: (p: Partial<WizardState>) => void; onNext: () => void; wide: boolean }) {
+export function Step1({ state, set, onNext, wide, memoryKey = 'quotation' }: { state: WizardState; set: (p: Partial<WizardState>) => void; onNext: () => void; wide: boolean; memoryKey?: string }) {
   const theme = useTheme();
   const [gstLoading, setGstLoading] = useState(false);
   const [gstError, setGstError] = useState('');
   const [vehicleLoading, setVehicleLoading] = useState(false);
   const [vehicleError, setVehicleError] = useState('');
   const [showGstin, setShowGstin] = useState(!!state.customerGSTIN && state.customerType !== 'BUSINESS');
-  const [hasSaved, setHasSaved] = useState(() => getSaved() !== null);
+  const [hasSaved, setHasSaved] = useState(() => getSaved(memoryKey) !== null);
 
   const verifyGST = async () => {
     setGstLoading(true); setGstError('');
@@ -151,7 +150,7 @@ function Step1({ state, set, onNext, wide }: { state: WizardState; set: (p: Part
         <View style={[styles.note, { backgroundColor: 'rgba(59,130,246,0.1)' }]}>
           <ThemedText style={[styles.noteText, { color: '#2563eb' }]}>Pre-filled from previous customer</ThemedText>
           <Pressable onPress={() => {
-            setSaved(null); setHasSaved(false);
+            setSaved(memoryKey, null); setHasSaved(false);
             set({ customerName: '', customerPhone: '', customerEmail: '', customerAddress: '', customerGSTIN: '', gstVerified: false, gstData: null });
           }} hitSlop={8}>
             <ThemedText style={[styles.noteLink, { color: '#2563eb' }]}>Different customer?</ThemedText>
@@ -250,7 +249,7 @@ function Step1({ state, set, onNext, wide }: { state: WizardState; set: (p: Part
 
       <View style={styles.endRow}>
         <Button disabled={!canNext} onPress={() => {
-          setSaved({
+          setSaved(memoryKey, {
             customerType: state.customerType, customerName: state.customerName, customerPhone: state.customerPhone,
             customerEmail: state.customerEmail, customerAddress: state.customerAddress, customerGSTIN: state.customerGSTIN,
             gstVerified: state.gstVerified, gstData: state.gstData,
@@ -318,7 +317,7 @@ function Step2({ state, set, staff, onBack, onNext, wide }: {
   );
 }
 
-function Totals({ totals }: { totals: ReturnType<typeof cartTotals> }) {
+export function Totals({ totals }: { totals: ReturnType<typeof cartTotals> }) {
   return (
     <Panel>
       <TotalRow label="Subtotal" value={`₹${fmt(totals.lineSubtotal)}`} />
@@ -378,7 +377,7 @@ function Step3({ state, set, onBack, onCreated, wide }: {
         termsConditions: state.termsConditions || undefined,
         salespersonId: state.salespersonId || undefined,
       });
-      setSaved(null);
+      setSaved('quotation', null);
       onCreated(created);
     } catch (e) { setError(getErrorMessage(e, 'Failed to create quotation')); }
     finally { setLoading(false); }
@@ -461,7 +460,7 @@ export function NewQuotationWizard({ userId, wide, onClose, onCreated }: {
         <ThemedText style={styles.title}>New Quotation</ThemedText>
         <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button"><ThemedText themeColor="textMuted" style={{ fontSize: 14 }}>← All Quotations</ThemedText></Pressable>
       </View>
-      <StepIndicator step={state.step} wide={wide} onGoStep={(s) => { if (s < state.step) set({ step: s }); }} />
+      <StepIndicator step={state.step} wide={wide} onGoStep={(s) => { if (s < state.step && s < 4) set({ step: s as 1 | 2 | 3 }); }} />
       <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
         {state.step === 1 ? <Step1 state={state} set={set} wide={wide} onNext={() => set({ step: 2 })} /> : null}
         {state.step === 2 ? <Step2 state={state} set={set} staff={staff} wide={wide} onBack={() => set({ step: 1 })} onNext={() => set({ step: 3 })} /> : null}

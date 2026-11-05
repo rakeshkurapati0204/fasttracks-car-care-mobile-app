@@ -300,6 +300,14 @@ import type {
   PreJoiningTermsInput,
   ProbationCheckInDetail,
   ProbationMilestone,
+  DeviceFull,
+  InvoiceFull,
+  InvoiceRow,
+  InvoiceStats,
+  InvoiceReport,
+  InvoicePaymentHistoryRow,
+  OpenInvoiceRow,
+  DeviceAlertFull,
   QuotationFull,
   QuotationStaffOption,
   QuotationItemSearchResult,
@@ -4431,5 +4439,97 @@ export async function verifyQuotationGstin(gstin: string) {
 
 export async function lookupQuotationVehicle(regNo: string) {
   const { data } = await api.get<ApiEnvelope<QuotationVehicleData>>(`/vehicle/${encodeURIComponent(regNo)}`);
+  return data.data;
+}
+
+// ── Devices, dashboard parity ──
+// GET /devices with the dashboard's own filters (deviceType, status = online | offline | locked).
+export async function fetchDevicesFull(params?: { deviceType?: string; status?: string }) {
+  const { data } = await api.get<ApiEnvelope<{ devices: DeviceFull[] }>>('/devices', { params: params && Object.keys(params).length ? params : undefined });
+  return data.data?.devices ?? [];
+}
+
+export async function unenrollDevice(id: string) {
+  const { data } = await api.delete<ApiEnvelope<unknown>>(`/devices/${id}`);
+  return data.data;
+}
+
+export async function fetchDeviceAlertsFull() {
+  const { data } = await api.get<ApiEnvelope<DeviceAlertFull[]>>('/devices/alerts');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// ── Sales Invoices, dashboard parity ──
+export async function fetchInvoiceStats() {
+  const { data } = await api.get<InvoiceStats>('/invoices/stats');
+  return data;
+}
+
+// The dashboard list: server paging + status / date filters + sortable columns. Returns rows and the total count.
+export async function fetchInvoicesPage(params: { page: number; limit: number; sortBy: string; sortDir: 'asc' | 'desc'; search?: string; status?: string; from?: string; to?: string }) {
+  const { data } = await api.get<unknown>('/invoices', {
+    params: { page: params.page, limit: params.limit, sortBy: params.sortBy, sortDir: params.sortDir, search: params.search || undefined, status: params.status || undefined, from: params.from || undefined, to: params.to || undefined },
+  });
+  const root = data as { data?: unknown; invoices?: unknown; total?: number; count?: number } | unknown[];
+  const raw = (Array.isArray(root) ? root : ((root as { data?: unknown }).data ?? root)) as { invoices?: InvoiceRow[]; data?: InvoiceRow[]; total?: number; count?: number } | InvoiceRow[];
+  if (Array.isArray(raw)) return { items: raw, total: raw.length };
+  return { items: raw.invoices ?? raw.data ?? [], total: raw.total ?? raw.count ?? 0 };
+}
+
+export async function fetchInvoiceFull(id: string) {
+  const { data } = await api.get<ApiEnvelope<InvoiceFull>>(`/invoices/${id}`);
+  return data.data;
+}
+
+export async function fetchInvoicePaymentHistory(id: string) {
+  const { data } = await api.get<ApiEnvelope<InvoicePaymentHistoryRow[]>>(`/payments/history/${id}`);
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function fetchInvoiceReport(params: Record<string, string>) {
+  const { data } = await api.get<{ summary?: { invoiceCount?: number; totalRevenue?: number; totalCollected?: number; totalOutstanding?: number }; totalInvoices?: number; totalBilled?: number; totalCollected?: number; totalOutstanding?: number; invoices?: InvoiceRow[] }>('/invoices/reports', { params });
+  const d = data;
+  return {
+    totalInvoices: d?.summary?.invoiceCount ?? d?.totalInvoices ?? 0,
+    totalBilled: d?.summary?.totalRevenue ?? d?.totalBilled ?? 0,
+    totalCollected: d?.summary?.totalCollected ?? d?.totalCollected ?? 0,
+    totalOutstanding: d?.summary?.totalOutstanding ?? d?.totalOutstanding ?? 0,
+    invoices: d?.invoices ?? [],
+  } as InvoiceReport;
+}
+
+export async function fetchOpenInvoices() {
+  const { data } = await api.get<ApiEnvelope<OpenInvoiceRow[]>>('/invoices/open');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function cancelInvoice(id: string) {
+  const { data } = await api.patch<ApiEnvelope<unknown>>(`/invoices/${id}/cancel`);
+  return data.data;
+}
+
+export async function deleteInvoice(id: string) {
+  const { data } = await api.delete<ApiEnvelope<unknown>>(`/invoices/${id}`);
+  return data.data;
+}
+
+export async function updateInvoiceRaw(id: string, body: Record<string, unknown>) {
+  const { data } = await api.put<ApiEnvelope<unknown>>(`/invoices/${id}`, body);
+  return data.data;
+}
+
+export async function createInvoiceRaw(body: Record<string, unknown>) {
+  const { data } = await api.post<ApiEnvelope<{ id: string; invoiceNumber: string }>>('/invoices', body);
+  return data.data;
+}
+
+// POST /invoices/:id/pay — the wizard's payment call (CASH | UPI | CARD). Returns the updated invoice figures.
+export async function payInvoice(id: string, body: { paymentMethod: string; amount: number; salespersonId?: string }) {
+  const { data } = await api.post<ApiEnvelope<{ invoiceNumber?: string; grandTotal?: number; balanceDue?: number; status?: string }>>(`/invoices/${id}/pay`, body);
+  return data.data;
+}
+
+export async function notifyInvoice(id: string, channels: string[], pdfUrl: string) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/invoices/${id}/notify`, { channels, pdfUrl });
   return data.data;
 }
