@@ -15,6 +15,9 @@ export type CallIntelligenceItem = {
   direction: string | null;
   fromMasked: string | null;
   toMasked: string | null;
+  /** Full numbers in international form (+919848012345). Only the OWNER's route sends them; older servers send neither. */
+  customerNumber?: string | null;
+  salespersonNumber?: string | null;
   startedAt: string | null;
   endedAt: string | null;
   createdAt?: string | null;
@@ -120,6 +123,16 @@ export function parseSummary(raw: unknown): CallSummaryData | null {
   };
 }
 
+// "+919848012345" -> "+91 98480 12345". Any other international number is shown as it is; text that is not a number is returned unchanged.
+export function formatPhone(e164: string | null | undefined): string {
+  const v = (e164 ?? '').trim();
+  const m = /^\+91(\d{5})(\d{5})$/.exec(v);
+  return m ? `+91 ${m[1]} ${m[2]}` : v;
+}
+
+// The full number when the server sent it, otherwise the masked form it always sends ("****1086").
+const shownNumber = (full: string | null | undefined, masked: string | null | undefined): string => (full ? formatPhone(full) : (masked ?? ''));
+
 export function toEntry(item: CallIntelligenceItem): CallTrackerEntry {
   // The screens need a real timestamp: a call Exotel gave no StartTime for (e.g. never answered) falls back to when the pipeline first saw it.
   const given = toLocalStamp(item.startedAt);
@@ -127,8 +140,8 @@ export function toEntry(item: CallIntelligenceItem): CallTrackerEntry {
   const entry: CallTrackerEntry = {
     callId: item.recordingId,
     salesperson: item.salesperson ?? 'Unknown',
-    salespersonPhoneMasked: item.direction?.startsWith('inbound') ? (item.toMasked ?? '') : (item.fromMasked ?? ''),
-    customerPhoneMasked: item.direction?.startsWith('inbound') ? (item.fromMasked ?? '') : (item.toMasked ?? ''),
+    salespersonPhone: item.direction?.startsWith('inbound') ? shownNumber(item.salespersonNumber, item.toMasked) : shownNumber(item.salespersonNumber, item.fromMasked),
+    customerPhone: item.direction?.startsWith('inbound') ? shownNumber(item.customerNumber, item.fromMasked) : shownNumber(item.customerNumber, item.toMasked),
     direction: item.direction?.startsWith('inbound') ? 'INBOUND' : 'OUTBOUND',
     source: item.source === 'android_native' ? 'Android' : 'Exotel',
     startedAt: started,

@@ -11,8 +11,8 @@ export type CallTrackerStatus = 'completed' | 'processing' | 'pending' | 'failed
 export type CallTrackerEntry = {
   callId: string;
   salesperson: string;
-  salespersonPhoneMasked: string;
-  customerPhoneMasked: string;
+  salespersonPhone: string;
+  customerPhone: string;
   direction: 'INBOUND' | 'OUTBOUND';
   source: string;
   /** Local (IST) wall-clock time, "YYYY-MM-DDTHH:mm:ss" with no offset. */
