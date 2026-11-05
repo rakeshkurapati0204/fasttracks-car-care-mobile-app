@@ -4533,3 +4533,13 @@ export async function notifyInvoice(id: string, channels: string[], pdfUrl: stri
   const { data } = await api.post<ApiEnvelope<unknown>>(`/invoices/${id}/notify`, { channels, pdfUrl });
   return data.data;
 }
+
+// ── SIM Tracker, dashboard parity ──
+// The dashboard sends explicit nulls for blank fields so an edit really clears them (PUT only touches fields that
+// are present in the body); the typed createSim/updateSim above drop blanks to undefined, which would not.
+export async function saveSimRaw(id: number | null, body: Record<string, unknown>) {
+  const { data } = id == null
+    ? await api.post<ApiEnvelope<SimCard>>('/sims', body)
+    : await api.put<ApiEnvelope<SimCard>>(`/sims/${id}`, body);
+  return data.data;
+}

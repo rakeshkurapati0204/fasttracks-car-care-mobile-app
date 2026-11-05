@@ -101,7 +101,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const { user, signOut } = useAuth();
-  const { hasAdsAccess } = usePermissions();
+  const { hasAdsAccess, hasTab } = usePermissions();
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -110,9 +110,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const items = useMemo(
     () => SCREEN_REGISTRY.filter((s) => {
       if (s.requiresAccess === 'ads') return hasAdsAccess;
+      if (s.requiresAccess === 'settings_company') return ['OWNER', 'STORE_MANAGER'].includes(user?.role ?? '') || hasTab('settings_company');
       return !s.visibleToRoles || s.visibleToRoles.includes(user?.role ?? '');
     }),
-    [hasAdsAccess, user?.role],
+    [hasAdsAccess, hasTab, user?.role],
   );
 
   const q = query.trim().toLowerCase();

@@ -18,7 +18,7 @@ export interface ScreenMeta {
   // When set, the menu entry shows only to users who pass that backend access
   // check (resolved by PermissionsProvider from GET /auth/me) instead of by
   // role. For screens whose gate is a per-user grant, not a role list.
-  requiresAccess?: 'ads';
+  requiresAccess?: 'ads' | 'settings_company';
 }
 
 // Screens reachable from a dedicated bottom tab (attendance, conversations)
@@ -501,10 +501,12 @@ export const SCREEN_REGISTRY: ScreenMeta[] = [
   {
     id: 'settings',
     title: 'Company Settings',
-    dashboardRoute: '/dashboard/settings',
+    dashboardRoute: '/dashboard/settings/company',
     purpose: 'Company/supplier letterhead settings (GST, address, contact info).',
     endpoints: ['GET /settings/supplier', 'PUT /settings/supplier'],
-    note: 'GET /settings/supplier (backend/src/routes/settings_route.ts, verified 2026-09-19) is open to any authenticated user; PUT is gated to ADMIN_ROLES=[OWNER,STORE_MANAGER]. Only configures the single SupplierSettings row — no other settings exist on this route. Read view for everyone in the More menu; edit form gated client-side to the two admin roles as defense in depth.',
+    note: 'Dashboard menu rule (navItems + requireCompanySettingsRead): OWNER and STORE_MANAGER always; any other role only with the settings_company tab enabled (companySettingsLevel). The menu entry uses requiresAccess settings_company and the screen enforces the same rule; editing needs OWNER / STORE_MANAGER or settings_company at full_access (the server re-checks).',
+    requiresAccess: 'settings_company',
+    route: '/more/settings',
   },
   {
     id: 'timesheets-manager',
