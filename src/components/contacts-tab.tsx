@@ -7,7 +7,9 @@ import { ThemedView } from '@/components/themed-view';
 import { Layout, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { addMyContact, fetchMyContacts, getErrorMessage, importMyContacts } from '@/lib/api';
-import { contactFormError, filterContacts, mobileDigits, phoneBookRows, showPhone, type MyContact } from '@/lib/contacts';
+import { contactFormError, filterContacts, mobileDigits, showPhone, type MyContact } from '@/lib/contacts';
+import { forgetDialContacts } from '@/lib/dial-contacts';
+import { phoneBookAvailable, phoneBookPermission, readPhoneBook, saveToPhoneBook } from '@/lib/phone-contacts';
 
 // The salesman's own saved customers. Everything saved here is also visible to the owner (contacts directory, and the name shows on that number in the
 // call logs), so the form says so. Tapping a contact opens the Dialer with that number ready; the call itself goes through the normal, recorded flow.
@@ -37,8 +39,13 @@ export function ContactsTab({ onCall, newPhone = '' }: { onCall: (digits: string
     if (problem) { setFormError(problem); return; }
     setSaving(true); setFormError(null);
     try {
-      const created = await addMyContact({ name: name.trim(), phone: mobileDigits(phone)!, ...(note.trim() ? { note: note.trim() } : {}) });
+      const digits = mobileDigits(phone)!;
+      const created = await addMyContact({ name: name.trim(), phone: digits, ...(note.trim() ? { note: note.trim() } : {}) });
       setList((cur) => [created, ...(cur ?? [])]);
+      // Also into the phone's own Contacts app (skipped if the number is already there), so it shows in the normal dialer and WhatsApp.
+      const onPhone = await saveToPhoneBook(name, digits);
+      forgetDialContacts();
+      setImportNote(onPhone === 'saved' ? 'Saved here and in your phone contacts.' : onPhone === 'exists' ? 'Saved. It was already in your phone contacts.' : onPhone === 'denied' ? 'Saved here. Allow Contacts permission to also save it in your phone.' : null);
       setName(''); setPhone(''); setNote(''); setAdding(false);
     } catch (err) {
       setFormError(getErrorMessage(err, 'Could not save the contact.'));
@@ -54,14 +61,11 @@ export function ContactsTab({ onCall, newPhone = '' }: { onCall: (digits: string
   // owner can see what is saved here. Sent in batches; numbers already saved by anyone are skipped by the server.
   const importFromPhone = async () => {
     setImportNote(null);
-    let Contacts: typeof import('expo-contacts');
-    try { Contacts = await import('expo-contacts'); } catch { setImportNote('This build of the app cannot read phone contacts. Install the latest version.'); return; }
+    if (!(await phoneBookAvailable())) { setImportNote('Phone contacts can only be read on the Android app.'); return; }
     setImporting(true);
     try {
-      const perm = await Contacts.requestPermissionsAsync();
-      if (!perm.granted) { setImportNote('Allow Contacts permission to copy your phone contacts.'); return; }
-      const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name] });
-      const rows = phoneBookRows(data.map((c) => ({ name: c.name, phoneNumbers: c.phoneNumbers?.map((p) => ({ number: p.number })) })));
+      if ((await phoneBookPermission(true)) !== 'granted') { setImportNote('Allow Contacts permission to copy your phone contacts.'); return; }
+      const rows = await readPhoneBook();
       if (rows.length === 0) { setImportNote('No mobile numbers found in your phone contacts.'); return; }
       const ok = await new Promise<boolean>((resolve) => Alert.alert(`Copy ${rows.length} contacts?`, 'They are saved in Fasttracks and the owner can see them.', [
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) }, { text: 'Copy', onPress: () => resolve(true) },

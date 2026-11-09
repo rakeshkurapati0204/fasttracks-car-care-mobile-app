@@ -3,7 +3,7 @@ import { Alert, Platform } from 'react-native';
 
 import { importMyContacts } from '@/lib/api';
 import { canSyncContacts, nextSyncStep, parseSyncState, syncKey, type ContactSyncState } from '@/lib/contact-sync';
-import { phoneBookRows } from '@/lib/contacts';
+import { phoneBookPermission, readPhoneBook } from '@/lib/phone-contacts';
 
 let running = false;
 
@@ -33,21 +33,17 @@ export async function runContactSync(user: { id: string; role: string }): Promis
     const step = nextSyncStep(state, Date.now());
     if (step === 'skip') return;
 
-    const Contacts = await import('expo-contacts');
     if (step === 'ask') {
       const yes = await askOnce();
       state = { asked: true, agreed: yes, lastSyncAt: null };
       await saveState(user.id, state);
       if (!yes) return;
-      const perm = await Contacts.requestPermissionsAsync();
-      if (!perm.granted) { await saveState(user.id, { asked: true, agreed: false, lastSyncAt: null }); return; }
-    } else {
-      const perm = await Contacts.getPermissionsAsync();
-      if (!perm.granted) return;
+      if ((await phoneBookPermission(true)) !== 'granted') { await saveState(user.id, { asked: true, agreed: false, lastSyncAt: null }); return; }
+    } else if ((await phoneBookPermission(false)) !== 'granted') {
+      return;
     }
 
-    const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name] });
-    const rows = phoneBookRows(data.map((c) => ({ name: c.name, phoneNumbers: c.phoneNumbers?.map((p) => ({ number: p.number })) })));
+    const rows = await readPhoneBook();
     for (let i = 0; i < rows.length; i += 500) await importMyContacts(rows.slice(i, i + 500));
     await saveState(user.id, { asked: true, agreed: true, lastSyncAt: new Date().toISOString() });
   } catch {
