@@ -2,8 +2,9 @@
 
 /** Roles that may save contacts on the server (same list as the backend's MY_CONTACT_ROLES). */
 export const CONTACT_SYNC_ROLES = ['OWNER', 'STORE_MANAGER', 'SALES'];
-/** After the first copy, look for new phone contacts at most once a day. */
-export const RESYNC_AFTER_MS = 24 * 60 * 60 * 1000;
+/** After the first copy, look for new phone contacts each time the app is opened, at most once every 10 minutes (the dial pad reads the phone
+ *  book directly, so names show at once anyway; this only keeps the owner's view up to date). */
+export const RESYNC_AFTER_MS = 10 * 60 * 1000;
 
 export interface ContactSyncState {
   /** The person answered the one-time "copy your contacts?" question. */

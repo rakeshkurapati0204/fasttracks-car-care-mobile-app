@@ -8,6 +8,7 @@ import {
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type Theme } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -65,9 +66,13 @@ function RootNavigator() {
     return subscribeToNotificationTaps();
   }, []);
 
-  // Copies the phone's contacts into the app after login (asks once), then re-checks daily. See contact-sync-runner.ts.
+  // Copies the phone's contacts into the app after login (asks once), then again whenever the app is opened (at most every 10 minutes), so a
+  // contact saved in the phone's own app reaches Fasttracks soon. See contact-sync-runner.ts.
   useEffect(() => {
-    if (user) void runContactSync(user);
+    if (!user) return;
+    void runContactSync(user);
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') void runContactSync(user); });
+    return () => sub.remove();
   }, [user]);
 
   if (!isReady || !fontsLoaded) return null;

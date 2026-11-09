@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { contactFormError, filterContacts, mobileDigits, pastedMobile, phoneBookRows, showPhone, type MyContact } from './contacts.ts';
+import { contactFormError, filterContacts, matchDialContacts, mobileDigits, pastedMobile, phoneBookRows, showPhone, type MyContact } from './contacts.ts';
 
 const C = (name: string, phone: string, reason: string | null = null): MyContact => ({ id: name, phone, name, reason, createdAt: '2026-11-05T10:00:00Z' });
 
@@ -49,4 +49,12 @@ test('phoneBookRows keeps each valid mobile once, with its contact name', () => 
     { name: 'Anil', phoneNumbers: [{ number: null }, { number: '7396135252' }] },
   ]);
   assert.deepEqual(rows, [{ name: 'Ravi Kumar', phone: '9848012345' }, { name: 'Ravi Kumar', phone: '8019275252' }, { name: 'Anil', phone: '7396135252' }]);
+});
+
+test('dial pad shows the contact whose number is typed, and suggestions while typing', () => {
+  const book = [{ name: 'Ravi', phone: '9848012345' }, { name: 'Anil', phone: '9000098480' }, { name: 'Ravi (app)', phone: '9848012345' }, { name: 'Zed', phone: '7000000001' }];
+  assert.deepEqual(matchDialContacts(book, '98'), { exact: null, suggestions: [] }); // too short
+  assert.deepEqual(matchDialContacts(book, '9848012345').exact, { name: 'Ravi', phone: '9848012345' }); // first source wins
+  assert.deepEqual(matchDialContacts(book, '98480').suggestions.map((c) => c.name), ['Ravi', 'Anil']); // starts-with first
+  assert.deepEqual(matchDialContacts(book, '9876543210'), { exact: null, suggestions: [] }); // unknown number
 });

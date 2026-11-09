@@ -31,12 +31,14 @@ export function CallRow({ call }: { call: CallLogEntry }) {
   // number up for a call this user may see. The key is kept until a call is placed, so a retry after a network failure cannot ring the customer twice.
   const [busy, setBusy] = useState(false);
   const key = useRef<string | null>(null);
+  const inFlight = useRef(false); // set synchronously: a fast double tap cannot open two "Call X?" prompts
   const callBack = async () => {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       const caps = await fetchCallCapabilities().catch(() => null);
-      const blocked = dialBlockedReason(caps);
+      const blocked = dialBlockedReason(caps, { callBack: true });
       if (blocked) { Alert.alert('Cannot call', blocked); return; }
       let isPhoneApp = false;
       try { isPhoneApp = !!FasttracksDialer?.isDefaultDialer(); } catch { /* not a phone-app build */ }
@@ -46,13 +48,13 @@ export function CallRow({ call }: { call: CallLogEntry }) {
         native: FasttracksDialer ?? null, autoOn: !!caps?.c2cAutoAnswerEnabled && !!FasttracksDialer, isPhoneApp,
       });
       if (out.kind === 'placed') {
-        key.current = null;
-        if (!out.autoAnswered) Alert.alert('Calling', 'Your phone will ring first. Answer it to be connected.');
+        key.current = null; // the phone rings by itself; no extra popup
       } else if (out.kind === 'failed') {
         if (!out.keepKey) key.current = null;
         Alert.alert('Could not place the call', out.text);
       }
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };

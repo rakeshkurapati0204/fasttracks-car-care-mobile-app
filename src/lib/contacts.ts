@@ -59,3 +59,20 @@ export function phoneBookRows(entries: PhoneBookEntry[]): { name: string; phone:
   }
   return rows;
 }
+
+export type DialContact = { name: string; phone: string }; // phone: 10 digits
+
+/**
+ * What the dial pad shows while a number is typed, like the phone's own dialer: the contact whose number it is (exact), else the best contacts whose
+ * number contains what was typed (from 3 digits on). Same number in both lists (phone book and app) is kept once; the phone book's name wins.
+ */
+export function matchDialContacts(list: DialContact[], typed: string, max = 3): { exact: DialContact | null; suggestions: DialContact[] } {
+  if (typed.length < 3) return { exact: null, suggestions: [] };
+  const seen = new Set<string>();
+  const unique = list.filter((c) => (seen.has(c.phone) ? false : (seen.add(c.phone), true)));
+  const exact = typed.length === 10 ? unique.find((c) => c.phone === typed) ?? null : null;
+  if (exact) return { exact, suggestions: [] };
+  const hits = unique.filter((c) => c.phone.includes(typed));
+  hits.sort((a, b) => Number(!a.phone.startsWith(typed)) - Number(!b.phone.startsWith(typed)) || a.name.localeCompare(b.name));
+  return { exact: null, suggestions: hits.slice(0, max) };
+}

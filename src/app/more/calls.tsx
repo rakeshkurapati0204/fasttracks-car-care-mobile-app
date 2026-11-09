@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CallRow } from '@/components/call-row';
@@ -44,6 +44,7 @@ export default function CallsScreen() {
   const [tab, setTab] = useState<CallsTab>('dialer');
   const [dialSeed, setDialSeed] = useState<{ n: number; digits: string }>({ n: 0, digits: '' }); // a tapped contact: the dial pad is rebuilt with its number
   const [newContact, setNewContact] = useState<{ n: number; phone: string }>({ n: 0, phone: '' }); // "Add to contacts" on the dial pad
+  const [padDigits, setPadDigits] = useState(''); // what is typed on the dial pad survives a visit to another tab
   const { user } = useAuth();
   const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
 
@@ -73,10 +74,14 @@ export default function CallsScreen() {
     }
   }, [isAuthorized, canPlayRecordings]);
 
+  // Recents is re-read each time it is opened and whenever the app comes back to the front on it, so a call just made shows up.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
+    if (tab !== 'recents') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch when the tab opens
     load();
-  }, [load]);
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') load(); });
+    return () => sub.remove();
+  }, [load, tab]);
 
   const onRefresh = async () => {
     setIsRefreshing(true);
@@ -98,7 +103,7 @@ export default function CallsScreen() {
       let cmp = 0;
       if (sortKey === 'date') cmp = new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime();
       else if (sortKey === 'duration') cmp = (a.durationSeconds ?? -1) - (b.durationSeconds ?? -1);
-      else cmp = (a.agentName ?? '').localeCompare(b.agentName ?? '');
+      else cmp = (a.customerName ?? a.counterpartyRaw ?? a.counterpartyDisplay ?? '').localeCompare(b.customerName ?? b.counterpartyRaw ?? b.counterpartyDisplay ?? '');
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return sorted;
@@ -132,11 +137,15 @@ export default function CallsScreen() {
         }}
       />
       <View style={styles.flex1}>
-      {tab === 'dialer' && <DialerPad key={dialSeed.n} initialDigits={dialSeed.digits} onAddContact={(phone) => { setNewContact((c) => ({ n: c.n + 1, phone })); setTab('contacts'); }} />}
-      {tab === 'contacts' && <ContactsTab key={newContact.n} newPhone={newContact.phone} onCall={(digits) => { setDialSeed((s) => ({ n: s.n + 1, digits })); setTab('dialer'); }} />}
+      {tab === 'dialer' && <DialerPad key={dialSeed.n} initialDigits={padDigits} onDigitsChange={setPadDigits} onAddContact={(phone) => { setNewContact((c) => ({ n: c.n + 1, phone })); setTab('contacts'); }} />}
+      {tab === 'contacts' && <ContactsTab key={newContact.n} newPhone={newContact.phone} onCall={(digits) => { setPadDigits(digits); setDialSeed((s) => ({ n: s.n + 1, digits })); setTab('dialer'); }} />}
       {tab === 'search' && <CustomerPhoneSearch />}
       {tab === 'recents' && error && <ThemedText style={styles.error}>{error}</ThemedText>}
-      {tab !== 'recents' ? null : calls === null ? (
+      {tab !== 'recents' ? null : calls === null && error ? (
+        <Pressable onPress={load} accessibilityRole="button" style={[styles.chip, styles.retry, { backgroundColor: theme.backgroundElement }]}>
+          <ThemedText type="smallBold">Retry</ThemedText>
+        </Pressable>
+      ) : calls === null ? (
         <ActivityIndicator style={styles.spinner} />
       ) : (
         <ScrollView
@@ -146,14 +155,14 @@ export default function CallsScreen() {
           {capabilities && !capabilities.callingEnabled && (
             <ThemedView type="backgroundElement" style={styles.banner}>
               <ThemedText type="small" style={styles.bannerText}>
-                Exotel calling isn&apos;t set up yet. Existing call history is still shown below.
+                Calling isn&apos;t available yet. Your call history is still shown below.
               </ThemedText>
             </ThemedView>
           )}
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Search customer or agent"
+            placeholder="Search name or number"
             placeholderTextColor={theme.textSecondary}
             style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
           />
@@ -165,7 +174,7 @@ export default function CallsScreen() {
                 onPress={() => { if (sortKey === k) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc')); else { setSortKey(k); setSortDir('desc'); } }}
                 style={[styles.chip, { backgroundColor: sortKey === k ? theme.primary : theme.backgroundElement }]}>
                 <ThemedText type="small" style={sortKey === k ? styles.chipLabelActive : undefined}>
-                  {k === 'date' ? 'Date' : k === 'duration' ? 'Duration' : 'Person'} {sortKey === k ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                  {k === 'date' ? 'Date' : k === 'duration' ? 'Duration' : 'Name'} {sortKey === k ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                 </ThemedText>
               </Pressable>
             ))}
@@ -174,7 +183,7 @@ export default function CallsScreen() {
           <View style={styles.section}>
             <ThemedText type="smallBold">Call Log ({filteredCalls.length})</ThemedText>
             {filteredCalls.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">No calls match these filters.</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">{calls && calls.length === 0 ? 'No calls yet. Calls you make and get show up here.' : 'No calls match your search.'}</ThemedText>
             ) : (
               <View>
                 {filteredCalls.map((call, i) => {
@@ -229,6 +238,7 @@ const styles = StyleSheet.create({
   spinner: { marginTop: Spacing.three },
   input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
   chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, borderRadius: 999, marginRight: Spacing.one },
+  retry: { alignSelf: 'center', marginTop: Spacing.three, paddingHorizontal: Spacing.four, paddingVertical: Spacing.two },
   chipLabelActive: { color: '#ffffff', fontWeight: '600' },
   banner: { borderRadius: Spacing.two, padding: Spacing.two, borderWidth: 1, borderColor: 'rgba(232,168,40,0.3)', backgroundColor: 'rgba(232,168,40,0.12)' },
   bannerText: { color: '#A86018' },

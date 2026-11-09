@@ -32,7 +32,7 @@ export function InCallModal({ state, mock, onHangup, onMute, onSpeaker, onClose 
   const controls = isActive(state);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={finished ? onClose : onHangup}>
+    <Modal visible={visible} animationType="slide" onRequestClose={finished ? onClose : () => { /* a live call ends only with the End button, never with Back */ }}>
       <View style={[styles.screen, { backgroundColor: theme.background }]}>
         <View style={styles.top}>
           {mock ? <ThemedText type="small" style={{ color: theme.danger }}>TEST MODE: no real call is placed</ThemedText> : null}

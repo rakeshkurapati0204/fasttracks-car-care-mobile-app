@@ -17,8 +17,8 @@ test('idempotency key matches the backend pattern and differs per attempt', () =
 
 test('capabilities decide whether the pad may call, with a specific reason', () => {
   assert.equal(dialBlockedReason({ callingEnabled: true, dialPadEnabled: true, canDial: true }), null);
-  assert.match(dialBlockedReason(null) ?? '', /Could not check/);
-  assert.match(dialBlockedReason({ callingEnabled: false, dialPadEnabled: false, canDial: false }) ?? '', /isn't set up/);
+  assert.match(dialBlockedReason(null) ?? '', /Can't reach the server/);
+  assert.match(dialBlockedReason({ callingEnabled: false, dialPadEnabled: false, canDial: false }) ?? '', /isn't available/);
   assert.match(dialBlockedReason({ callingEnabled: true, dialPadEnabled: false, canDial: false }) ?? '', /switched off/);
   assert.match(dialBlockedReason({ callingEnabled: true }) ?? '', /switched off/); // an older backend without the flag
   assert.match(dialBlockedReason({ callingEnabled: true, dialPadEnabled: true, canDial: false }) ?? '', /not allowed/);
