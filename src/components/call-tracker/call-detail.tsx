@@ -130,10 +130,13 @@ function PlayerCard({ call }: { call: CallTrackerEntry }) {
 
 function SummaryBlock({ summary }: { summary: CallSummaryData }) {
   if (summary.notice) return <ThemedText themeColor="textMuted" style={styles.prose}>{summary.notice}</ThemedText>;
-  const empty = !summary.intent && !summary.nextSteps && ![summary.keyPoints, summary.decisions, summary.actionItems, summary.objections].some((l) => l.length);
+  const empty = !summary.intent && !summary.nextSteps && !summary.brief && !summary.detailedSummary && !summary.numbers.length
+    && ![summary.keyPoints, summary.decisions, summary.actionItems, summary.objections, summary.salesmanSaid, summary.customerSaid].some((l) => l.length);
   // Older records (before the current summary format) have none of the current fields: say so rather than show a blank tab.
   if (empty) return <ThemedText themeColor="textMuted" style={styles.prose}>The saved summary has no usable content (older format or nothing was said).</ThemedText>;
   const lists: { label: string; items: string[] }[] = [
+    { label: 'Salesman said', items: summary.salesmanSaid },
+    { label: 'Customer said', items: summary.customerSaid },
     { label: 'Key points', items: summary.keyPoints },
     { label: 'Decisions', items: summary.decisions },
     { label: 'Action items', items: summary.actionItems },
@@ -141,7 +144,18 @@ function SummaryBlock({ summary }: { summary: CallSummaryData }) {
   ];
   return (
     <View style={styles.sections}>
+      {summary.brief ? <Section label="Brief"><ThemedText style={styles.prose}>{summary.brief}</ThemedText></Section> : null}
       {summary.intent ? <Section label="Intent"><ThemedText style={styles.prose}>{summary.intent}</ThemedText></Section> : null}
+      {summary.detailedSummary ? <Section label="Detailed summary"><ThemedText style={styles.prose}>{summary.detailedSummary}</ThemedText></Section> : null}
+      {summary.numbers.length ? (
+        <Section label="Numbers mentioned">
+          {summary.numbers.map((n, i) => (
+            <ThemedText key={i} style={styles.prose}>
+              {`• ${n.what}: ${n.value}${n.saidBy ? ` (${n.saidBy})` : ''}${n.verified ? '' : ' ⚠ not matched to the transcript'}`}
+            </ThemedText>
+          ))}
+        </Section>
+      ) : null}
       {lists.filter((l) => l.items.length).map((l) => (
         <Section key={l.label} label={l.label}>
           {l.items.map((item, i) => <ThemedText key={i} style={styles.prose}>{`\u2022 ${item}`}</ThemedText>)}
@@ -169,7 +183,7 @@ function TranscriptView({ turns }: { turns: CallTurn[] }) {
       {turns.map((t, i) => (
         <View key={i} style={styles.turn}>
           <ThemedText style={[styles.speaker, { color: t.speaker === 'SALESMAN' ? theme.primary : theme.textSecondary }]}>
-            {t.speaker === 'SALESMAN' ? 'Salesman' : t.speaker === 'CUSTOMER' ? 'Customer' : t.speaker}
+            {t.speaker === 'SALESMAN' ? 'Salesman' : t.speaker === 'CUSTOMER' ? 'Customer' : t.speaker.replace(/^SPEAKER_(\d+)$/, (_m, n) => `Speaker ${Number(n) + 1}`)}
           </ThemedText>
           <ThemedText style={styles.prose}>{t.text}</ThemedText>
         </View>
@@ -195,7 +209,7 @@ function KeyValue({ label, children, last }: { label: string; children: React.Re
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label = 'Copy call ID' }: { text: string; label?: string }) {
   const theme = useTheme();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -209,7 +223,7 @@ function CopyButton({ text }: { text: string }) {
   };
 
   return (
-    <Pressable onPress={copy} hitSlop={Spacing.two} accessibilityRole="button" accessibilityLabel="Copy call ID" style={({ pressed }) => [styles.copy, pressed && { opacity: PRESSED_OPACITY }]}>
+    <Pressable onPress={copy} hitSlop={Spacing.two} accessibilityRole="button" accessibilityLabel={label} style={({ pressed }) => [styles.copy, pressed && { opacity: PRESSED_OPACITY }]}>
       <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={18} color={copied ? theme.success : theme.textSecondary} />
     </Pressable>
   );
@@ -238,7 +252,8 @@ export function CallDetail({ call: listCall }: { call: CallTrackerEntry }) {
       <View style={styles.hero}>
         <Avatar name={call.salesperson} size={56} />
         <View style={styles.flex1}>
-          <ThemedText style={[styles.number, TABULAR]}>{call.customerPhoneMasked}</ThemedText>
+          <ThemedText style={[styles.number, TABULAR]} selectable>{call.customerName ?? call.customerPhone}</ThemedText>
+          {call.customerName ? <ThemedText themeColor="textSecondary" style={[styles.when, TABULAR]} selectable>{call.customerPhone}{call.contactAddedBy ? ` · saved by ${call.contactAddedBy}` : ''}</ThemedText> : null}
           <ThemedText themeColor="textSecondary" style={styles.when}>{longDay(call.startedAt)} · {timeRange(call.startedAt, call.endedAt)}</ThemedText>
         </View>
       </View>
@@ -273,7 +288,14 @@ export function CallDetail({ call: listCall }: { call: CallTrackerEntry }) {
                 <ThemedText style={styles.mono} selectable numberOfLines={1} ellipsizeMode="middle">{call.callId}</ThemedText>
                 <CopyButton text={call.callId} />
               </KeyValue>
-              <KeyValue label="Salesperson no."><ThemedText style={[styles.kvText, TABULAR]}>{call.salespersonPhoneMasked}</ThemedText></KeyValue>
+              <KeyValue label="Customer no.">
+                <ThemedText style={[styles.kvText, TABULAR]} selectable>{call.customerPhone}</ThemedText>
+                {call.customerPhone ? <CopyButton text={call.customerPhone.replace(/[^\d+]/g, '')} label="Copy customer number" /> : null}
+              </KeyValue>
+              <KeyValue label="Salesperson no.">
+                <ThemedText style={[styles.kvText, TABULAR]} selectable>{call.salespersonPhone}</ThemedText>
+                {call.salespersonPhone ? <CopyButton text={call.salespersonPhone.replace(/[^\d+]/g, '')} label="Copy salesperson number" /> : null}
+              </KeyValue>
               <KeyValue label="Source"><ThemedText style={styles.kvText}>{call.source}</ThemedText></KeyValue>
               <KeyValue label="Recording"><Badge size="sm" variant={STATUS_VARIANT[call.recordingStatus]}>{call.recordingStatus}</Badge></KeyValue>
               <KeyValue label="Transcript"><Badge size="sm" variant={STATUS_VARIANT[call.transcriptStatus]}>{call.transcriptStatus}</Badge></KeyValue>

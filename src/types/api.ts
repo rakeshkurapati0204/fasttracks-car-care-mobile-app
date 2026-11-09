@@ -597,6 +597,8 @@ export interface CallLogEntry {
   agentName: string | null;
   customerName: string | null;
   counterpartyDisplay: string | null;
+  /** Full international number. Sent to roles allowed to see it (a salesman gets it for his own calls). */
+  counterpartyRaw?: string | null;
   hasRecording: boolean;
   linkStatus: string;
   // Non-null only for OWNER/STORE_MANAGER (the only roles with a global

@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
@@ -6,6 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchCallCapabilities } from '@/lib/api';
+import { pastedMobile } from '@/lib/contacts';
 import { dialBlockedReason, newDialKey, toE164India } from '@/lib/dial';
 import { confirmCall, placeCall } from '@/lib/dial-flow';
 import { InCallModal } from '@/components/call/in-call-modal';
@@ -52,9 +54,9 @@ function helperText(digits: string) {
 
 // Real calling: POST /calls/dial on the dashboard backend, which asks Exotel to ring the signed-in user's own phone first and then connect
 // the typed number, recording the call. Rendered by the Dialer tab of the Calls screen (calls.tsx), which already enforces the role check.
-export function DialerPad() {
+export function DialerPad({ initialDigits = '' }: { initialDigits?: string } = {}) {
   const theme = useTheme();
-  const [digits, setDigits] = useState('');
+  const [digits, setDigits] = useState(initialDigits.slice(0, MAX_DIGITS));
   const [caps, setCaps] = useState<CallCapabilities | null>(null);
   const [capsChecked, setCapsChecked] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -97,6 +99,16 @@ export function DialerPad() {
   const press = (d: string) => setDigits((cur) => (cur.length < MAX_DIGITS ? cur + d : cur));
   const backspace = () => setDigits((cur) => cur.slice(0, -1));
   const clear = () => setDigits('');
+  const paste = async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      const d = pastedMobile(text);
+      if (d) { setDigits(d); setResult(null); } else setResult({ ok: false, text: 'No valid mobile number found in what you copied.' });
+    } catch { setResult({ ok: false, text: 'Could not read the clipboard.' }); }
+  };
+  const copy = async () => {
+    try { await Clipboard.setStringAsync(`+91${digits}`); setResult({ ok: true, text: 'Number copied.' }); } catch { setResult({ ok: false, text: 'Could not copy.' }); }
+  };
 
   const call = async () => {
     const e164 = toE164India(digits);
@@ -158,6 +170,14 @@ export function DialerPad() {
             style={complete && !valid ? { color: theme.danger } : valid ? { color: theme.success } : undefined}>
             {helperText(digits)}
           </ThemedText>
+          <View style={styles.clipRow}>
+            <Pressable onPress={paste} accessibilityRole="button" accessibilityLabel="Paste number" hitSlop={Spacing.two} style={[styles.clipBtn, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText type="smallBold">Paste</ThemedText>
+            </Pressable>
+            <Pressable onPress={copy} disabled={digits.length === 0} accessibilityRole="button" accessibilityLabel="Copy number" hitSlop={Spacing.two} style={[styles.clipBtn, { backgroundColor: theme.backgroundElement }, digits.length === 0 && styles.disabled]}>
+              <ThemedText type="smallBold">Copy</ThemedText>
+            </Pressable>
+          </View>
           {autoStatus}
           {autoNote ? <ThemedText type="small" style={{ color: theme.danger }}>{autoNote}</ThemedText> : null}
           {result ? (
@@ -247,5 +267,7 @@ const styles = StyleSheet.create({
   callLabel: { color: '#ffffff', fontWeight: '700', fontSize: 16 },
   backspace: { fontSize: 26, lineHeight: 30 },
   disabled: { opacity: 0.35 },
+  clipRow: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.one },
+  clipBtn: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.one + Spacing.half, borderRadius: 999, minHeight: 36, justifyContent: 'center' },
   result: { textAlign: 'center', paddingHorizontal: Spacing.three },
 });

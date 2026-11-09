@@ -3082,6 +3082,23 @@ export async function fetchCallLog(params?: { customerId?: string; direction?: '
   return data.data;
 }
 
+// GET/POST /contacts/mine (backend/src/routes/contacts.ts). Salesmen save customers here; the owner sees every one in the contacts directory and
+// the saved name on that number in the call logs.
+export async function fetchMyContacts() {
+  const { data } = await api.get<ApiEnvelope<{ contacts: import('@/lib/contacts').MyContact[] }>>('/contacts/mine');
+  return data.data.contacts;
+}
+
+export async function addMyContact(body: { name: string; phone: string; note?: string }) {
+  const { data } = await api.post<ApiEnvelope<import('@/lib/contacts').MyContact>>('/contacts/mine', body);
+  return data.data;
+}
+
+export async function importMyContacts(contacts: { name: string; phone: string }[]) {
+  const { data } = await api.post<ApiEnvelope<{ added: number; alreadySaved: number; invalid: number; received: number }>>('/contacts/mine/bulk', { contacts });
+  return data.data;
+}
+
 export async function fetchMyCallRecordingSummary() {
   const { data } = await api.get<ApiEnvelope<CallRecordingSummary[]>>('/call-recordings/my-summary');
   return data.data;

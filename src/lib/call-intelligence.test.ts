@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { istStampFromIso, mapRecordingStatus, mapStageStatus, parseSummary, parseTurns, toEntry, toLocalStamp, type CallIntelligenceItem } from './call-intelligence.ts';
+import { formatPhone, istStampFromIso, mapRecordingStatus, mapStageStatus, parseSummary, parseTurns, toEntry, toLocalStamp, type CallIntelligenceItem } from './call-intelligence.ts';
 
 const ITEM: CallIntelligenceItem = {
   recordingId: 'abc123-457000031e',
@@ -41,8 +41,8 @@ test('list item maps to a call tracker entry with the right stamps, status and n
   assert.equal(e.startedAt, '2026-10-28T11:34:49');
   assert.equal(e.endedAt, '2026-10-28T11:35:45');
   assert.equal(e.direction, 'OUTBOUND');
-  assert.equal(e.salespersonPhoneMasked, '****5252');
-  assert.equal(e.customerPhoneMasked, '****1086');
+  assert.equal(e.salespersonPhone, '****5252');
+  assert.equal(e.customerPhone, '****1086');
   assert.equal(e.talkTimeSeconds, 44);
   assert.equal(e.recordingStatus, 'available');
   assert.equal(e.transcriptStatus, 'completed');
@@ -53,8 +53,8 @@ test('list item maps to a call tracker entry with the right stamps, status and n
 test('inbound calls swap the salesperson and customer numbers', () => {
   const e = toEntry({ ...ITEM, direction: 'inbound', fromMasked: '****1111', toMasked: '****2222' });
   assert.equal(e.direction, 'INBOUND');
-  assert.equal(e.customerPhoneMasked, '****1111');
-  assert.equal(e.salespersonPhoneMasked, '****2222');
+  assert.equal(e.customerPhone, '****1111');
+  assert.equal(e.salespersonPhone, '****2222');
 });
 
 test('detail adds speaker turns (SALESMAN / CUSTOMER) and the structured summary', () => {
@@ -124,4 +124,34 @@ test('a call without a start time (never answered) falls back to when the pipeli
   assert.match(e.startedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
   assert.equal(istStampFromIso('not a date'), null);
   assert.equal(toEntry({ ...ITEM, startedAt: null, endedAt: null, createdAt: null }).startedAt, '1970-01-01T00:00:00'); // last resort, never empty
+});
+
+test('the owner sees full numbers when the server sends them, and the masked form when it does not', () => {
+  const out = toEntry({ ...ITEM, customerNumber: '+919848012345', salespersonNumber: '+918019275252' });
+  assert.equal(out.customerPhone, '+91 98480 12345');
+  assert.equal(out.salespersonPhone, '+91 80192 75252');
+  const inb = toEntry({ ...ITEM, direction: 'inbound', fromMasked: '****1111', toMasked: '****2222', customerNumber: '+919000011111' });
+  assert.equal(inb.customerPhone, '+91 90000 11111');
+  assert.equal(inb.salespersonPhone, '****2222'); // only the customer number was sent: the other side stays masked
+  assert.equal(toEntry({ ...ITEM, customerNumber: null }).customerPhone, '****1086'); // null: masked
+  assert.equal(toEntry({ ...ITEM, customerNumber: '' }).customerPhone, '****1086'); // empty: masked, never a blank row
+});
+
+test('formatPhone: Indian mobiles are grouped, other numbers and odd input are not mangled', () => {
+  assert.equal(formatPhone('+919848012345'), '+91 98480 12345');
+  assert.equal(formatPhone('+14155550123'), '+14155550123');
+  assert.equal(formatPhone('+91984801234'), '+91984801234'); // 9 digits: not a valid mobile, shown as is
+  assert.equal(formatPhone('App (VoIP)'), 'App (VoIP)');
+  assert.equal(formatPhone(null), '');
+  assert.equal(formatPhone(undefined), '');
+});
+
+test('toEntry carries the name a salesman saved for the customer and who saved it', () => {
+  const base = { recordingId: 'r1', source: 'exotel', salesperson: 'S', direction: 'outbound-api', fromMasked: '****5252', toMasked: '****2345', startedAt: '2026-11-05 10:00:00', endedAt: null, durationSeconds: 5, conversationSeconds: 3, status: { recording: 'available', transcription: 'completed', summary: 'completed' }, audioUrl: null } as never;
+  const named = toEntry({ ...(base as object), customerNumber: '+919848012345', customerName: ' Ravi Kumar ', contactAddedBy: 'Niketh' } as never);
+  assert.equal(named.customerName, 'Ravi Kumar');
+  assert.equal(named.contactAddedBy, 'Niketh');
+  assert.equal(named.customerPhone, '+91 98480 12345');
+  const plain = toEntry({ ...(base as object), customerName: null } as never);
+  assert.equal(plain.customerName, undefined);
 });

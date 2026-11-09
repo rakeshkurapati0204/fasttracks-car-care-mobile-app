@@ -15,6 +15,12 @@ export type CallIntelligenceItem = {
   direction: string | null;
   fromMasked: string | null;
   toMasked: string | null;
+  /** Full numbers in international form (+919848012345). Only the OWNER's route sends them; older servers send neither. */
+  customerNumber?: string | null;
+  salespersonNumber?: string | null;
+  /** The name a salesman saved for the customer's number, and who saved it. Only the OWNER's route sends them. */
+  customerName?: string | null;
+  contactAddedBy?: string | null;
   startedAt: string | null;
   endedAt: string | null;
   createdAt?: string | null;
@@ -81,6 +87,21 @@ const strings = (v: unknown): string[] =>
 const text = (v: unknown): string => (typeof v === 'string' && !PLACEHOLDER.test(v) ? v.trim() : '');
 const first = (...vals: string[]): string => vals.find((v) => v !== '') ?? '';
 
+// summary.numbers: rows {what, value, said_by, quote?, verified?}. A row without a label or a value is dropped; nothing is invented.
+function parseNumbers(v: unknown): CallSummaryData['numbers'] {
+  if (!Array.isArray(v)) return [];
+  const rows: CallSummaryData['numbers'] = [];
+  for (const x of v) {
+    if (!x || typeof x !== 'object') continue;
+    const o = x as Record<string, unknown>;
+    const what = text(o.what);
+    const value = text(o.value);
+    if (!what || !value) continue;
+    rows.push({ what, value, saidBy: text(o.said_by), quote: text(o.quote), verified: o.verified !== false });
+  }
+  return rows;
+}
+
 // The summary JSON from the service, or null when it is missing or not an object. A short call carries
 // {status: "not_enough_speech", reason} instead of the normal fields: it is shown as such, never invented.
 export function parseSummary(raw: unknown): CallSummaryData | null {
@@ -96,9 +117,24 @@ export function parseSummary(raw: unknown): CallSummaryData | null {
     actionItems: strings(r.action_items).length ? strings(r.action_items) : strings(r.follow_up_actions),
     objections: strings(r.objections),
     nextSteps: first(text(r.next_steps), strings(r.agreed_next_steps).join('; ')),
+    brief: text(r.brief),
+    detailedSummary: text(r.detailed_summary),
+    salesmanSaid: strings(r.salesman_said),
+    customerSaid: strings(r.customer_said),
+    numbers: parseNumbers(r.numbers),
     notice: r.status === 'not_enough_speech' ? text(r.reason) || 'Not enough speech to summarise.' : undefined,
   };
 }
+
+// "+919848012345" -> "+91 98480 12345". Any other international number is shown as it is; text that is not a number is returned unchanged.
+export function formatPhone(e164: string | null | undefined): string {
+  const v = (e164 ?? '').trim();
+  const m = /^\+91(\d{5})(\d{5})$/.exec(v);
+  return m ? `+91 ${m[1]} ${m[2]}` : v;
+}
+
+// The full number when the server sent it, otherwise the masked form it always sends ("****1086").
+const shownNumber = (full: string | null | undefined, masked: string | null | undefined): string => (full ? formatPhone(full) : (masked ?? ''));
 
 export function toEntry(item: CallIntelligenceItem): CallTrackerEntry {
   // The screens need a real timestamp: a call Exotel gave no StartTime for (e.g. never answered) falls back to when the pipeline first saw it.
@@ -107,8 +143,10 @@ export function toEntry(item: CallIntelligenceItem): CallTrackerEntry {
   const entry: CallTrackerEntry = {
     callId: item.recordingId,
     salesperson: item.salesperson ?? 'Unknown',
-    salespersonPhoneMasked: item.direction?.startsWith('inbound') ? (item.toMasked ?? '') : (item.fromMasked ?? ''),
-    customerPhoneMasked: item.direction?.startsWith('inbound') ? (item.fromMasked ?? '') : (item.toMasked ?? ''),
+    salespersonPhone: item.direction?.startsWith('inbound') ? shownNumber(item.salespersonNumber, item.toMasked) : shownNumber(item.salespersonNumber, item.fromMasked),
+    customerPhone: item.direction?.startsWith('inbound') ? shownNumber(item.customerNumber, item.fromMasked) : shownNumber(item.customerNumber, item.toMasked),
+    customerName: item.customerName?.trim() || undefined,
+    contactAddedBy: item.contactAddedBy?.trim() || undefined,
     direction: item.direction?.startsWith('inbound') ? 'INBOUND' : 'OUTBOUND',
     source: item.source === 'android_native' ? 'Android' : 'Exotel',
     startedAt: started,

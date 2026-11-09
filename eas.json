@@ -48,7 +48,7 @@
       "env": {
         "FASTTRACKS_DIALER": "1",
         "FASTTRACKS_TRIAL": "1",
-        "EXPO_PUBLIC_API_URL": "https://REPLACE-WITH-STAGING-HOST.invalid/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://staging.dashboard.fasttrackscarcare.in/api/v1"
       }
     }
   },

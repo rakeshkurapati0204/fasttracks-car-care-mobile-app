@@ -7,6 +7,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { avatarColor, formatCallDuration, formatCallTime, isMissedCall } from '@/lib/call-format';
 import { fetchCallCapabilities } from '@/lib/api';
+import { formatPhone } from '@/lib/call-intelligence';
 import { dialBlockedReason, newDialKey } from '@/lib/dial';
 import { placeCall } from '@/lib/dial-flow';
 import type { CallLogEntry } from '@/types/api';
@@ -20,7 +21,8 @@ export function CallRow({ call }: { call: CallLogEntry }) {
   const missed = isMissedCall(call.status);
   const inbound = call.direction === 'INBOUND';
   const iconColor = missed ? RED : inbound ? GREEN : theme.textSecondary;
-  const name = call.customerName ?? call.counterpartyDisplay ?? 'Unknown';
+  const fullNumber = call.counterpartyRaw ? formatPhone(call.counterpartyRaw) : null; // the real number, when the server sends it (a salesman's own calls)
+  const name = call.customerName ?? fullNumber ?? call.counterpartyDisplay ?? 'Unknown';
   const letter = call.customerName?.trim().charAt(0).toUpperCase();
   const label = missed ? 'Missed' : inbound ? 'Incoming' : 'Outgoing';
   const duration = missed ? null : formatCallDuration(call.durationSeconds);
@@ -81,6 +83,7 @@ export function CallRow({ call }: { call: CallLogEntry }) {
           />
           <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.subText}>
             <ThemedText type="small" style={{ color: missed ? RED : theme.textSecondary }}>{label}</ThemedText>
+            {call.customerName && fullNumber ? ` · ${fullNumber}` : ''}
             {call.agentName ? ` · ${call.agentName}` : ''}
           </ThemedText>
         </View>

@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CallRow } from '@/components/call-row';
 import { CustomerPhoneSearch } from '@/components/customer-phone-search';
+import { ContactsTab } from '@/components/contacts-tab';
 import { DialerPad } from '@/components/dialer-pad';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -28,10 +29,11 @@ type SortKey = 'date' | 'duration' | 'person';
 const VIEW_ROLES = ['OWNER', 'STORE_MANAGER', 'SALES'];
 const RECORDING_ROLES = ['OWNER', 'STORE_MANAGER'];
 
-type CallsTab = 'dialer' | 'recents' | 'search';
-const TABS: { key: CallsTab; label: string; icon: 'keypad' | 'time' | 'search' }[] = [
+type CallsTab = 'dialer' | 'recents' | 'contacts' | 'search';
+const TABS: { key: CallsTab; label: string; icon: 'keypad' | 'time' | 'people' | 'search' }[] = [
   { key: 'dialer', label: 'Dialer', icon: 'keypad' },
   { key: 'recents', label: 'Recents', icon: 'time' },
+  { key: 'contacts', label: 'Contacts', icon: 'people' },
   { key: 'search', label: 'Search', icon: 'search' },
 ];
 
@@ -40,6 +42,7 @@ export default function CallsScreen() {
   const theme = useTheme();
   const router = useRouter();
   const [tab, setTab] = useState<CallsTab>('dialer');
+  const [dialSeed, setDialSeed] = useState<{ n: number; digits: string }>({ n: 0, digits: '' }); // a tapped contact: the dial pad is rebuilt with its number
   const { user } = useAuth();
   const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
 
@@ -85,7 +88,7 @@ export default function CallsScreen() {
     const q = search.trim().toLowerCase();
     const filtered = calls.filter((c) => {
       if (q) {
-        const haystack = [c.customerName, c.counterpartyDisplay, c.agentName].filter(Boolean).join(' ').toLowerCase();
+        const haystack = [c.customerName, c.counterpartyDisplay, c.counterpartyRaw, c.counterpartyRaw?.replace(/\D/g, ''), c.agentName].filter(Boolean).join(' ').toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -128,7 +131,8 @@ export default function CallsScreen() {
         }}
       />
       <View style={styles.flex1}>
-      {tab === 'dialer' && <DialerPad />}
+      {tab === 'dialer' && <DialerPad key={dialSeed.n} initialDigits={dialSeed.digits} />}
+      {tab === 'contacts' && <ContactsTab onCall={(digits) => { setDialSeed((s) => ({ n: s.n + 1, digits })); setTab('dialer'); }} />}
       {tab === 'search' && <CustomerPhoneSearch />}
       {tab === 'recents' && error && <ThemedText style={styles.error}>{error}</ThemedText>}
       {tab !== 'recents' ? null : calls === null ? (

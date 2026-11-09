@@ -19,6 +19,7 @@ import { Colors } from '@/constants/theme';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { DrawerProvider } from '@/lib/drawer-context';
 import { PermissionsProvider } from '@/lib/permissions-context';
+import { runContactSync } from '@/lib/contact-sync-runner';
 import { subscribeToNotificationTaps } from '@/lib/push-notifications';
 
 SplashScreen.preventAutoHideAsync();
@@ -48,7 +49,7 @@ const FasttracksDarkTheme: Theme = {
 };
 
 function RootNavigator() {
-  const { isReady, isAuthenticated } = useAuth();
+  const { isReady, isAuthenticated, user } = useAuth();
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -63,6 +64,11 @@ function RootNavigator() {
   useEffect(() => {
     return subscribeToNotificationTaps();
   }, []);
+
+  // Copies the phone's contacts into the app after login (asks once), then re-checks daily. See contact-sync-runner.ts.
+  useEffect(() => {
+    if (user) void runContactSync(user);
+  }, [user]);
 
   if (!isReady || !fontsLoaded) return null;
 
