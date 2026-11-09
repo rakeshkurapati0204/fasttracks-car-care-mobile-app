@@ -4234,3 +4234,11 @@ export interface EmployeeTimesheetEntry {
   entries: { task: string; hours: number; notes?: string | null }[];
   approvedBy?: { id: string; name: string } | null;
 }
+
+// Employee attendance defaults come back on GET /employees (read by the detail panel's Configure tab).
+export interface EmployeeAttendanceDefaultsFields {
+  defaultLeaves?: number | null;
+  workingDaysPerMonth?: number | null;
+  customClockIn?: string | null;
+  customClockOut?: string | null;
+}

@@ -932,7 +932,6 @@ export default function EmployeesScreen() {
           // Dashboard rule: the Owner, or a store manager looking at someone who is neither Owner nor store manager.
           canEdit={isOwner || (isStoreManager && detailEmp.role !== 'OWNER' && detailEmp.role !== 'STORE_MANAGER')}
           onClose={() => setDetailEmp(null)}
-          onOpenLegacy={onSelect}
         />
       ) : null}
       {deleteEmp ? <DeleteSheet employee={deleteEmp} onClose={() => setDeleteEmp(null)} onDone={load} /> : null}

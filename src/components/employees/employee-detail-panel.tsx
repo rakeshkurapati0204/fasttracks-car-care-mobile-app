@@ -4,6 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { EmployeeConfigureTab } from '@/components/employees/employee-configure-tab';
+import { EmployeePardonTab } from '@/components/employees/employee-pardon-tab';
+import { EmployeeScansTab } from '@/components/employees/employee-scans-tab';
+import { EmployeeTasksTab } from '@/components/employees/employee-tasks-tab';
 import { EmployeeTimesheetTab } from '@/components/employees/employee-timesheet-tab';
 import { EmployeeOverviewTab, type OverviewStats } from '@/components/employees/employee-overview-tab';
 import { getAvatarColor, getInitials } from '@/components/employees/employee-format';
@@ -24,8 +28,6 @@ type Props = {
   canEdit: boolean;
   initialTab?: string;
   onClose: () => void;
-  /** Opens the app's earlier detail screen (Configure / Standing tasks live there until their tabs are rebuilt). */
-  onOpenLegacy: (id: string) => void;
 };
 
 // Same visibility as the dashboard's panel: Documents buttons for these roles only.
@@ -33,7 +35,7 @@ const DOCUMENT_ROLES = ['OWNER', 'HR', 'STORE_MANAGER', 'ACCOUNTING'];
 
 // Dashboard EmployeeDetailPanel: header, tab bar and (this pass) the Overview tab.
 // Phone: full screen. Wide: a right-hand panel with the screen dimmed behind it.
-export function EmployeeDetailPanel({ employee, canEdit, initialTab, onClose, onOpenLegacy }: Props) {
+export function EmployeeDetailPanel({ employee, canEdit, initialTab, onClose }: Props) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -101,7 +103,6 @@ export function EmployeeDetailPanel({ employee, canEdit, initialTab, onClose, on
   ];
 
   const panelWidth = wide ? Math.min(480, windowWidth) : windowWidth;
-  const legacyTab = tab === 'tasks' || tab === 'configure';
 
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
@@ -155,7 +156,10 @@ export function EmployeeDetailPanel({ employee, canEdit, initialTab, onClose, on
             </ScrollView>
           </View>
 
-          {/* Content */}
+          {/* Content — Pardon owns its scroll area so its "Pardon N Days" footer stays pinned below it. */}
+          {tab === 'pardon' ? (
+            <EmployeePardonTab employeeId={employee.id} now={now} onPardoned={loadOverview} bottomInset={0} />
+          ) : (
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
             {tab === 'overview' ? (
               <EmployeeOverviewTab
@@ -173,18 +177,15 @@ export function EmployeeDetailPanel({ employee, canEdit, initialTab, onClose, on
               />
             ) : tab === 'timesheet' && canEdit ? (
               <EmployeeTimesheetTab employeeId={employee.id} employeeName={employee.name} />
-            ) : (
-              <View style={styles.placeholder}>
-                <ThemedText style={styles.placeholderTitle}>Coming next</ThemedText>
-                <ThemedText themeColor="textMuted" style={styles.placeholderText}>This tab is being rebuilt to match the dashboard.</ThemedText>
-                {legacyTab ? (
-                  <Button variant="outline" onPress={() => { onClose(); onOpenLegacy(employee.id); }}>
-                    {tab === 'configure' ? 'Open current Configure screen' : 'Open current Standing tasks screen'}
-                  </Button>
-                ) : null}
-              </View>
-            )}
+            ) : tab === 'scans' ? (
+              <EmployeeScansTab employeeId={employee.id} now={now} />
+            ) : tab === 'tasks' && canEdit ? (
+              <EmployeeTasksTab employee={employee} canEdit={canEdit} />
+            ) : tab === 'configure' && canEdit ? (
+              <EmployeeConfigureTab employee={employee} now={now} canEdit={canEdit} onReload={loadOverview} />
+            ) : null}
           </ScrollView>
+          )}
         </View>
       </View>
     </Modal>
@@ -210,7 +211,4 @@ const styles = StyleSheet.create({
   tab: { minHeight: 36, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', borderRadius: Radii.sm },
   tabText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
   content: { padding: 20, paddingTop: 16 },
-  placeholder: { alignItems: 'center', gap: 12, paddingVertical: 48 },
-  placeholderTitle: { fontSize: 16, lineHeight: 22, fontFamily: FontWeights.semiBold },
-  placeholderText: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
 });
