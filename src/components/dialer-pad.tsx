@@ -189,7 +189,7 @@ export function DialerPad({ initialDigits = '' }: { initialDigits?: string } = {
             onAccessibilityAction={() => setMenuOpen(true)}
             style={styles.numberHit}>
             {digits.length > 0 ? (
-              <ThemedText style={[styles.number, invalid && { color: theme.danger }]} numberOfLines={1} adjustsFontSizeToFit>
+              <ThemedText style={[styles.number, invalid && { color: theme.danger }]} numberOfLines={1}>
                 {spaced(digits)}
               </ThemedText>
             ) : (
@@ -233,7 +233,7 @@ export function DialerPad({ initialDigits = '' }: { initialDigits?: string } = {
           <View style={styles.cell}>
             {digits.length > 0 ? (
               <Pressable
-                onPress={() => { tap(); backspace(); }}
+                onPress={() => { tap(); setResult(null); backspace(); }}
                 onLongPress={() => { tap(); clear(); setResult(null); }}
                 accessibilityRole="button"
                 accessibilityLabel="Delete. Long press to clear."
@@ -259,7 +259,8 @@ const styles = StyleSheet.create({
   inner: { flex: 1, width: '100%', maxWidth: Math.min(MaxContentWidth, 420), paddingHorizontal: Spacing.four, paddingBottom: Spacing.four, justifyContent: 'flex-end' },
   display: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', paddingBottom: Spacing.three },
   numberHit: { alignSelf: 'stretch', alignItems: 'center', paddingVertical: Spacing.two },
-  number: { fontSize: 38, lineHeight: 48, fontWeight: '400', letterSpacing: 1.5 },
+  // Fixed size: 10 digits + one space always fit a phone's width. adjustsFontSizeToFit clipped the number to its first digits on some screens.
+  number: { fontSize: 36, lineHeight: 46, fontWeight: '400', letterSpacing: 1, textAlign: 'center', alignSelf: 'stretch' },
   statusSlot: { minHeight: 20, alignItems: 'center', justifyContent: 'center' },
   status: { textAlign: 'center', paddingHorizontal: Spacing.three },
   menu: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, marginBottom: Spacing.one, overflow: 'hidden' },
