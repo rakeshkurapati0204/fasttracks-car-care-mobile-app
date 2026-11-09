@@ -11,14 +11,14 @@ import { contactFormError, filterContacts, mobileDigits, phoneBookRows, showPhon
 
 // The salesman's own saved customers. Everything saved here is also visible to the owner (contacts directory, and the name shows on that number in the
 // call logs), so the form says so. Tapping a contact opens the Dialer with that number ready; the call itself goes through the normal, recorded flow.
-export function ContactsTab({ onCall }: { onCall: (digits: string) => void }) {
+export function ContactsTab({ onCall, newPhone = '' }: { onCall: (digits: string) => void; newPhone?: string }) {
   const theme = useTheme();
   const [list, setList] = useState<MyContact[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(!!newPhone); // opened from the dial pad's "Add to contacts": the form starts open with that number
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(newPhone);
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);

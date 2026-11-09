@@ -58,7 +58,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "node --test src/lib/call-intelligence.test.ts src/lib/contacts.test.ts src/lib/contact-sync.test.ts src/lib/call-search.test.ts src/lib/dial.test.ts src/lib/voip/voip.test.ts src/lib/voip/voip-ccm.test.ts src/lib/voip/native-engine.test.ts plugins/with-exotel-voice.test.js plugins/with-fasttracks-dialer.test.js scripts/enable-native-modules.test.js scripts/check-trial-build.test.js src/lib/auto-answer/arm.test.ts",
+    "test": "node --test src/lib/call-intelligence.test.ts src/lib/contacts.test.ts src/lib/contact-sync.test.ts src/lib/call-search.test.ts src/lib/dial.test.ts src/lib/dial-input.test.ts src/lib/voip/voip.test.ts src/lib/voip/voip-ccm.test.ts src/lib/voip/native-engine.test.ts plugins/with-exotel-voice.test.js plugins/with-fasttracks-dialer.test.js scripts/enable-native-modules.test.js scripts/check-trial-build.test.js src/lib/auto-answer/arm.test.ts",
     "ci:setup": "cd services/call-intelligence && ${PYTHON:-python3.13} -m venv .venv && .venv/bin/pip install -q -e '.[dev,postgres]'",
     "ci:test": "cd services/call-intelligence && .venv/bin/python -m pytest -q",
     "ci:lint": "cd services/call-intelligence && .venv/bin/ruff check src tests scripts",

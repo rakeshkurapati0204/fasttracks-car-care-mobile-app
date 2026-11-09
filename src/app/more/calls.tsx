@@ -43,6 +43,7 @@ export default function CallsScreen() {
   const router = useRouter();
   const [tab, setTab] = useState<CallsTab>('dialer');
   const [dialSeed, setDialSeed] = useState<{ n: number; digits: string }>({ n: 0, digits: '' }); // a tapped contact: the dial pad is rebuilt with its number
+  const [newContact, setNewContact] = useState<{ n: number; phone: string }>({ n: 0, phone: '' }); // "Add to contacts" on the dial pad
   const { user } = useAuth();
   const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
 
@@ -131,8 +132,8 @@ export default function CallsScreen() {
         }}
       />
       <View style={styles.flex1}>
-      {tab === 'dialer' && <DialerPad key={dialSeed.n} initialDigits={dialSeed.digits} />}
-      {tab === 'contacts' && <ContactsTab onCall={(digits) => { setDialSeed((s) => ({ n: s.n + 1, digits })); setTab('dialer'); }} />}
+      {tab === 'dialer' && <DialerPad key={dialSeed.n} initialDigits={dialSeed.digits} onAddContact={(phone) => { setNewContact((c) => ({ n: c.n + 1, phone })); setTab('contacts'); }} />}
+      {tab === 'contacts' && <ContactsTab key={newContact.n} newPhone={newContact.phone} onCall={(digits) => { setDialSeed((s) => ({ n: s.n + 1, digits })); setTab('dialer'); }} />}
       {tab === 'search' && <CustomerPhoneSearch />}
       {tab === 'recents' && error && <ThemedText style={styles.error}>{error}</ThemedText>}
       {tab !== 'recents' ? null : calls === null ? (
@@ -205,7 +206,7 @@ export default function CallsScreen() {
           return (
             <Pressable
               key={t.key}
-              onPress={() => setTab(t.key)}
+              onPress={() => { setNewContact((c) => ({ ...c, phone: '' })); setTab(t.key); }}
               accessibilityRole="tab"
               accessibilityLabel={t.label}
               accessibilityState={{ selected: active }}
