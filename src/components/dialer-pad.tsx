@@ -130,11 +130,11 @@ export function DialerPad({ initialDigits = '' }: { initialDigits?: string } = {
     try {
       const out = await placeCall({
         target: { phone: e164 }, display: formatNumber(digits), key: pendingKey.current,
-        native: dialerNative, autoOn, isPhoneApp, onBecamePhoneApp: () => setIsPhoneApp(true),
+        native: dialerNative, autoOn, isPhoneApp, onBecamePhoneApp: () => setIsPhoneApp(true), confirm: false,
       });
       if (out.kind === 'placed') {
         pendingKey.current = null;
-        setResult({ ok: true, text: out.autoAnswered ? 'Connecting...' : 'Your phone will ring. Answer it to connect.' });
+        setResult({ ok: true, text: out.autoAnswered ? 'Calling...' : 'Answer your phone to connect.' });
       } else if (out.kind === 'failed') {
         if (!out.keepKey) pendingKey.current = null;
         setResult({ ok: false, text: out.text });
