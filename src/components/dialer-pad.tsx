@@ -1,6 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Vibration, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -30,7 +31,7 @@ const KEYS: { digit: string; letters?: string }[] = [
   { digit: '8', letters: 'TUV' },
   { digit: '9', letters: 'WXYZ' },
   { digit: '*' },
-  { digit: '0' },
+  { digit: '0', letters: '+' },
   { digit: '#' },
 ];
 const DISABLED_KEYS = ['*', '#'];
@@ -43,13 +44,9 @@ function formatNumber(digits: string) {
   return `+91 ${spaced}`.trimEnd();
 }
 
-function helperText(digits: string) {
-  if (digits.length === 0) return 'Enter a 10-digit mobile number';
-  if (digits.length < MAX_DIGITS) {
-    const left = MAX_DIGITS - digits.length;
-    return `${left} more digit${left === 1 ? '' : 's'}`;
-  }
-  return isValidMobile(digits) ? 'Ready to call' : 'Not a valid mobile number';
+// What the big number shows: grouped like the phone's own dialer (98480 12345). +91 is implied; it is added when the call is placed.
+function spaced(digits: string) {
+  return digits.length > 5 ? `${digits.slice(0, 5)} ${digits.slice(5)}` : digits;
 }
 
 // Real calling: POST /calls/dial on the dashboard backend, which asks Exotel to ring the signed-in user's own phone first and then connect
@@ -96,18 +93,18 @@ export function DialerPad({ initialDigits = '' }: { initialDigits?: string } = {
   const valid = isValidMobile(digits);
   const complete = digits.length === MAX_DIGITS;
 
-  const press = (d: string) => setDigits((cur) => (cur.length < MAX_DIGITS ? cur + d : cur));
+  const press = (d: string) => { setResult(null); setDigits((cur) => (cur.length < MAX_DIGITS ? cur + d : cur)); };
   const backspace = () => setDigits((cur) => cur.slice(0, -1));
   const clear = () => setDigits('');
   const paste = async () => {
     try {
       const text = await Clipboard.getStringAsync();
       const d = pastedMobile(text);
-      if (d) { setDigits(d); setResult(null); } else setResult({ ok: false, text: 'No valid mobile number found in what you copied.' });
+      if (d) { setDigits(d); setResult(null); } else setResult({ ok: false, text: 'No mobile number in what you copied' });
     } catch { setResult({ ok: false, text: 'Could not read the clipboard.' }); }
   };
   const copy = async () => {
-    try { await Clipboard.setStringAsync(`+91${digits}`); setResult({ ok: true, text: 'Number copied.' }); } catch { setResult({ ok: false, text: 'Could not copy.' }); }
+    try { await Clipboard.setStringAsync(`+91${digits}`); setResult({ ok: true, text: 'Copied' }); } catch { setResult({ ok: false, text: 'Could not copy.' }); }
   };
 
   const call = async () => {
@@ -144,45 +141,62 @@ export function DialerPad({ initialDigits = '' }: { initialDigits?: string } = {
     }
   };
 
-  // One quiet line about automatic answer, and only when there is something to know or do: a tappable prompt until Fasttracks is the phone app, and a hint
-  // when this build cannot do it at all. Nothing is shown once it is on.
-  const autoStatus = !capsChecked || !caps?.c2cAutoAnswerEnabled ? null : !dialerNative ? (
-    <ThemedText type="small" themeColor="textMuted">Auto-answer needs the dialer build of the app.</ThemedText>
-  ) : !isPhoneApp ? (
+  // One quiet line under the number, only when there is something to know: the call result, why the phone-app request failed, or a prompt to turn
+  // on auto-answer. Nothing at all while the salesman is just typing - like the phone's own dialer.
+  const invalid = complete && !valid;
+  const statusLine = result ? (
+    <ThemedText type="small" style={[styles.status, { color: result.ok ? theme.textSecondary : theme.danger }]} numberOfLines={2}>{result.text}</ThemedText>
+  ) : invalid ? (
+    <ThemedText type="small" style={[styles.status, { color: theme.danger }]}>Not a valid mobile number</ThemedText>
+  ) : autoNote ? (
+    <ThemedText type="small" style={[styles.status, { color: theme.danger }]} numberOfLines={2}>{autoNote}</ThemedText>
+  ) : capsChecked && caps?.c2cAutoAnswerEnabled && dialerNative && !isPhoneApp && digits.length === 0 ? (
     <Pressable onPress={enableAuto} accessibilityRole="button" accessibilityLabel="Turn on auto-answer" hitSlop={Spacing.two}>
-      <ThemedText type="smallBold" style={{ color: theme.primary }}>Turn on auto-answer</ThemedText>
+      <ThemedText type="small" style={[styles.status, { color: theme.primary }]}>Turn on auto-answer</ThemedText>
     </Pressable>
   ) : null;
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  const tap = () => { if (Platform.OS === 'android') Vibration.vibrate(8); };
+
   return (
     <ThemedView style={styles.container}>
-      <View style={styles.inner}>
+      <Pressable style={styles.inner} onPress={() => setMenuOpen(false)} accessible={false}>
+        {/* Number. Long-press for Paste / Copy, like Android's own dialer. */}
         <View style={styles.display}>
-          <ThemedText
-            style={[styles.number, digits.length === 0 && { color: theme.textMuted }]}
-            numberOfLines={1}
-            adjustsFontSizeToFit>
-            {digits.length === 0 ? '+91' : formatNumber(digits)}
-          </ThemedText>
-          <ThemedText
-            type="small"
-            themeColor={complete && !valid ? undefined : 'textSecondary'}
-            style={complete && !valid ? { color: theme.danger } : valid ? { color: theme.success } : undefined}>
-            {helperText(digits)}
-          </ThemedText>
-          <View style={styles.clipRow}>
-            <Pressable onPress={paste} accessibilityRole="button" accessibilityLabel="Paste number" hitSlop={Spacing.two} style={[styles.clipBtn, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText type="smallBold">Paste</ThemedText>
-            </Pressable>
-            <Pressable onPress={copy} disabled={digits.length === 0} accessibilityRole="button" accessibilityLabel="Copy number" hitSlop={Spacing.two} style={[styles.clipBtn, { backgroundColor: theme.backgroundElement }, digits.length === 0 && styles.disabled]}>
-              <ThemedText type="smallBold">Copy</ThemedText>
-            </Pressable>
-          </View>
-          {autoStatus}
-          {autoNote ? <ThemedText type="small" style={{ color: theme.danger }}>{autoNote}</ThemedText> : null}
-          {result ? (
-            <ThemedText type="small" style={[styles.result, { color: result.ok ? theme.success : theme.danger }]}>{result.text}</ThemedText>
+          {menuOpen ? (
+            <View style={[styles.menu, { backgroundColor: theme.text }]}>
+              <Pressable onPress={() => { setMenuOpen(false); paste(); }} accessibilityRole="button" accessibilityLabel="Paste number" style={styles.menuItem}>
+                <ThemedText type="smallBold" style={{ color: theme.background }}>Paste</ThemedText>
+              </Pressable>
+              {digits.length > 0 ? (
+                <>
+                  <View style={[styles.menuSep, { backgroundColor: theme.background }]} />
+                  <Pressable onPress={() => { setMenuOpen(false); copy(); }} accessibilityRole="button" accessibilityLabel="Copy number" style={styles.menuItem}>
+                    <ThemedText type="smallBold" style={{ color: theme.background }}>Copy</ThemedText>
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
           ) : null}
+          <Pressable
+            onLongPress={() => { tap(); setMenuOpen(true); }}
+            onPress={() => setMenuOpen(false)}
+            delayLongPress={350}
+            accessibilityRole="text"
+            accessibilityLabel={digits ? `Number ${formatNumber(digits)}. Long press to paste or copy.` : 'Long press to paste a number.'}
+            accessibilityActions={[{ name: 'longpress', label: 'Paste or copy' }]}
+            onAccessibilityAction={() => setMenuOpen(true)}
+            style={styles.numberHit}>
+            {digits.length > 0 ? (
+              <ThemedText style={[styles.number, invalid && { color: theme.danger }]} numberOfLines={1} adjustsFontSizeToFit>
+                {spaced(digits)}
+              </ThemedText>
+            ) : (
+              <ThemedText style={[styles.number, { color: theme.textMuted }]}> </ThemedText>
+            )}
+          </Pressable>
+          <View style={styles.statusSlot}>{statusLine}</View>
         </View>
 
         <View style={styles.pad}>
@@ -192,82 +206,71 @@ export function DialerPad({ initialDigits = '' }: { initialDigits?: string } = {
               <View key={k.digit} style={styles.cell}>
                 <Pressable
                   disabled={disabled}
-                  onPress={() => press(k.digit)}
+                  onPress={() => { tap(); setMenuOpen(false); press(k.digit); }}
                   accessibilityRole="button"
                   accessibilityLabel={k.digit}
-                  style={({ pressed }) => [
-                    styles.key,
-                    { backgroundColor: pressed ? theme.backgroundSelected : theme.backgroundElement },
-                    disabled && styles.disabled,
-                  ]}>
-                  <ThemedText style={styles.keyDigit}>{k.digit}</ThemedText>
-                  {k.letters ? (
-                    <ThemedText type="small" themeColor="textSecondary" style={styles.keyLetters}>
-                      {k.letters}
-                    </ThemedText>
-                  ) : null}
+                  android_ripple={{ color: theme.backgroundSelected, borderless: true, radius: KEY_SIZE / 2 }}
+                  style={({ pressed }) => [styles.key, Platform.OS !== 'android' && pressed && { backgroundColor: theme.backgroundSelected }]}>
+                  <ThemedText style={[styles.keyDigit, disabled && { color: theme.textMuted }]}>{k.digit}</ThemedText>
+                  <ThemedText style={[styles.keyLetters, { color: theme.textSecondary }]}>{k.letters ?? ' '}</ThemedText>
                 </Pressable>
               </View>
             );
           })}
-        </View>
 
-        <View style={styles.pad}>
-          <View style={styles.cell}>
-            <Pressable
-              onPress={clear}
-              disabled={digits.length === 0}
-              accessibilityRole="button"
-              accessibilityLabel="Clear"
-              style={[styles.action, { backgroundColor: theme.backgroundElement }, digits.length === 0 && styles.disabled]}>
-              <ThemedText type="smallBold">Clear</ThemedText>
-            </Pressable>
-          </View>
+          <View style={styles.cell} />
           <View style={styles.cell}>
             <Pressable
               onPress={call}
               disabled={!valid || busy}
               accessibilityRole="button"
               accessibilityLabel="Call"
-              style={[styles.action, { backgroundColor: theme.success }, (!valid || busy) && styles.disabled]}>
-              {busy ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.callLabel}>Call</ThemedText>}
+              android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: true, radius: CALL_SIZE / 2 }}
+              style={[styles.callBtn, { backgroundColor: theme.success }, (!valid || busy) && styles.callDisabled]}>
+              {busy ? <ActivityIndicator color="#ffffff" /> : <Ionicons name="call" size={28} color="#ffffff" />}
             </Pressable>
           </View>
           <View style={styles.cell}>
-            <Pressable
-              onPress={backspace}
-              onLongPress={clear}
-              disabled={digits.length === 0}
-              accessibilityRole="button"
-              accessibilityLabel="Backspace"
-              style={[styles.action, { backgroundColor: theme.backgroundElement }, digits.length === 0 && styles.disabled]}>
-              <ThemedText style={styles.backspace}>⌫</ThemedText>
-            </Pressable>
+            {digits.length > 0 ? (
+              <Pressable
+                onPress={() => { tap(); backspace(); }}
+                onLongPress={() => { tap(); clear(); setResult(null); }}
+                accessibilityRole="button"
+                accessibilityLabel="Delete. Long press to clear."
+                android_ripple={{ color: theme.backgroundSelected, borderless: true, radius: 28 }}
+                hitSlop={Spacing.two}
+                style={styles.backspace}>
+                <Ionicons name="backspace-outline" size={28} color={theme.textSecondary} />
+              </Pressable>
+            ) : null}
           </View>
         </View>
-      </View>
+      </Pressable>
       <InCallModal state={voip.state} mock={!!voipEngine?.isMock} onHangup={voip.hangup} onMute={voip.mute} onSpeaker={voip.speaker} onClose={voip.dismiss} />
     </ThemedView>
   );
 }
 
-const KEY_SIZE = 76;
+const KEY_SIZE = 72;
+const CALL_SIZE = 64;
 
 const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center' },
-  inner: { flex: 1, width: '100%', maxWidth: Math.min(MaxContentWidth, 420), padding: Spacing.three, justifyContent: 'center', gap: Spacing.three },
-  display: { alignItems: 'center', gap: Spacing.one, paddingVertical: Spacing.three },
-  number: { fontSize: 34, lineHeight: 44, fontWeight: '600', letterSpacing: 1 },
+  inner: { flex: 1, width: '100%', maxWidth: Math.min(MaxContentWidth, 420), paddingHorizontal: Spacing.four, paddingBottom: Spacing.four, justifyContent: 'flex-end' },
+  display: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', paddingBottom: Spacing.three },
+  numberHit: { alignSelf: 'stretch', alignItems: 'center', paddingVertical: Spacing.two },
+  number: { fontSize: 38, lineHeight: 48, fontWeight: '400', letterSpacing: 1.5 },
+  statusSlot: { minHeight: 20, alignItems: 'center', justifyContent: 'center' },
+  status: { textAlign: 'center', paddingHorizontal: Spacing.three },
+  menu: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, marginBottom: Spacing.one, overflow: 'hidden' },
+  menuItem: { paddingHorizontal: Spacing.four, paddingVertical: Spacing.two + Spacing.half },
+  menuSep: { width: StyleSheet.hairlineWidth, alignSelf: 'stretch', opacity: 0.3 },
   pad: { flexDirection: 'row', flexWrap: 'wrap' },
-  cell: { width: '33.333%', alignItems: 'center', paddingVertical: Spacing.one + Spacing.half },
+  cell: { width: '33.333%', height: KEY_SIZE + Spacing.two, alignItems: 'center', justifyContent: 'center' },
   key: { width: KEY_SIZE, height: KEY_SIZE, borderRadius: KEY_SIZE / 2, alignItems: 'center', justifyContent: 'center' },
-  keyDigit: { fontSize: 28, lineHeight: 32, fontWeight: '500' },
-  keyLetters: { fontSize: 10, lineHeight: 12, letterSpacing: 1.5 },
-  action: { width: KEY_SIZE, height: KEY_SIZE, borderRadius: KEY_SIZE / 2, alignItems: 'center', justifyContent: 'center' },
-  callLabel: { color: '#ffffff', fontWeight: '700', fontSize: 16 },
-  backspace: { fontSize: 26, lineHeight: 30 },
-  disabled: { opacity: 0.35 },
-  clipRow: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.one },
-  clipBtn: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.one + Spacing.half, borderRadius: 999, minHeight: 36, justifyContent: 'center' },
-  result: { textAlign: 'center', paddingHorizontal: Spacing.three },
+  keyDigit: { fontSize: 32, lineHeight: 38, fontWeight: '400' },
+  keyLetters: { fontSize: 10, lineHeight: 12, letterSpacing: 1.5, fontWeight: '500' },
+  callBtn: { width: CALL_SIZE, height: CALL_SIZE, borderRadius: CALL_SIZE / 2, alignItems: 'center', justifyContent: 'center' },
+  callDisabled: { opacity: 0.4 },
+  backspace: { width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
 });
