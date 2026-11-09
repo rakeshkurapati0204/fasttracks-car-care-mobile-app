@@ -484,7 +484,7 @@ export interface DeviceImportRow {
 }
 export interface DeviceImportResult {
   summary: { updated: number; skipped: number; notFound: number };
-  results: Array<{ employeeName: string; deviceUserId: string; punchTime: string; status: string; result: string }>;
+  results: { employeeName: string; deviceUserId: string; punchTime: string; status: string; result: string }[];
 }
 export async function importDeviceAttendance(rows: DeviceImportRow[]) {
   const { data } = await api.post<DeviceImportResult>('/attendance/import-device', { rows });

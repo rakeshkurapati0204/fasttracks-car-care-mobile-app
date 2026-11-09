@@ -45,6 +45,7 @@ export interface ConversationMessage {
   content: string;
   createdAt: string;
   deliveryStatus?: string | null;
+  deliveryError?: string | null;
 }
 
 export interface Conversation {
@@ -57,6 +58,8 @@ export interface Conversation {
   lastMessageAt: string | null;
   assignedTo: { id: string; name: string; username: string } | null;
   messages: ConversationMessage[];
+  lastCustomerMessageAt?: string | null;
+  businessPhoneNumberId?: string | null;
 }
 
 export type TaskStatus = 'PENDING' | 'ONGOING' | 'COMPLETED' | 'CANCELLED';
@@ -990,6 +993,8 @@ export interface CallInitiateResult {
 }
 
 export interface PayrollResult {
+  // Not returned by every backend build (the dashboard reads it defensively).
+  totalAdvanceDeduction?: number;
   userId?: string;
   userName?: string;
   designation?: string | null;
@@ -3892,22 +3897,7 @@ export interface SalaryPaymentWithBreakdown {
   netPayable: number | null;
 }
 
-// Not returned by every backend build (the dashboard reads it defensively).
-export interface PayrollResult {
-  totalAdvanceDeduction?: number;
-}
-
 // ── Conversations page (dashboard conversations/page.tsx) ──
-// Fields the API returns that the original Conversation / message types omit.
-export interface Conversation {
-  lastCustomerMessageAt?: string | null;
-  businessPhoneNumberId?: string | null;
-}
-
-export interface ConversationMessage {
-  deliveryError?: string | null;
-}
-
 export interface ConversationListParams {
   category?: string;
   status?: string;
@@ -3929,6 +3919,7 @@ export interface StaffPhoneNumberRow {
   displayPhone: string | null;
   label: string | null;
   employee?: { id: string; name: string } | null;
+  employeeId?: string | null;
 }
 
 // ── Conversations Phase 2: call recordings, new conversation, staff numbers ──
@@ -3968,10 +3959,6 @@ export interface WabaNumber {
   verified_name: string;
   status: string;
   quality_rating: string;
-}
-
-export interface StaffPhoneNumberRow {
-  employeeId?: string | null;
 }
 
 // ── Inventory page (dashboard parity) ───────────────────────────────────────
