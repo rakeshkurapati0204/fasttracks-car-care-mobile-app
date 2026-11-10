@@ -145,3 +145,13 @@ test('formatPhone: Indian mobiles are grouped, other numbers and odd input are n
   assert.equal(formatPhone(null), '');
   assert.equal(formatPhone(undefined), '');
 });
+
+test('toEntry carries the name a salesman saved for the customer and who saved it', () => {
+  const base = { recordingId: 'r1', source: 'exotel', salesperson: 'S', direction: 'outbound-api', fromMasked: '****5252', toMasked: '****2345', startedAt: '2026-11-05 10:00:00', endedAt: null, durationSeconds: 5, conversationSeconds: 3, status: { recording: 'available', transcription: 'completed', summary: 'completed' }, audioUrl: null } as never;
+  const named = toEntry({ ...(base as object), customerNumber: '+919848012345', customerName: ' Ravi Kumar ', contactAddedBy: 'Niketh' } as never);
+  assert.equal(named.customerName, 'Ravi Kumar');
+  assert.equal(named.contactAddedBy, 'Niketh');
+  assert.equal(named.customerPhone, '+91 98480 12345');
+  const plain = toEntry({ ...(base as object), customerName: null } as never);
+  assert.equal(plain.customerName, undefined);
+});

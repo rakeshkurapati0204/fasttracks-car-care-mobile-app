@@ -13,6 +13,9 @@ export type CallTrackerEntry = {
   salesperson: string;
   salespersonPhone: string;
   customerPhone: string;
+  /** The name a salesman saved for this number (Contacts), when there is one, and who saved it. */
+  customerName?: string;
+  contactAddedBy?: string;
   direction: 'INBOUND' | 'OUTBOUND';
   source: string;
   /** Local (IST) wall-clock time, "YYYY-MM-DDTHH:mm:ss" with no offset. */

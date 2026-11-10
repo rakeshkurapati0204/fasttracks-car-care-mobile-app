@@ -8,7 +8,7 @@ import {
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type Theme } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -20,6 +20,7 @@ import { Colors } from '@/constants/theme';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { DrawerProvider, useIsDocked } from '@/lib/drawer-context';
 import { PermissionsProvider } from '@/lib/permissions-context';
+import { runContactSync } from '@/lib/contact-sync-runner';
 import { subscribeToNotificationTaps } from '@/lib/push-notifications';
 
 SplashScreen.preventAutoHideAsync();
@@ -49,7 +50,7 @@ const FasttracksDarkTheme: Theme = {
 };
 
 function RootNavigator() {
-  const { isReady, isAuthenticated } = useAuth();
+  const { isReady, isAuthenticated, user } = useAuth();
   const docked = useIsDocked();
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
@@ -65,6 +66,15 @@ function RootNavigator() {
   useEffect(() => {
     return subscribeToNotificationTaps();
   }, []);
+
+  // Copies the phone's contacts into the app after login (asks once), then again whenever the app is opened (at most every 10 minutes), so a
+  // contact saved in the phone's own app reaches Fasttracks soon. See contact-sync-runner.ts.
+  useEffect(() => {
+    if (!user) return;
+    void runContactSync(user);
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') void runContactSync(user); });
+    return () => sub.remove();
+  }, [user]);
 
   if (!isReady || !fontsLoaded) return null;
 

@@ -34,7 +34,7 @@ export function CallRow({ call, selected, onPress, divider }: RowProps) {
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
-        accessibilityLabel={`Call with ${call.customerPhone} by ${call.salesperson}`}
+        accessibilityLabel={`Call with ${call.customerName ?? call.customerPhone} by ${call.salesperson}`}
         style={({ pressed }) => [
           styles.row,
           selected && { backgroundColor: withAlpha(theme.primary, 0.08) },
@@ -42,11 +42,11 @@ export function CallRow({ call, selected, onPress, divider }: RowProps) {
         ]}>
         <Avatar name={call.salesperson} />
         <View style={styles.middle}>
-          <ThemedText style={[styles.title, TABULAR]} numberOfLines={1}>{call.customerPhone}</ThemedText>
+          <ThemedText style={[styles.title, TABULAR]} numberOfLines={1}>{call.customerName ?? call.customerPhone}</ThemedText>
           <View style={styles.meta}>
             <Ionicons name={outgoing ? 'arrow-up-outline' : 'arrow-down-outline'} size={13} color={outgoing ? theme.textSecondary : theme.success} style={outgoing ? styles.outArrow : styles.inArrow} />
             <ThemedText themeColor="textMuted" style={styles.secondary} numberOfLines={1}>
-              {call.salesperson} · {timeLabel(call.startedAt)}
+              {call.customerName ? `${call.customerPhone} · ` : ''}{call.salesperson} · {timeLabel(call.startedAt)}
             </ThemedText>
           </View>
           <View style={styles.indicators}>

@@ -18,6 +18,9 @@ export type CallIntelligenceItem = {
   /** Full numbers in international form (+919848012345). Only the OWNER's route sends them; older servers send neither. */
   customerNumber?: string | null;
   salespersonNumber?: string | null;
+  /** The name a salesman saved for the customer's number, and who saved it. Only the OWNER's route sends them. */
+  customerName?: string | null;
+  contactAddedBy?: string | null;
   startedAt: string | null;
   endedAt: string | null;
   createdAt?: string | null;
@@ -142,6 +145,8 @@ export function toEntry(item: CallIntelligenceItem): CallTrackerEntry {
     salesperson: item.salesperson ?? 'Unknown',
     salespersonPhone: item.direction?.startsWith('inbound') ? shownNumber(item.salespersonNumber, item.toMasked) : shownNumber(item.salespersonNumber, item.fromMasked),
     customerPhone: item.direction?.startsWith('inbound') ? shownNumber(item.customerNumber, item.fromMasked) : shownNumber(item.customerNumber, item.toMasked),
+    customerName: item.customerName?.trim() || undefined,
+    contactAddedBy: item.contactAddedBy?.trim() || undefined,
     direction: item.direction?.startsWith('inbound') ? 'INBOUND' : 'OUTBOUND',
     source: item.source === 'android_native' ? 'Android' : 'Exotel',
     startedAt: started,

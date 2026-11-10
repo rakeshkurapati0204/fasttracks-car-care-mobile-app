@@ -16,10 +16,11 @@ export function newDialKey(now: number = Date.now(), random: () => number = Math
 }
 
 // Why the pad cannot place a call, from /calls/capabilities. null = it can.
-export function dialBlockedReason(caps: { callingEnabled?: boolean; canDial?: boolean; dialPadEnabled?: boolean } | null): string | null {
-  if (!caps) return 'Could not check whether calling is available. Check your connection and try again.';
-  if (!caps.callingEnabled) return "Exotel calling isn't set up on the server yet.";
-  if (caps.dialPadEnabled === false || caps.dialPadEnabled === undefined) return 'The dial pad is switched off on the server.';
+// `callBack`: calling back a number from the call history does not need the dial pad switched on.
+export function dialBlockedReason(caps: { callingEnabled?: boolean; canDial?: boolean; dialPadEnabled?: boolean } | null, opts: { callBack?: boolean } = {}): string | null {
+  if (!caps) return "Can't reach the server. Check your internet and try again.";
+  if (!caps.callingEnabled) return "Calling isn't available yet. Contact your manager.";
+  if (!opts.callBack && (caps.dialPadEnabled === false || caps.dialPadEnabled === undefined)) return 'Calling from the dial pad is switched off. Contact your manager.';
   if (!caps.canDial) return 'Your account is not allowed to place calls.';
   return null;
 }

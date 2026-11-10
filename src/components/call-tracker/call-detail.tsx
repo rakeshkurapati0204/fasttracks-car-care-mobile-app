@@ -252,7 +252,8 @@ export function CallDetail({ call: listCall }: { call: CallTrackerEntry }) {
       <View style={styles.hero}>
         <Avatar name={call.salesperson} size={56} />
         <View style={styles.flex1}>
-          <ThemedText style={[styles.number, TABULAR]} selectable>{call.customerPhone}</ThemedText>
+          <ThemedText style={[styles.number, TABULAR]} selectable>{call.customerName ?? call.customerPhone}</ThemedText>
+          {call.customerName ? <ThemedText themeColor="textSecondary" style={[styles.when, TABULAR]} selectable>{call.customerPhone}{call.contactAddedBy ? ` · saved by ${call.contactAddedBy}` : ''}</ThemedText> : null}
           <ThemedText themeColor="textSecondary" style={styles.when}>{longDay(call.startedAt)} · {timeRange(call.startedAt, call.endedAt)}</ThemedText>
         </View>
       </View>
