@@ -29,10 +29,11 @@ export const SCREEN_REGISTRY: ScreenMeta[] = [
     id: 'overview',
     title: 'Overview',
     dashboardRoute: '/dashboard',
-    purpose: 'Owner KPI summary — attendance, open jobs, revenue, and a recent-activity feed.',
+    purpose: 'Home screen for every role (the dashboard home): the full KPI summary for the Owner, a Welcome page with role-based shortcuts, On Leave and My Remarks for everyone else.',
     endpoints: ['GET /dashboard/overview', 'GET /dashboard/recent-activity'],
     note: 'requireOwner (backend/src/routes/dashboard.ts, verified 2026-09-20) gates every /dashboard/* route — recent-activity, today-snapshot, revenue-by-employee, and overview are all OWNER-only, a static single-role check. Mobile screen calls /dashboard/overview (single-call aggregate: attendance, open jobs by employee, revenue, recent invoices/jobs) plus /dashboard/recent-activity for a feed; today-snapshot and revenue-by-employee cover overlapping ground already surfaced by overview, so they were left out of this pass.',
-    visibleToRoles: ['OWNER'],
+    // No visibleToRoles: the dashboard's Overview nav item is ALL_ROLES (navItems.tsx). The screen itself picks the Owner
+    // view or the Welcome view; the OWNER-only /dashboard/* calls are only ever made from the Owner view.
     route: '/more/overview',
   },
   {

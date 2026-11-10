@@ -75,6 +75,8 @@ function RootNavigator() {
       <View style={{ flex: 1 }}>
     <Stack>
       <Stack.Screen name="index" options={{ headerShown: false }} />
+      {/* Forgot Password is public and not guarded either way, so it never blocks a signed-in user. */}
+      <Stack.Screen name="forgot-password" options={{ headerShown: false }} />
       <Stack.Protected guard={!isAuthenticated}>
         <Stack.Screen name="login" options={{ headerShown: false }} />
       </Stack.Protected>

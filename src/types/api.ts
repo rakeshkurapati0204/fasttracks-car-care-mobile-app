@@ -8,6 +8,8 @@ export interface AuthUser {
   monthlySalary?: number | null;
   salaryType?: string | null;
   joiningDate?: string | null;
+  /** Set by POST /auth/login (and cleared once the password is changed) — see src/app/index.tsx. */
+  mustChangePassword?: boolean;
 }
 
 export interface LoginResponse {

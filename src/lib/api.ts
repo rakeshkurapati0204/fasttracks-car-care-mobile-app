@@ -4644,3 +4644,10 @@ export async function fetchEmployeeTimesheetEntries(userId: string) {
   const { data } = await api.get<ApiEnvelope<{ timesheets: EmployeeTimesheetEntry[] }>>('/timesheets', { params: { userId, limit: 200 } });
   return data.data?.timesheets ?? [];
 }
+
+// POST /auth/forgot-password — public. Same body as the dashboard's forgot-password page; the backend always answers
+// success for an unknown username (no enumeration) and sends the reset link, which opens the dashboard's reset page.
+export async function requestPasswordReset(username: string) {
+  const { data } = await api.post<{ success: boolean; message: string; noContact?: boolean }>('/auth/forgot-password', { username });
+  return data;
+}
