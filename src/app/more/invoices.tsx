@@ -1,689 +1,502 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  TextInput,
-  View,
-} from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Pressable, RefreshControl, ScrollView, Share, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DateField } from '@/components/call-tracker/date-field';
+import { buildInvoicePayload, formFromInvoice, InvoiceEditSheet, type InvoiceFormState } from '@/components/invoices/edit-sheet';
+import {
+  INVOICE_STATUS_OPTIONS, PAGE_SIZE, STATUS_META, WIDE_MIN, buildInvoiceText, canPrint, fmtDate, fmtINR, paymentLabel, PRINT_LOCK_TEXT,
+} from '@/components/invoices/helpers';
+import { OpenInvoices } from '@/components/invoices/open-list';
+import { InvoiceReports } from '@/components/invoices/reports';
+import { InvoiceViewSheet } from '@/components/invoices/view-sheet';
+import { NewInvoiceWizard } from '@/components/invoices/wizard';
+import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Button, Select, Skeleton } from '@/components/ui';
+import { Fonts, FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
-  createInvoice, fetchInvoice, fetchInvoices, generateInvoiceWaybill, getErrorMessage, markInvoicePaid,
-  recordInvoicePayment, sendInvoiceEmail, sendInvoiceWhatsapp,
+  deleteInvoice, fetchInvoiceFull, fetchInvoicePaymentHistory, fetchInvoiceStats, fetchInvoicesPage, generateInvoiceWaybill, getErrorMessage,
+  recordInvoicePayment, sendInvoiceEmail, sendInvoiceWhatsapp, updateInvoiceRaw,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
-import type { InvoiceDetail, InvoiceLineItemInput, InvoiceListItem, InvoiceStatus } from '@/types/api';
+import type { InvoiceFull, InvoiceRow, InvoiceStats } from '@/types/api';
 
-// GET /invoices — gated by getInvoiceMode (backend/src/routes/
-// invoiceRoutes.ts), NOT a static role list: ADMIN_ROLES=[OWNER,
-// STORE_MANAGER,ACCOUNTING] always get 'full_access' (see every invoice);
-// any other role can ALSO see it if an admin has granted the dynamic
-// 'invoices' tab permission (getTabAccess), in which case they see only
-// their own created invoices. Same pattern as CRM's customers_jobs
-// permission (verified 2026-09-19). Because access isn't predictable from
-// role alone, this screen is NOT hidden by visibleToRoles in the registry —
-// like the existing customers/tasks entries, it's left visible and the
-// screen itself handles a 403 via getErrorMessage.
-//
-// Create/mark-paid/send-whatsapp added 2026-09-23 (scope update: full
-// dashboard parity, not read-only). Create sends raw line items only —
-// backend computes GST/totals server-side via calculateAmounts() when
-// manualAmounts is omitted (verified by reading invoiceRoutes.ts POST /),
-// so mobile never replicates that calc. customerEmail/Address/GSTIN and
-// vehicle brand/model/year/colour added 2026-09-24 (plain text fields,
-// straightforward). Still deliberately out of scope: job-card linking
-// (needs a job picker UI — the mobile job-card list isn't tied to a
-// customer-search flow from this screen yet) and the line-item-less
-// ADVANCE invoice type, same call already made for quotations' create form.
-// Mark-paid/send-whatsapp gated the same way invoice_actions_route.ts
-// gates them: ADMIN_ROLES=[OWNER,STORE_MANAGER] OR an explicit 'invoices'
-// permission override, AND mode !== 'view_only' for the write actions
-// specifically (view_only can read but not act) — mirrored client-side via
-// usePermissions().tabMode('invoices'), the same resolved value the
-// backend's own getTabAccess produces, not a re-implemented role list.
-// Send-to-customer is opt-in only (a checkbox the caller must tick before
-// the button becomes active) — matches the dashboard's own 2026-09-22 fix
-// (fix/invoice-send-checkbox-gating) for the exact same action having
-// fired unconditionally before.
-// CORRECTED 2026-09-28 (re-verification sweep): waybill and email were
-// previously lumped in with "PDF/print, out of scope" — wrong, neither
-// involves a PDF. Waybill (POST /:id/generate-waybill) just returns/persists
-// a waybill number string (Shiprocket attempt, placeholder fallback); Email
-// (POST /:id/send-email) sends the existing invoice HTML via SMTP. Both
-// added below. Print itself (window.open on a dashboard-only /print page,
-// no equivalent screen on mobile) and the full line-item edit wizard remain
-// genuinely out of scope — same call already made for quotations' wizard.
-const PAGE_SIZE = 20;
-
-function formatCurrency(n: number) {
-  return `₹${n.toLocaleString('en-IN')}`;
-}
-
-function statusColor(status: InvoiceStatus) {
-  if (status === 'PAID') return '#167A48';
-  if (status === 'CANCELLED') return '#8A8A8E';
-  if (status === 'OVERDUE') return '#B83030';
-  return '#A86018';
-}
-
-// Verbatim from the dashboard's STATUS_META (frontend/src/app/(dashboard)/
-// dashboard/invoices/page.tsx), field-level parity pass 2026-09-25.
-const STATUS_LABEL: Record<string, string> = {
-  DRAFT: 'Draft',
-  ACTIVE: 'Active',
-  ISSUED: 'Issued',
-  PAID: 'Paid',
-  PARTIAL: 'Partially Paid',
-  CANCELLED: 'Cancelled',
-  OVERDUE: 'Overdue',
-};
-
-// The dashboard's Collect Payment panel (InvoiceViewModal) offers exactly
-// these three — Cash/UPI/Card, Title Case, no "Online" option there.
-const PAYMENT_METHODS: { value: string; label: string }[] = [
-  { value: 'CASH', label: 'Cash' },
-  { value: 'UPI', label: 'UPI' },
-  { value: 'CARD', label: 'Card' },
+// Mirrors the dashboard's Sales Invoices page (invoices/page.tsx) plus New Invoice (new/page.tsx), Open Invoices
+// (open/page.tsx) and the print page's content. Permissions follow the dashboard: the resolved 'invoices' mode
+// (view_only / create_collect / full_access) decides what a user can do; full_access = edit, delete, waybill,
+// cancel; create_collect and up can create and collect payments. The server re-checks every one of them.
+// "Print" is the OS share sheet with the print page's blocks in its order (no PDF package in the app).
+const COLS = [
+  { label: 'Invoice #', col: 'invoiceNumber', w: 130 }, { label: 'Date', col: 'createdAt', w: 100 }, { label: 'Customer', col: 'customerName', w: 160 },
+  { label: 'Vehicle', col: 'vehicleNumber', w: 130 }, { label: 'Amount', col: 'grandTotal', w: 100 }, { label: 'Paid', col: 'paidAmount', w: 90 },
+  { label: 'Status', col: 'status', w: 120 }, { label: 'Payment', col: 'paymentMode', w: 100 }, { label: 'Actions', col: '', w: 130 },
 ];
-
-function emptyLineItem(): InvoiceLineItemInput {
-  return { description: '', quantity: 1, unitPrice: 0 };
-}
+const SORT_OPTIONS = COLS.filter((c) => c.col).map((c) => ({ value: c.col, label: c.label }));
 
 export default function InvoicesScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
-  useAuth();
-  const { tabMode } = usePermissions();
-  const invoicesMode = tabMode('invoices');
-  const canWrite = invoicesMode !== null && invoicesMode !== 'view_only';
+  const { user } = useAuth();
+  const { hasTab, tabMode } = usePermissions();
+  const mode = tabMode('invoices');
+  const enabled = hasTab('invoices');
+  const isAdmin = enabled && mode === 'full_access';
+  const canRecordPayment = enabled && (mode === 'create_collect' || mode === 'full_access');
+  const canCreate = canRecordPayment;
+  const isSales = user?.role === 'SALES';
 
-  const [invoices, setInvoices] = useState<InvoiceListItem[] | null>(null);
-  const [detail, setDetail] = useState<InvoiceDetail | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [search, setSearch] = useState('');
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [width, setWidth] = useState(0);
+  const wide = width >= WIDE_MIN;
 
-  // Mark-paid
-  const [paymentMethod, setPaymentMethod] = useState('CASH');
-  const [isMarkingPaid, setIsMarkingPaid] = useState(false);
-
-  // Record a partial/custom-amount payment — distinct from mark-paid
-  // (which always pays the full balance). Dashboard's own list page uses
-  // this same POST /payments/record for exactly this.
-  const [paymentAmount, setPaymentAmount] = useState('');
-  const [isRecordingPayment, setIsRecordingPayment] = useState(false);
-
-  // Send-to-customer
-  const [confirmSend, setConfirmSend] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [isGeneratingWaybill, setIsGeneratingWaybill] = useState(false);
-  const [isSendingEmail, setIsSendingEmail] = useState(false);
-  const [sendNotice, setSendNotice] = useState<string | null>(null);
-
-  // Create form
-  const [showCreate, setShowCreate] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
-  const [customerGSTIN, setCustomerGSTIN] = useState('');
-  const [vehicleNumber, setVehicleNumber] = useState('');
-  const [vehicleBrand, setVehicleBrand] = useState('');
-  const [vehicleModel, setVehicleModel] = useState('');
-  const [vehicleYear, setVehicleYear] = useState('');
-  const [vehicleColour, setVehicleColour] = useState('');
-  const [lineItems, setLineItems] = useState<InvoiceLineItemInput[]>([emptyLineItem()]);
-  const [notes, setNotes] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-
-  const load = useCallback(async (s: string) => {
-    setListError(null);
-    try {
-      setInvoices(await fetchInvoices(s || undefined));
-    } catch (err: any) {
-      // Money screen: a failed fetch must never leave the list looking
-      // like "no invoices" — keep whatever was last shown and show a
-      // persistent, retryable error instead of a fabricated empty array.
-      setListError(getErrorMessage(err, 'Could not load invoices.'));
-    }
+  const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((ok: boolean, msg: string) => {
+    setToast({ ok, msg });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
   }, []);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+
+  const [screen, setScreen] = useState<'list' | 'new' | 'open'>('list');
+  const [resume, setResume] = useState<{ invoice: InvoiceFull; step: 1 | 2 | 3 } | undefined>(undefined);
+  const [tab, setTab] = useState<'invoices' | 'reports'>('invoices');
+
+  const [stats, setStats] = useState<InvoiceStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
+  const [sortCol, setSortCol] = useState('createdAt');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const [view, setView] = useState<{ invoice: InvoiceFull; pay: boolean } | null>(null);
+  const [viewBusy, setViewBusy] = useState(false);
+  const [edit, setEdit] = useState<InvoiceFull | null>(null);
+  const [form, setForm] = useState<InvoiceFormState | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [modalError, setModalError] = useState('');
+  const [openingId, setOpeningId] = useState<string | null>(null);
+
+  const loadStats = useCallback(async () => {
+    if (isSales) { setStatsLoading(false); return; } // SALES: skip company-wide stats
+    setStatsLoading(true);
+    try { setStats(await fetchInvoiceStats()); } catch { /* ignore, like the dashboard */ } finally { setStatsLoading(false); }
+  }, [isSales]);
+
+  const load = useCallback(async () => {
+    setLoading(true); setLoadError('');
+    try {
+      const r = await fetchInvoicesPage({ page, limit: PAGE_SIZE, sortBy: sortCol, sortDir, search, status: filterStatus, from: filterFrom, to: filterTo });
+      setInvoices(r.items); setTotalCount(r.total);
+    } catch { setLoadError('Failed to load invoices.'); showToast(false, 'Failed to load invoices.'); }
+    finally { setLoading(false); }
+  }, [page, sortCol, sortDir, search, filterStatus, filterFrom, filterTo, showToast]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
-    load(search);
-  }, [load, search]);
+    loadStats();
+  }, [loadStats]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount / on filter change
+    load();
+  }, [load]);
 
-  const onRefresh = async () => {
-    setIsRefreshing(true);
-    await load(search);
-    setIsRefreshing(false);
+  // Search runs 400 ms after the last keystroke (the dashboard searches on every keystroke).
+  useEffect(() => {
+    const t = setTimeout(() => { setSearch(searchInput.trim()); setPage(1); }, 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const refreshAll = () => { load(); loadStats(); };
+  const onRefresh = async () => { setRefreshing(true); await Promise.all([load(), loadStats()]); setRefreshing(false); };
+
+  const toggleSort = (col: string) => {
+    if (sortCol === col) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortCol(col); setSortDir('asc'); }
+    setPage(1);
   };
 
-  const openDetail = async (id: string) => {
-    setDetailError(null);
-    setSendNotice(null);
-    setConfirmSend(false);
-    setLoadingDetailId(id);
-    try {
-      setDetail(await fetchInvoice(id));
-    } catch (err: any) {
-      setDetailError(getErrorMessage(err, 'Could not load invoice detail.'));
-    } finally {
-      setLoadingDetailId(null);
+  // GET /invoices (the list) has no line items; only the detail route does.
+  const fetchFull = async (id: string): Promise<InvoiceFull | null> => {
+    try { return await fetchInvoiceFull(id); } catch { showToast(false, 'Failed to load invoice details.'); return null; }
+  };
+
+  const openView = async (id: string, pay = false) => {
+    setOpeningId(id);
+    const full = await fetchFull(id);
+    setOpeningId(null);
+    if (full) setView({ invoice: full, pay });
+  };
+
+  const openEdit = async (id: string) => {
+    setOpeningId(id);
+    const full = await fetchFull(id);
+    setOpeningId(null);
+    if (!full) return;
+    setForm(formFromInvoice(full)); setEdit(full); setModalError(''); setView(null);
+  };
+
+  const printInvoice = async (id: string) => {
+    setOpeningId(id);
+    const full = await fetchFull(id);
+    if (full) {
+      if (!canPrint(full.status)) Alert.alert('Invoice Not Yet Paid', PRINT_LOCK_TEXT(full.status));
+      else {
+        const history = await fetchInvoicePaymentHistory(id).catch(() => []);
+        try { await Share.share({ message: buildInvoiceText(full, history), title: `Invoice ${full.invoiceNumber}` }); } catch { /* share sheet dismissed */ }
+      }
     }
+    setOpeningId(null);
   };
 
-  const onMarkPaid = () => {
-    if (!detail) return;
-    Alert.alert('Mark as paid', `Mark ${detail.invoiceNumber} (${formatCurrency(detail.balanceDue)} due) as fully paid?`, [
+  const handleDelete = (inv: InvoiceRow) => {
+    Alert.alert(`Delete invoice ${inv.invoiceNumber}?`, undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Mark paid',
+        text: 'Delete', style: 'destructive',
         onPress: async () => {
-          setIsMarkingPaid(true);
-          setDetailError(null);
-          try {
-            await markInvoicePaid(detail.id, paymentMethod);
-            // Re-fetch so the detail view always has the same shape as
-            // GET /invoices/:id — same as the dashboard does after actions.
-            setDetail(await fetchInvoice(detail.id));
-            await load(search);
-          } catch (err: any) {
-            setDetailError(getErrorMessage(err, 'Could not mark this invoice as paid.'));
-          } finally {
-            setIsMarkingPaid(false);
-          }
+          try { await deleteInvoice(inv.id); showToast(true, 'Invoice deleted.'); refreshAll(); } catch { showToast(false, 'Failed to delete invoice.'); }
         },
       },
     ]);
   };
 
-  const onRecordPayment = async () => {
-    if (!detail) return;
-    const amount = Number(paymentAmount);
-    if (!amount || amount <= 0) {
-      setDetailError('Enter a valid payment amount.');
-      return;
-    }
-    if (amount > detail.balanceDue) {
-      setDetailError(`Amount can't exceed the balance due (${formatCurrency(detail.balanceDue)}).`);
-      return;
-    }
-    setIsRecordingPayment(true);
-    setDetailError(null);
+  const handleSave = async () => {
+    if (!form || !edit) return;
+    setModalError('');
+    const built = buildInvoicePayload(form);
+    if ('error' in built) { setModalError(built.error); return; }
+    setSaving(true);
     try {
-      await recordInvoicePayment(detail.id, amount, paymentMethod);
-      // POST /payments/record returns only { status, paidAmount, balanceDue,
-      // isFullyPaid } — not the invoice — so re-fetch the full detail.
-      setDetail(await fetchInvoice(detail.id));
-      setPaymentAmount('');
-      await load(search);
-    } catch (err: any) {
-      setDetailError(getErrorMessage(err, 'Could not record this payment.'));
-    } finally {
-      setIsRecordingPayment(false);
-    }
+      await updateInvoiceRaw(edit.id, built.payload);
+      showToast(true, 'Invoice updated.');
+      setEdit(null); setForm(null); refreshAll();
+    } catch (e) { setModalError(getErrorMessage(e, 'Failed to save invoice.')); }
+    finally { setSaving(false); }
   };
 
-  const onSendWhatsapp = async () => {
-    if (!detail || !confirmSend) return;
-    setIsSending(true);
-    setDetailError(null);
-    setSendNotice(null);
+  const handleRecordPayment = async (inv: InvoiceFull, amount: number, method: string) => {
+    setViewBusy(true);
     try {
-      await sendInvoiceWhatsapp(detail.id);
-      setSendNotice('Sent to the customer on WhatsApp.');
-      setConfirmSend(false);
-    } catch (err: any) {
-      setDetailError(getErrorMessage(err, 'Could not send this invoice.'));
-    } finally {
-      setIsSending(false);
-    }
+      await recordInvoicePayment(inv.id, amount, method);
+      showToast(true, amount >= inv.grandTotal ? 'Invoice fully paid!' : `₹${amount.toFixed(0)} recorded — balance remaining.`);
+      const updated = await fetchFull(inv.id);
+      if (updated) setView({ invoice: updated, pay: false });
+      refreshAll();
+    } catch (e) { showToast(false, getErrorMessage(e, 'Failed to record payment.')); }
+    finally { setViewBusy(false); }
   };
 
-  const onGenerateWaybill = async () => {
-    if (!detail) return;
-    setIsGeneratingWaybill(true);
-    setDetailError(null);
-    setSendNotice(null);
-    try {
-      const result = await generateInvoiceWaybill(detail.id);
-      setDetail((prev) => (prev ? { ...prev, waybillNo: result.waybillNo } : prev));
-      setSendNotice(`Waybill: ${result.waybillNo}`);
-    } catch (err: any) {
-      setDetailError(getErrorMessage(err, 'Could not generate a waybill.'));
-    } finally {
-      setIsGeneratingWaybill(false);
-    }
+  const handleWaybill = async (inv: InvoiceFull) => {
+    setViewBusy(true);
+    try { const r = await generateInvoiceWaybill(inv.id); showToast(true, `Waybill: ${r.waybillNo || 'Generated'}`); load(); }
+    catch { showToast(false, 'Failed to generate waybill.'); }
+    finally { setViewBusy(false); }
   };
 
-  const onSendEmail = async () => {
-    if (!detail) return;
-    setIsSendingEmail(true);
-    setDetailError(null);
-    setSendNotice(null);
-    try {
-      await sendInvoiceEmail(detail.id);
-      setDetail((prev) => (prev ? { ...prev, emailSent: true } : prev));
-      setSendNotice('Invoice emailed to customer.');
-    } catch (err: any) {
-      setDetailError(getErrorMessage(err, 'Could not send this invoice by email.'));
-    } finally {
-      setIsSendingEmail(false);
-    }
+  const handleEmail = async (inv: InvoiceFull) => {
+    setViewBusy(true);
+    try { await sendInvoiceEmail(inv.id); showToast(true, 'Invoice emailed to customer.'); }
+    catch (e) { showToast(false, getErrorMessage(e, 'Failed to send email.')); }
+    finally { setViewBusy(false); }
   };
 
-  const updateLineItem = (index: number, patch: Partial<InvoiceLineItemInput>) => {
-    setLineItems((prev) => prev.map((li, i) => (i === index ? { ...li, ...patch } : li)));
+  const handleWhatsApp = async (inv: InvoiceFull) => {
+    setViewBusy(true);
+    try { await sendInvoiceWhatsapp(inv.id); showToast(true, 'Invoice sent via WhatsApp.'); }
+    catch (e) { showToast(false, getErrorMessage(e, 'Failed to send WhatsApp.')); }
+    finally { setViewBusy(false); }
   };
 
-  const addLineItem = () => setLineItems((prev) => [...prev, emptyLineItem()]);
-  const removeLineItem = (index: number) => setLineItems((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
-
-  const resetCreateForm = () => {
-    setCustomerName('');
-    setCustomerPhone('');
-    setCustomerEmail('');
-    setCustomerAddress('');
-    setCustomerGSTIN('');
-    setVehicleNumber('');
-    setVehicleBrand('');
-    setVehicleModel('');
-    setVehicleYear('');
-    setVehicleColour('');
-    setLineItems([emptyLineItem()]);
-    setNotes('');
-    setCreateError(null);
+  // Open Invoices → resume in the wizard (Complete Invoice → Items, Edit → Customer & Vehicle).
+  const resumeInWizard = async (id: string, step: 1 | 2) => {
+    const full = await fetchFull(id);
+    if (full) { setResume({ invoice: full, step }); setScreen('new'); }
   };
 
-  const onCreate = async () => {
-    if (!customerName.trim()) {
-      setCreateError('Customer name is required.');
-      return;
-    }
-    const validLines = lineItems.filter((li) => li.description.trim() && li.unitPrice > 0);
-    if (validLines.length === 0) {
-      setCreateError(lineItems.every((li) => !li.description.trim()) ? 'Add at least one line item.' : 'At least one line item needs a description.');
-      return;
-    }
-    setIsCreating(true);
-    setCreateError(null);
-    try {
-      await createInvoice({
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim() || undefined,
-        customerEmail: customerEmail.trim() || undefined,
-        customerAddress: customerAddress.trim() || undefined,
-        customerGSTIN: customerGSTIN.trim() || undefined,
-        vehicleNumber: vehicleNumber.trim() || undefined,
-        vehicleBrand: vehicleBrand.trim() || undefined,
-        vehicleModel: vehicleModel.trim() || undefined,
-        vehicleYear: vehicleYear.trim() || undefined,
-        vehicleColour: vehicleColour.trim() || undefined,
-        lineItems: validLines,
-        notes: notes.trim() || undefined,
-      });
-      resetCreateForm();
-      setShowCreate(false);
-      await load(search);
-    } catch (err: any) {
-      setCreateError(getErrorMessage(err, 'Could not create the invoice.'));
-    } finally {
-      setIsCreating(false);
-    }
-  };
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+  const filtersActive = !!(search || filterStatus || filterFrom || filterTo);
+  const clearFilters = () => { setSearchInput(''); setSearch(''); setFilterStatus(''); setFilterFrom(''); setFilterTo(''); setPage(1); };
 
-  const lineItemsTotal = lineItems.reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
+  const renderActions = (inv: InvoiceRow) => (
+    <View style={styles.actions}>
+      <Pressable onPress={() => openView(inv.id)} hitSlop={6} accessibilityRole="button" accessibilityLabel="View" style={[styles.act, { backgroundColor: 'rgba(59,130,246,0.12)' }]}><Ionicons name="eye-outline" size={16} color="#2563eb" /></Pressable>
+      {isAdmin ? <Pressable onPress={() => openEdit(inv.id)} hitSlop={6} accessibilityRole="button" accessibilityLabel="Edit" style={[styles.act, { backgroundColor: 'rgba(245,158,11,0.12)' }]}><Ionicons name="create-outline" size={16} color="#b45309" /></Pressable> : null}
+      <Pressable onPress={() => printInvoice(inv.id)} hitSlop={6} accessibilityRole="button" accessibilityLabel="Print" style={[styles.act, { backgroundColor: 'rgba(100,116,139,0.12)' }]}><Ionicons name="print-outline" size={16} color="#475569" /></Pressable>
+      {isAdmin ? <Pressable onPress={() => handleDelete(inv)} hitSlop={6} accessibilityRole="button" accessibilityLabel="Delete" style={[styles.act, { backgroundColor: 'rgba(239,68,68,0.12)' }]}><Ionicons name="trash-outline" size={16} color="#b91c1c" /></Pressable> : null}
+    </View>
+  );
 
-  if (showCreate) {
-    return (
-      <KeyboardAvoidingView style={styles.flex1} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top}>
-        <Stack.Screen options={{ title: 'New Invoice' }} />
-        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}>
-          <Pressable onPress={() => setShowCreate(false)}><ThemedText type="small">← Cancel</ThemedText></Pressable>
+  const badge = (status: string) => { const st = STATUS_META[status] ?? STATUS_META.DRAFT; return <View style={[styles.badge, { backgroundColor: st.bg }]}><ThemedText style={[styles.badgeText, { color: st.color }]}>{st.label}</ThemedText></View>; };
+  const payCell = (inv: InvoiceRow) => (inv.paymentMode === 'SPLIT' ? `Split (${Array.isArray(inv.splitPayments) ? inv.splitPayments.length : '—'})` : paymentLabel(inv.paymentMode));
 
-          <TextInput
-            value={customerName}
-            onChangeText={setCustomerName}
-            placeholder="Customer name *"
-            placeholderTextColor={theme.textSecondary}
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-          />
-          <TextInput
-            value={customerPhone}
-            onChangeText={setCustomerPhone}
-            placeholder="Customer phone"
-            placeholderTextColor={theme.textSecondary}
-            keyboardType="phone-pad"
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-          />
-          <TextInput
-            value={customerEmail}
-            onChangeText={setCustomerEmail}
-            placeholder="Customer email (optional)"
-            placeholderTextColor={theme.textSecondary}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-          />
-          <TextInput
-            value={customerAddress}
-            onChangeText={setCustomerAddress}
-            placeholder="Customer address (optional)"
-            placeholderTextColor={theme.textSecondary}
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-          />
-          <TextInput
-            value={customerGSTIN}
-            onChangeText={setCustomerGSTIN}
-            placeholder="Customer GSTIN (optional)"
-            placeholderTextColor={theme.textSecondary}
-            autoCapitalize="characters"
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-          />
-          <TextInput
-            value={vehicleNumber}
-            onChangeText={setVehicleNumber}
-            placeholder="Vehicle number"
-            placeholderTextColor={theme.textSecondary}
-            autoCapitalize="characters"
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-          />
-          <View style={styles.lineItemRow}>
-            <TextInput
-              value={vehicleBrand}
-              onChangeText={setVehicleBrand}
-              placeholder="Brand"
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, styles.flex1, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-            <TextInput
-              value={vehicleModel}
-              onChangeText={setVehicleModel}
-              placeholder="Model"
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, styles.flex1, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-          </View>
-          <View style={styles.lineItemRow}>
-            <TextInput
-              value={vehicleYear}
-              onChangeText={setVehicleYear}
-              placeholder="Year"
-              placeholderTextColor={theme.textSecondary}
-              keyboardType="number-pad"
-              style={[styles.input, styles.flex1, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-            <TextInput
-              value={vehicleColour}
-              onChangeText={setVehicleColour}
-              placeholder="Colour"
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, styles.flex1, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-          </View>
+  const statCards = [
+    { label: 'Total Invoices', value: stats ? String(stats.total ?? 0) : '' },
+    { label: 'This Month', value: stats ? fmtINR(stats.monthRevenue ?? 0) : '' },
+    { label: 'Today', value: stats ? fmtINR(stats.todayRevenue ?? 0) : '' },
+    { label: 'Outstanding', value: stats ? fmtINR(stats.totalOutstanding ?? 0) : '' },
+    { label: 'Collected', value: stats ? fmtINR(stats.totalCollected ?? 0) : '' },
+  ];
 
-          <ThemedText type="smallBold" style={styles.fieldLabel}>Line items</ThemedText>
-          {lineItems.map((li, i) => (
-            <ThemedView key={i} type="backgroundElement" style={styles.lineItemCard}>
-              <TextInput
-                value={li.description}
-                onChangeText={(t) => updateLineItem(i, { description: t })}
-                placeholder="Description"
-                placeholderTextColor={theme.textSecondary}
-                style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
-              />
-              <View style={styles.lineItemRow}>
-                <TextInput
-                  value={li.quantity ? String(li.quantity) : ''}
-                  onChangeText={(t) => updateLineItem(i, { quantity: Number(t) || 0 })}
-                  placeholder="Qty"
-                  placeholderTextColor={theme.textSecondary}
-                  keyboardType="decimal-pad"
-                  style={[styles.input, styles.qtyInput, { color: theme.text, backgroundColor: theme.background }]}
-                />
-                <TextInput
-                  value={li.unitPrice ? String(li.unitPrice) : ''}
-                  onChangeText={(t) => updateLineItem(i, { unitPrice: Number(t) || 0 })}
-                  placeholder="Unit price"
-                  placeholderTextColor={theme.textSecondary}
-                  keyboardType="decimal-pad"
-                  style={[styles.input, styles.flex1, { color: theme.text, backgroundColor: theme.background }]}
-                />
-                {lineItems.length > 1 && (
-                  <Pressable onPress={() => removeLineItem(i)} accessibilityLabel="Remove this line item" style={styles.removeButton}>
-                    <ThemedText style={styles.removeButtonLabel}>✕</ThemedText>
-                  </Pressable>
-                )}
-              </View>
-            </ThemedView>
-          ))}
-          <Pressable onPress={addLineItem} style={styles.addLineButton}>
-            <ThemedText type="small">+ Add line item</ThemedText>
+  const table = (
+    <View style={[styles.table, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+      <View style={[styles.tr, { backgroundColor: theme.backgroundElement, borderBottomColor: theme.border }]}>
+        {COLS.map((c) => (
+          <Pressable key={c.label} disabled={!c.col} onPress={() => toggleSort(c.col)} style={{ width: c.w }}>
+            <ThemedText themeColor="textMuted" style={styles.th}>{c.label}{c.col && sortCol === c.col ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}</ThemedText>
           </Pressable>
-          <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>
-            Lines total (before GST): {formatCurrency(lineItemsTotal)}
-          </ThemedText>
+        ))}
+      </View>
+      {invoices.map((inv) => (
+        <View key={inv.id} style={[styles.tr, { borderBottomColor: theme.border }]}>
+          <ThemedText numberOfLines={1} style={[styles.mono, { width: COLS[0].w, color: theme.primary }]}>{inv.invoiceNumber}</ThemedText>
+          <ThemedText themeColor="textSecondary" style={[styles.small, { width: COLS[1].w }]}>{fmtDate(inv.createdAt)}</ThemedText>
+          <View style={{ width: COLS[2].w }}>
+            <ThemedText numberOfLines={1} style={styles.medium}>{inv.customerName || '—'}</ThemedText>
+            {inv.customerPhone ? <ThemedText themeColor="textMuted" style={styles.small}>{inv.customerPhone}</ThemedText> : null}
+          </View>
+          <View style={{ width: COLS[3].w }}>
+            {inv.vehicleNumber ? <><ThemedText style={[styles.small, styles.semi]}>{inv.vehicleNumber}</ThemedText><ThemedText themeColor="textMuted" style={styles.small}>{[inv.vehicleBrand, inv.vehicleModel].filter(Boolean).join(' ')}</ThemedText></> : <ThemedText themeColor="textSecondary" style={styles.small}>—</ThemedText>}
+          </View>
+          <ThemedText style={[styles.p, styles.semi, { width: COLS[4].w }]}>{fmtINR(inv.grandTotal)}</ThemedText>
+          <ThemedText style={[styles.p, styles.semi, { width: COLS[5].w, color: inv.paidAmount > 0 ? '#16a34a' : theme.textMuted }]}>{fmtINR(inv.paidAmount)}</ThemedText>
+          <View style={{ width: COLS[6].w }}>{badge(inv.status)}</View>
+          <ThemedText themeColor="textSecondary" style={[styles.small, { width: COLS[7].w }, inv.paymentMode === 'SPLIT' && { color: theme.primary }]}>{payCell(inv)}</ThemedText>
+          <View style={{ width: COLS[8].w }}>{renderActions(inv)}</View>
+        </View>
+      ))}
+    </View>
+  );
 
-          <TextInput
-            value={notes}
-            onChangeText={setNotes}
-            placeholder="Notes (optional)"
-            placeholderTextColor={theme.textSecondary}
-            style={[styles.input, styles.fieldLabel, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-          />
-          <ThemedText type="small" themeColor="textSecondary">
-            GST (18%) and grand total are calculated by the server on save.
-          </ThemedText>
+  const cards = (
+    <View style={styles.gap}>
+      {invoices.map((inv) => (
+        <Pressable key={inv.id} onPress={() => openView(inv.id)} disabled={openingId === inv.id} accessibilityRole="button" style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={styles.between}>
+            <ThemedText numberOfLines={1} style={[styles.mono, { color: theme.primary, flex: 1 }]}>{inv.invoiceNumber}</ThemedText>
+            {badge(inv.status)}
+          </View>
+          <ThemedText style={styles.medium}>{inv.customerName || '—'}</ThemedText>
+          {inv.customerPhone ? <ThemedText themeColor="textMuted" style={styles.small}>{inv.customerPhone}</ThemedText> : null}
+          <View style={styles.between}><ThemedText themeColor="textMuted" style={styles.small}>{fmtDate(inv.createdAt)}</ThemedText><ThemedText themeColor="textSecondary" style={styles.small}>{inv.vehicleNumber ? `${inv.vehicleNumber} ${[inv.vehicleBrand, inv.vehicleModel].filter(Boolean).join(' ')}` : '—'}</ThemedText></View>
+          <View style={[styles.cardFoot, { borderTopColor: theme.border }]}>
+            <View>
+              <ThemedText style={[styles.p, styles.semi]}>{fmtINR(inv.grandTotal)}</ThemedText>
+              <ThemedText style={[styles.small, { color: inv.paidAmount > 0 ? '#16a34a' : theme.textMuted }]}>Paid {fmtINR(inv.paidAmount)} · {payCell(inv)}</ThemedText>
+            </View>
+            {renderActions(inv)}
+          </View>
+        </Pressable>
+      ))}
+    </View>
+  );
 
-          {createError && <ThemedText style={styles.error}>{createError}</ThemedText>}
-
-          <Pressable onPress={onCreate} disabled={isCreating} style={styles.button}>
-            {isCreating ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>Create Invoice</ThemedText>}
-          </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    );
-  }
+  const pageNumbers = Array.from({ length: Math.min(5, totalPages) }, (_, i) => Math.max(1, Math.min(totalPages - 4, page - 2)) + i);
 
   return (
-    <>
-      <Stack.Screen options={{ title: 'Sales Invoices' }} />
-      {!detail && (
-        <ThemedView style={styles.searchWrap}>
-          <TextInput
-            value={search}
-            onChangeText={(t) => { setSearch(t); setVisibleCount(PAGE_SIZE); }}
-            placeholder="Search invoice #, customer, vehicle"
-            placeholderTextColor={theme.textSecondary}
-            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: screen === 'new' ? 'New Invoice' : screen === 'open' ? 'Open Invoices' : 'Sales Invoices' }} />
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />} keyboardShouldPersistTaps="handled">
+        {screen === 'new' ? (
+          <NewInvoiceWizard
+            key={resume?.invoice.id ?? 'new'}
+            userId={user?.id ?? ''}
+            wide={wide}
+            resume={resume}
+            onClose={() => { setScreen('list'); setResume(undefined); refreshAll(); }}
+            onViewInvoice={(id) => { setScreen('list'); setResume(undefined); refreshAll(); openView(id); }}
           />
-          {canWrite && (
-            <Pressable onPress={() => setShowCreate(true)} style={styles.newButton}>
-              <ThemedText style={styles.buttonLabel}>+ New Invoice</ThemedText>
-            </Pressable>
-          )}
-        </ThemedView>
-      )}
+        ) : screen === 'open' ? (
+          <OpenInvoices
+            wide={wide}
+            notify={showToast}
+            onBack={() => { setScreen('list'); refreshAll(); }}
+            onComplete={(id) => resumeInWizard(id, 2)}
+            onEdit={(id) => resumeInWizard(id, 1)}
+            onCollect={(id) => { setScreen('list'); openView(id, true); }}
+          />
+        ) : (
+          <>
+            <View style={styles.header}>
+              <View style={styles.flex1}>
+                <ThemedText style={styles.title}>Sales Invoices</ThemedText>
+                <ThemedText themeColor="textMuted" style={styles.sub}>Manage service invoices, billing and reports.</ThemedText>
+              </View>
+              {canCreate ? <Button icon="add" onPress={() => { setResume(undefined); setScreen('new'); }}>New Invoice</Button> : null}
+            </View>
 
-      {detail ? (
-        <ScrollView contentContainerStyle={[styles.detailWrap, { paddingBottom: insets.bottom + Spacing.three }]}>
-          <Pressable onPress={() => { setDetail(null); setDetailError(null); }}><ThemedText type="small">← Back to list</ThemedText></Pressable>
-          <ThemedText type="smallBold" style={{ marginTop: Spacing.two }}>{detail.invoiceNumber}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">{detail.customerName} · {detail.customerPhone ?? '—'}</ThemedText>
-          {detail.vehicleNumber && <ThemedText type="small" themeColor="textSecondary">Vehicle: {detail.vehicleNumber}</ThemedText>}
-          <View style={styles.divider} />
-          <ThemedText type="small" style={styles.tabularNums}>Subtotal: {formatCurrency(detail.subtotal)}</ThemedText>
-          <ThemedText type="small" style={styles.tabularNums}>CGST: {formatCurrency(detail.cgst)} · SGST: {formatCurrency(detail.sgst)}</ThemedText>
-          <ThemedText type="smallBold" style={styles.tabularNums}>Grand Total: {formatCurrency(detail.grandTotal)}</ThemedText>
-          <ThemedText type="small" style={styles.tabularNums}>Total Paid: {formatCurrency(detail.paidAmount)} · Balance Due: {formatCurrency(detail.balanceDue)}</ThemedText>
-          <ThemedText type="small" style={{ color: statusColor(detail.status) }}>{STATUS_LABEL[detail.status] ?? detail.status}</ThemedText>
-          {detail.paymentMode && <ThemedText type="small" themeColor="textSecondary">Payment: {detail.paymentMode} {detail.paymentRef ? `(${detail.paymentRef})` : ''}</ThemedText>}
-          {detail.notes && <ThemedText type="small" themeColor="textSecondary">{detail.notes}</ThemedText>}
-          {detailError && <ThemedText style={styles.error}>{detailError}</ThemedText>}
-          {sendNotice && <ThemedText style={styles.notice}>{sendNotice}</ThemedText>}
-
-          {canWrite && detail.status !== 'PAID' && detail.status !== 'CANCELLED' && detail.balanceDue > 0 && (
-            <View style={styles.actionBlock}>
-              <ThemedText type="smallBold">Collect Payment</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">Outstanding: {formatCurrency(detail.balanceDue)}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Payment Method</ThemedText>
-              <View style={styles.chipRow}>
-                {PAYMENT_METHODS.map((m) => (
-                  <Pressable
-                    key={m.value}
-                    onPress={() => setPaymentMethod(m.value)}
-                    style={[styles.chip, { backgroundColor: paymentMethod === m.value ? theme.primary : theme.backgroundElement }]}>
-                    <ThemedText type="small" style={paymentMethod === m.value ? styles.chipLabelActive : undefined}>{m.label}</ThemedText>
-                  </Pressable>
+            {!isSales ? (
+              <View style={styles.stats}>
+                {statCards.map((s) => (
+                  <View key={s.label} style={[styles.stat, { backgroundColor: theme.surface, borderColor: theme.border }, wide && styles.statWide]}>
+                    <ThemedText themeColor="textMuted" style={styles.small}>{s.label}</ThemedText>
+                    {statsLoading ? <Skeleton height={20} /> : <ThemedText style={styles.statValue}>{s.value}</ThemedText>}
+                  </View>
                 ))}
               </View>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Amount (₹)</ThemedText>
-              <TextInput
-                value={paymentAmount}
-                onChangeText={setPaymentAmount}
-                placeholder="Enter amount"
-                placeholderTextColor={theme.textSecondary}
-                keyboardType="decimal-pad"
-                style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-              />
-              <Pressable onPress={onRecordPayment} disabled={isRecordingPayment} style={styles.button}>
-                {isRecordingPayment ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>Record Partial Payment</ThemedText>}
-              </Pressable>
-              <Pressable onPress={onMarkPaid} disabled={isMarkingPaid} style={[styles.button, styles.buttonSecondary]}>
-                {isMarkingPaid ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>✓ Collect Payment</ThemedText>}
-              </Pressable>
-            </View>
-          )}
+            ) : null}
 
-          {canWrite && detail.customerPhone && (
-            <View style={styles.actionBlock}>
-              <View style={styles.checkboxRow}>
-                <Switch value={confirmSend} onValueChange={setConfirmSend} accessibilityLabel="Confirm sending this invoice to the customer on WhatsApp" />
-                <ThemedText type="small" style={styles.flex1}>Send this invoice to the customer on WhatsApp</ThemedText>
-              </View>
-              <Pressable
-                onPress={onSendWhatsapp}
-                disabled={!confirmSend || isSending}
-                style={[styles.button, { opacity: confirmSend ? 1 : 0.5 }]}
-              >
-                {isSending ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>WhatsApp</ThemedText>}
+            <View style={styles.btns}>
+              <Pressable onPress={() => setScreen('open')} accessibilityRole="button" style={[styles.open, { backgroundColor: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.3)' }]}>
+                <ThemedText style={{ color: '#dc2626', fontSize: 14, fontFamily: FontWeights.semiBold }}>Open Invoices</ThemedText>
               </Pressable>
             </View>
-          )}
 
-          {canWrite && (
-            <View style={styles.actionBlock}>
-              {detail.waybillNo && <ThemedText type="small" themeColor="textSecondary">Waybill: {detail.waybillNo}</ThemedText>}
-              <Pressable onPress={onGenerateWaybill} disabled={isGeneratingWaybill} style={[styles.button, styles.buttonSecondary]}>
-                {isGeneratingWaybill ? <ActivityIndicator /> : <ThemedText style={styles.buttonLabel}>{detail.waybillNo ? 'Regenerate Waybill' : 'Generate Waybill'}</ThemedText>}
-              </Pressable>
+            <View style={[styles.track, { backgroundColor: theme.surface }]}>
+              {(['invoices', 'reports'] as const).filter((t) => !isSales || t === 'invoices').map((t) => (
+                <Pressable key={t} onPress={() => setTab(t)} accessibilityRole="tab" accessibilityState={{ selected: tab === t }} style={[styles.tabBtn, { backgroundColor: tab === t ? theme.primary : 'transparent' }]}>
+                  <ThemedText style={[styles.tabText, { color: tab === t ? '#fff' : theme.textMuted }]}>{t === 'invoices' ? 'All Invoices' : 'Reports'}</ThemedText>
+                </Pressable>
+              ))}
             </View>
-          )}
 
-          {canWrite && detail.customerEmail && (
-            <View style={styles.actionBlock}>
-              <Pressable onPress={onSendEmail} disabled={isSendingEmail} style={[styles.button, styles.buttonSecondary]}>
-                {isSendingEmail ? <ActivityIndicator /> : <ThemedText style={styles.buttonLabel}>{detail.emailSent ? 'Re-send Email' : 'Send Email'}</ThemedText>}
-              </Pressable>
-            </View>
-          )}
-        </ScrollView>
-      ) : invoices === null ? (
-        listError ? (
-          <View style={styles.errorBlock}>
-            <ThemedText style={styles.error}>{listError}</ThemedText>
-            <Pressable onPress={() => load(search)} style={styles.button}>
-              <ThemedText style={styles.buttonLabel}>Retry</ThemedText>
-            </Pressable>
-          </View>
-        ) : (
-          <ActivityIndicator style={styles.spinner} />
-        )
-      ) : listError ? (
-        <View style={styles.errorBlock}>
-          <ThemedText style={styles.error}>{listError}</ThemedText>
-          <Pressable onPress={() => load(search)} style={styles.button}>
-            <ThemedText style={styles.buttonLabel}>Retry</ThemedText>
-          </Pressable>
-        </View>
-      ) : (
-        <FlatList
-          data={invoices.slice(0, visibleCount)}
-          keyExtractor={(i) => i.id}
-          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-          onEndReached={() => setVisibleCount((c) => Math.min(c + PAGE_SIZE, invoices.length))}
-          onEndReachedThreshold={0.4}
-          ListEmptyComponent={<ThemedText type="small" themeColor="textSecondary">No invoices.</ThemedText>}
-          renderItem={({ item }) => (
-            <Pressable onPress={() => openDetail(item.id)} disabled={loadingDetailId === item.id}>
-              <ThemedView type="backgroundElement" style={styles.row}>
-                <View style={styles.flex1}>
-                  <ThemedText type="smallBold" numberOfLines={1} ellipsizeMode="tail">{item.invoiceNumber} · {item.customerName}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>{formatCurrency(item.grandTotal)} · Balance {formatCurrency(item.balanceDue)}</ThemedText>
+            {tab === 'invoices' ? (
+              <View style={styles.gap}>
+                <View style={[styles.filters, wide && styles.filtersWide]}>
+                  <View style={[styles.search, { backgroundColor: theme.backgroundElement, borderColor: theme.border }, wide && styles.flex1]}>
+                    <Ionicons name="search" size={16} color={theme.textMuted} />
+                    <TextInput value={searchInput} onChangeText={setSearchInput} placeholder="Search invoice#, customer, vehicle, phone..." placeholderTextColor={theme.textMuted} autoCapitalize="none" autoCorrect={false} style={[styles.searchInput, { color: theme.text }]} />
+                  </View>
+                  <View style={wide ? styles.w160 : undefined}><Select value={filterStatus} onChange={(v) => { setFilterStatus(v); setPage(1); }} options={INVOICE_STATUS_OPTIONS} /></View>
+                  <View style={wide ? styles.w150 : undefined}><DateField label="From" compact value={filterFrom} onChange={(v) => { setFilterFrom(v); setPage(1); }} /></View>
+                  <View style={wide ? styles.w150 : undefined}><DateField label="To" compact value={filterTo} onChange={(v) => { setFilterTo(v); setPage(1); }} /></View>
+                  {!wide ? (
+                    <View style={styles.sortRow}>
+                      <View style={styles.flex1}><Select value={sortCol} onChange={(v) => { setSortCol(v); setPage(1); }} options={SORT_OPTIONS} /></View>
+                      <Button variant="outline" onPress={() => { setSortDir((d) => (d === 'asc' ? 'desc' : 'asc')); setPage(1); }}>{sortDir === 'asc' ? '↑' : '↓'}</Button>
+                    </View>
+                  ) : null}
+                  {filtersActive ? <Button variant="outline" onPress={clearFilters}>Clear</Button> : null}
                 </View>
-                {loadingDetailId === item.id ? (
-                  <ActivityIndicator />
+
+                {loadError && invoices.length > 0 ? <ErrorBanner message={loadError} onRetry={load} /> : null}
+                {loading && invoices.length === 0 ? (
+                  <View style={styles.gap}><Skeleton height={wide ? 44 : 130} /><Skeleton height={wide ? 44 : 130} /><Skeleton height={wide ? 44 : 130} /></View>
+                ) : invoices.length === 0 ? (
+                  <ThemedText themeColor="textMuted" style={styles.empty}>{loadError ? 'Could not load invoices.' : 'No invoices found.'}</ThemedText>
                 ) : (
-                  <ThemedText type="small" style={{ color: statusColor(item.status) }}>{STATUS_LABEL[item.status] ?? item.status}</ThemedText>
+                  <View style={loading ? styles.dim : undefined}>{wide ? <ScrollView horizontal showsHorizontalScrollIndicator={false}>{table}</ScrollView> : cards}</View>
                 )}
-              </ThemedView>
-            </Pressable>
-          )}
-          ListFooterComponent={visibleCount < invoices.length ? <ActivityIndicator style={styles.spinner} /> : null}
+
+                {totalPages > 1 ? (
+                  <View style={[styles.pager, wide && styles.pagerWide]}>
+                    <ThemedText themeColor="textMuted" style={styles.small}>Showing {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, totalCount)} of {totalCount}</ThemedText>
+                    <View style={styles.pagerBtns}>
+                      <Button variant="outline" size="sm" disabled={page <= 1 || loading} onPress={() => setPage((p) => p - 1)}>Previous</Button>
+                      {pageNumbers.map((p) => (
+                        <Pressable key={p} onPress={() => setPage(p)} accessibilityRole="button" style={[styles.pageNum, { backgroundColor: page === p ? theme.primary : theme.backgroundElement, borderColor: theme.border }]}>
+                          <ThemedText style={[styles.small, { color: page === p ? '#fff' : theme.text }]}>{p}</ThemedText>
+                        </Pressable>
+                      ))}
+                      <Button variant="outline" size="sm" disabled={page >= totalPages || loading} onPress={() => setPage((p) => p + 1)}>Next</Button>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            ) : (
+              <InvoiceReports wide={wide} onError={(m) => showToast(false, m)} />
+            )}
+          </>
+        )}
+      </ScrollView>
+
+      {toast ? (
+        <View pointerEvents="none" style={[styles.toast, { bottom: insets.bottom + 16, backgroundColor: toast.ok ? '#22c55e' : '#ef4444' }]}>
+          <ThemedText style={styles.toastText}>{toast.msg}</ThemedText>
+        </View>
+      ) : null}
+
+      {view ? (
+        <InvoiceViewSheet
+          key={view.invoice.id + view.invoice.paidAmount}
+          invoice={view.invoice}
+          isAdmin={isAdmin}
+          canRecordPayment={canRecordPayment}
+          startWithPayment={view.pay}
+          busy={viewBusy}
+          wide={wide}
+          onClose={() => setView(null)}
+          onEdit={() => openEdit(view.invoice.id)}
+          onRecordPayment={(amount, method) => handleRecordPayment(view.invoice, amount, method)}
+          onWaybill={() => handleWaybill(view.invoice)}
+          onEmail={() => handleEmail(view.invoice)}
+          onWhatsApp={() => handleWhatsApp(view.invoice)}
         />
-      )}
-    </>
+      ) : null}
+
+      {edit && form ? (
+        <InvoiceEditSheet
+          invoice={edit}
+          form={form}
+          setForm={setForm as React.Dispatch<React.SetStateAction<InvoiceFormState>>}
+          saving={saving}
+          error={modalError}
+          onClose={() => { setEdit(null); setForm(null); }}
+          onSave={handleSave}
+        />
+      ) : null}
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  flex1: { flex: 1 },
-  content: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  searchWrap: { padding: Spacing.three, paddingBottom: 0, gap: Spacing.two },
-  detailWrap: { padding: Spacing.three, gap: Spacing.one, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
-  fieldLabel: { marginTop: Spacing.two },
-  error: { color: '#B83030', marginHorizontal: Spacing.three, marginTop: Spacing.two },
-  notice: { color: '#167A48' },
-  errorBlock: { marginTop: Spacing.three, gap: Spacing.two, alignItems: 'flex-start', paddingHorizontal: Spacing.three },
-  spinner: { marginTop: Spacing.three },
-  row: { borderRadius: Spacing.three, padding: Spacing.three, minHeight: Layout.minTouchTarget, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(120,120,140,0.3)', marginVertical: Spacing.two },
-  tabularNums: { fontVariant: ['tabular-nums'] },
-  newButton: { height: 44, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  button: { marginTop: Spacing.two, height: 46, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  buttonSecondary: { backgroundColor: 'rgba(127,127,127,0.35)' },
-  buttonLabel: { color: '#ffffff', fontWeight: '600' },
-  lineItemCard: { borderRadius: Spacing.two, padding: Spacing.two, gap: Spacing.one, marginTop: Spacing.one },
-  lineItemRow: { flexDirection: 'row', gap: Spacing.one, alignItems: 'center' },
-  qtyInput: { width: 70 },
-  removeButton: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(184,48,48,0.15)' },
-  removeButtonLabel: { color: '#B83030', fontWeight: '700' },
-  addLineButton: { marginTop: Spacing.one, alignSelf: 'flex-start' },
-  actionBlock: { marginTop: Spacing.four, gap: Spacing.two, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(120,120,140,0.3)', paddingTop: Spacing.two },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
-  chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.half, borderRadius: 999 },
-  chipLabelActive: { color: '#ffffff', fontWeight: '600' },
-  checkboxRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  flex1: { flex: 1, minWidth: 0 },
+  gap: { gap: 12 },
+  content: { padding: 16, gap: 16 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
+  title: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold },
+  sub: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  stat: { flexBasis: '47%', flexGrow: 1, borderWidth: 1, borderRadius: Radii.lg, padding: 16, gap: 4 },
+  statWide: { flexBasis: '18%' },
+  statValue: { fontSize: 18, lineHeight: 26, fontFamily: FontWeights.bold },
+  btns: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
+  open: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radii.sm, borderWidth: 1.5 },
+  track: { flexDirection: 'row', alignSelf: 'flex-start', padding: 4, gap: 4, borderRadius: Radii.md },
+  tabBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: Radii.sm },
+  tabText: { fontSize: 14, fontFamily: FontWeights.medium },
+  filters: { gap: 8 },
+  filtersWide: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
+  w160: { width: 160 },
+  w150: { width: 150 },
+  search: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, borderWidth: 1, borderRadius: Radii.sm, paddingHorizontal: 12, minWidth: 200 },
+  searchInput: { flex: 1, fontSize: 14, paddingVertical: 8 },
+  sortRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  table: { borderWidth: 1, borderRadius: Radii.lg, overflow: 'hidden' },
+  tr: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1 },
+  th: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  mono: { fontSize: 12, lineHeight: 16, fontFamily: Fonts?.mono, fontWeight: '600' },
+  medium: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.medium },
+  semi: { fontFamily: FontWeights.semiBold },
+  p: { fontSize: 14, lineHeight: 20 },
+  small: { fontSize: 12, lineHeight: 16 },
+  badge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, alignSelf: 'flex-start' },
+  badgeText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  actions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  act: { padding: 7, borderRadius: Radii.sm },
+  card: { borderWidth: 1, borderRadius: Radii.lg, padding: 14, gap: 6 },
+  between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, paddingTop: 10, marginTop: 4 },
+  empty: { textAlign: 'center', paddingVertical: 48, fontSize: 14 },
+  dim: { opacity: 0.6 },
+  pager: { gap: 8 },
+  pagerWide: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  pagerBtns: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  pageNum: { width: 32, height: 32, borderRadius: Radii.sm, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  toast: { position: 'absolute', left: 16, right: 16, zIndex: 50, borderRadius: Radii.md, paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center' },
+  toastText: { color: '#fff', fontSize: 14, lineHeight: 20, fontFamily: FontWeights.medium },
 });

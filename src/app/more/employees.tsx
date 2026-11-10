@@ -1,12 +1,13 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  FlatList,
   Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
@@ -15,19 +16,25 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AddEmployeeSheet } from '@/components/employees/add-employee-sheet';
+import { EditEmployeeSheet } from '@/components/employees/edit-employee-sheet';
+import { EmployeeDetailPanel } from '@/components/employees/employee-detail-panel';
+import { AddRemarkSheet, DeactivateSheet, DeleteSheet, ResetPasswordSheet } from '@/components/employees/employee-action-sheets';
+import { EmployeeCard, type CardFlags } from '@/components/employees/employee-card';
 import { GlassCard } from '@/components/home/glass-card';
+import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Button, Skeleton } from '@/components/ui';
+import { FontWeights, MaxContentWidth, Radii, Spacing, Layout } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
-  createEmployee,
   createRecurringTask,
   deactivateEmployee,
   deleteRecurringTask,
   fetchEmployee,
   fetchEmployeePermissions,
-  fetchEmployees,
+  fetchEmployeeCards,
   fetchRecurringTasks,
   fetchTabRegistry,
   getErrorMessage,
@@ -37,9 +44,11 @@ import {
   updateEmployeePermissions,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { useContentWidth } from '@/lib/drawer-context';
+import { usePermissions } from '@/lib/permissions-context';
 import type {
+  EmployeeCardItem,
   EmployeeDetail,
-  EmployeeListItem,
   EmployeePermissions,
   RecurrenceType,
   RecurringTaskDefinition,
@@ -67,25 +76,14 @@ function isTabAccess(v: boolean | TabAccess | undefined): v is TabAccess {
   return typeof v === 'object' && v !== null;
 }
 
-// requireManagerOrOwner = [OWNER, STORE_MANAGER, HR, ACCOUNTING, CASHIER]
-// (backend/src/middleware/auth.ts:83) gates GET /employees, GET /employees/
-// :id, POST /employees, PUT /employees/:id, and PATCH /:id/deactivate
-// (backend/src/routes/employees.ts) — re-verified 2026-09-21, all five use
-// this exact middleware. Role field is OWNER-only (confirmed:
-// `if (role !== undefined) { if (req.user!.role !== 'OWNER') return 403 }`
-// inside PUT /:id — a hard check, not requireManagerOrOwner itself); salary
-// fields are SALARY_EDIT_ROLES=[OWNER,STORE_MANAGER,CASHIER] (confirmed:
-// same hard-coded array name and values inside PUT /:id, independent of
-// canEditSalary()'s permission-mode fallback). DELETE /:id/permanent is
-// OWNER-only, checked inline (`if (req.user!.role !== 'OWNER') return 403`),
-// NOT requireManagerOrOwner — narrower than every other route in this file.
-// A STORE_MANAGER editing an OWNER or peer STORE_MANAGER account, or a
-// non-manager role touching a field beyond name/phone/email, gets a
-// server-side 403 — handled via getErrorMessage, not predicted here beyond
-// this basic field-visibility gating.
-const VIEW_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'ACCOUNTING', 'CASHIER'];
+// Access mirrors the dashboard Team page's canAccess: OWNER, STORE_MANAGER, HR,
+// TECH_TEAM, or anyone with the employees tab granted (that last group gets
+// the "restricted" edit sheet: name, phone and email only). The backend gates
+// every route with requireManagerOrOwner and decides in the end.
+// Role field is OWNER-only; salary fields are SALARY_EDIT_ROLES=[OWNER,
+// STORE_MANAGER,CASHIER]; DELETE /:id/permanent is OWNER-only
+// (backend/src/routes/employees.ts).
 const SALARY_EDIT_ROLES = ['OWNER', 'STORE_MANAGER', 'CASHIER'];
-const CREATE_ROLES = VIEW_ROLES; // POST / uses the same requireManagerOrOwner as GET /
 
 // Role list + display labels copied verbatim from the dashboard's own
 // role <select> (frontend/src/app/(dashboard)/dashboard/employees/
@@ -115,29 +113,28 @@ const BRANCH_OPTIONS = [
   { value: 'Jubilee Hills', label: 'Jubilee Hills' },
   { value: 'Minister Road', label: 'Minister Road' },
 ];
-const ROLE_BADGE: Record<string, string> = {
-  OWNER: 'Founder',
-  STORE_MANAGER: 'Store Manager',
-  SALES: 'Sales',
-  TECHNICIAN: 'Technician',
-  TECH_TEAM: 'Tech Team',
-  SOCIAL_MEDIA: 'Social Media',
-  STAFF: 'Staff',
-  INVENTORY_MANAGER: 'Inventory Manager',
-  ACCOUNTING: 'Accounting',
-  CASHIER: 'Cashier',
-};
-
 export default function EmployeesScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const { user } = useAuth();
-  const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
+  const { hasTab } = usePermissions();
   const isOwner = user?.role === 'OWNER';
+  const isStoreManager = user?.role === 'STORE_MANAGER';
+  const hasEmployeesPerm = !isOwner && !isStoreManager && hasTab('employees');
+  const isAuthorized = isOwner || isStoreManager || user?.role === 'HR' || user?.role === 'TECH_TEAM' || hasEmployeesPerm;
   const canEditSalaryFields = SALARY_EDIT_ROLES.includes(user?.role ?? '');
-  const canCreate = CREATE_ROLES.includes(user?.role ?? '');
 
-  const [employees, setEmployees] = useState<EmployeeListItem[] | null>(null);
+  const [employees, setEmployees] = useState<EmployeeCardItem[] | null>(null);
+  const contentWidth = useContentWidth();
+  const [listWidth, setListWidth] = useState(contentWidth);
+  const [search, setSearch] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const [editEmp, setEditEmp] = useState<EmployeeCardItem | null>(null);
+  const [remarkEmp, setRemarkEmp] = useState<EmployeeCardItem | null>(null);
+  const [resetEmp, setResetEmp] = useState<EmployeeCardItem | null>(null);
+  const [deactivateEmp, setDeactivateEmp] = useState<EmployeeCardItem | null>(null);
+  const [deleteEmp, setDeleteEmp] = useState<EmployeeCardItem | null>(null);
+  const [detailEmp, setDetailEmp] = useState<EmployeeCardItem | null>(null);
   const [selected, setSelected] = useState<EmployeeDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -185,28 +182,13 @@ export default function EmployeesScreen() {
   const [email, setEmail] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  // Create form state — order matches dashboard's "Add Employee" form:
-  // Full Name, Username, Designation, Phone, Branch, Personal Email,
-  // Role, Monthly Salary, Joining Date, Device User ID.
-  const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newUsername, setNewUsername] = useState('');
-  const [newDesignation, setNewDesignation] = useState('');
-  const [newPhone, setNewPhone] = useState('');
-  const [newBranch, setNewBranch] = useState('');
-  const [newPersonalEmail, setNewPersonalEmail] = useState('');
-  const [newRole, setNewRole] = useState('STAFF');
-  const [newSalary, setNewSalary] = useState('');
-  const [newJoiningDate, setNewJoiningDate] = useState('');
-  const [newDeviceUserId, setNewDeviceUserId] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
   const [createdCredential, setCreatedCredential] = useState<{ username: string; password: string } | null>(null);
 
   const load = useCallback(async () => {
     if (!isAuthorized) return;
     setError(null);
     try {
-      setEmployees(await fetchEmployees());
+      setEmployees(await fetchEmployeeCards());
     } catch (err: any) {
       setError(getErrorMessage(err, 'Could not load employees.'));
     }
@@ -414,51 +396,6 @@ export default function EmployeesScreen() {
     }
   };
 
-  const onCreate = async () => {
-    if (!newName.trim()) {
-      setError('Name is required');
-      return;
-    }
-    if (!newUsername.trim()) {
-      setError('Username is required');
-      return;
-    }
-    setIsCreating(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await createEmployee({
-        name: newName.trim(),
-        username: newUsername.trim(),
-        designation: newDesignation.trim() || undefined,
-        phone: newPhone.trim() || undefined,
-        branch: newBranch || undefined,
-        personalEmail: newPersonalEmail.trim() || undefined,
-        role: newRole,
-        monthlySalary: newSalary.trim() ? Number(newSalary) : undefined,
-        joiningDate: newJoiningDate.trim() || undefined,
-        deviceUserId: newDeviceUserId.trim() || undefined,
-      });
-      setCreatedCredential({ username: result.user.username, password: result.temporaryPassword });
-      setNewName('');
-      setNewUsername('');
-      setNewDesignation('');
-      setNewPhone('');
-      setNewBranch('');
-      setNewPersonalEmail('');
-      setNewRole('STAFF');
-      setNewSalary('');
-      setNewJoiningDate('');
-      setNewDeviceUserId('');
-      setShowCreate(false);
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Failed to create employee'));
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
   const onResetPassword = () => {
     if (!selected) return;
     Alert.alert(
@@ -545,11 +482,25 @@ export default function EmployeesScreen() {
     );
   };
 
+  const cardFlags = useMemo<CardFlags>(() => ({ isOwner, isStoreManager, hasEmployeesPerm }), [isOwner, isStoreManager, hasEmployeesPerm]);
+  const cell = useMemo(() => ({ width: `${100 / (listWidth >= 900 ? 3 : listWidth >= 560 ? 2 : 1)}%` as `${number}%`, paddingHorizontal: listWidth >= 560 ? 8 : 0, marginBottom: Spacing.three }), [listWidth]);
+  const openEdit = useCallback((e: EmployeeCardItem) => setEditEmp(e), []);
+  const openRemark = useCallback((e: EmployeeCardItem) => setRemarkEmp(e), []);
+  const openReset = useCallback((e: EmployeeCardItem) => setResetEmp(e), []);
+  const openDeactivate = useCallback((e: EmployeeCardItem) => setDeactivateEmp(e), []);
+  const openDelete = useCallback((e: EmployeeCardItem) => setDeleteEmp(e), []);
+  const openDetails = useCallback((e: EmployeeCardItem) => setDetailEmp(e), []);
+  const renderCard = useCallback(({ item }: { item: EmployeeCardItem }) => (
+    <View style={cell}>
+      <EmployeeCard emp={item} flags={cardFlags} onEdit={openEdit} onDetails={openDetails} onRemark={openRemark} onReset={openReset} onDeactivate={openDeactivate} onDelete={openDelete} />
+    </View>
+  ), [cell, cardFlags, openEdit, openDetails, openRemark, openReset, openDeactivate, openDelete]);
+
   if (!isAuthorized) {
     return (
       <ThemedView style={styles.center}>
         <ThemedText themeColor="textSecondary">
-          Employees is only available to Owner, Store Manager, HR, Accounting, or Cashier accounts.
+          Employees is only available to Owner, Store Manager, HR, and Tech Team accounts, or anyone granted the Employees tab.
         </ThemedText>
       </ThemedView>
     );
@@ -882,167 +833,109 @@ export default function EmployeesScreen() {
     );
   }
 
-  return (
-    <KeyboardAvoidingView style={styles.flex1} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top}>
-      <Stack.Screen options={{ title: 'Employees' }} />
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-      >
-        {isLoadingDetail && <ActivityIndicator style={styles.spinner} />}
-        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-        {notice && <ThemedText style={styles.notice}>{notice}</ThemedText>}
+  // ── Team list (dashboard Team page) ──
+  const columns = listWidth >= 900 ? 3 : listWidth >= 560 ? 2 : 1;
+  const halfGap = columns > 1 ? 8 : 0;
+  const pad = listWidth >= 560 ? Spacing.four : Spacing.three;
+  const q = search.trim().toLowerCase();
+  const filteredEmployees = q
+    ? (employees ?? []).filter((emp) => (
+        emp.name.toLowerCase().includes(q) ||
+        emp.username.toLowerCase().includes(q) ||
+        emp.role.toLowerCase().includes(q) ||
+        (emp.designation ?? '').toLowerCase().includes(q)
+      ))
+    : (employees ?? []);
 
-        {canCreate && (
-          <Pressable onPress={() => { setShowCreate((v) => !v); setCreatedCredential(null); }} style={styles.newButton}>
-            <ThemedText style={styles.buttonLabel}>{showCreate ? 'Cancel' : '+ Add Employee'}</ThemedText>
+  const listHeader = (
+    <View style={[styles.headerWrap, { paddingHorizontal: halfGap }]}>
+      <View style={styles.headerRow}>
+        <View style={styles.flex1}>
+          <ThemedText style={styles.title}>Team</ThemedText>
+          <ThemedText themeColor="textSecondary" style={styles.subtitle}>
+            {q ? `${filteredEmployees.length} result${filteredEmployees.length !== 1 ? 's' : ''}` : `${(employees ?? []).filter((e) => e.isActive).length} active members`}
+          </ThemedText>
+        </View>
+        <Button icon="add" onPress={() => setAddOpen(true)}>Add Employee</Button>
+      </View>
+
+      {error ? <ErrorBanner message={error} onRetry={onRefresh} /> : null}
+      {notice ? <ThemedText style={styles.notice}>{notice}</ThemedText> : null}
+
+      <View style={[styles.search, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Ionicons name="search" size={16} color={theme.textMuted} />
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search by name, username, role or designation…"
+          placeholderTextColor={theme.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          accessibilityLabel="Search team"
+          style={[styles.searchInput, { color: theme.text }]}
+        />
+        {search ? (
+          <Pressable onPress={() => setSearch('')} hitSlop={8} accessibilityLabel="Clear search">
+            <Ionicons name="close" size={16} color={theme.textMuted} />
           </Pressable>
-        )}
+        ) : null}
+      </View>
+      {isLoadingDetail ? <ActivityIndicator /> : null}
+    </View>
+  );
 
-        {showCreate && (
-          <GlassCard style={styles.card}>
-            <ThemedText type="smallBold">Add Employee</ThemedText>
+  const emptyState = employees === null ? (
+    <View style={[styles.skeletons, { paddingHorizontal: halfGap }]}>
+      {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={170} style={styles.skeleton} />)}
+    </View>
+  ) : employees.length === 0 ? (
+    <View style={styles.empty}>
+      <Ionicons name="people-outline" size={48} color={theme.textMuted} style={{ opacity: 0.4 }} />
+      <ThemedText themeColor="textMuted" style={styles.emptyText}>No employees yet</ThemedText>
+    </View>
+  ) : (
+    <View style={styles.empty}>
+      <Ionicons name="search" size={40} color={theme.textMuted} style={{ opacity: 0.4 }} />
+      <ThemedText themeColor="textMuted" style={[styles.emptyText, styles.bold]}>No results for “{search}”</ThemedText>
+      <Button size="sm" variant="ghost" onPress={() => setSearch('')}>Clear search</Button>
+    </View>
+  );
 
-            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Full Name</ThemedText>
-            <TextInput
-              value={newName}
-              onChangeText={setNewName}
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
+  return (
+    <ThemedView style={styles.flex1} onLayout={(e) => setListWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: 'Employees' }} />
+      <FlatList
+        style={{ backgroundColor: theme.background }}
+        key={`team-${columns}`}
+        numColumns={columns}
+        data={employees === null ? [] : filteredEmployees}
+        keyExtractor={(e) => e.id}
+        renderItem={renderCard}
+        refreshing={isRefreshing}
+        onRefresh={onRefresh}
+        keyboardShouldPersistTaps="handled"
+        initialNumToRender={8}
+        windowSize={7}
+        contentContainerStyle={{ padding: pad - halfGap, paddingBottom: insets.bottom + Spacing.four }}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={emptyState}
+      />
 
-            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Username</ThemedText>
-            <TextInput
-              value={newUsername}
-              onChangeText={setNewUsername}
-              placeholderTextColor={theme.textSecondary}
-              autoCapitalize="none"
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-
-            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Designation (optional)</ThemedText>
-            <TextInput
-              value={newDesignation}
-              onChangeText={setNewDesignation}
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-
-            <ThemedText type="smallBold" style={styles.fieldLabel}>Personal Contact (for password reset)</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">Phone (optional)</ThemedText>
-            <TextInput
-              value={newPhone}
-              onChangeText={setNewPhone}
-              placeholder="9876543210"
-              placeholderTextColor={theme.textSecondary}
-              keyboardType="phone-pad"
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-            <ThemedText type="small" themeColor="textSecondary">10-digit number without +91</ThemedText>
-
-            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Branch</ThemedText>
-            <View style={styles.chipRow}>
-              {BRANCH_OPTIONS.map((b) => (
-                <Pressable key={b.value} onPress={() => setNewBranch(b.value)} style={[styles.chip, { backgroundColor: newBranch === b.value ? theme.primary : theme.backgroundElement }]}>
-                  <ThemedText type="small" style={newBranch === b.value ? styles.chipLabelActive : undefined}>{b.label}</ThemedText>
-                </Pressable>
-              ))}
-            </View>
-
-            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Personal Email</ThemedText>
-            <TextInput
-              value={newPersonalEmail}
-              onChangeText={setNewPersonalEmail}
-              placeholder="personal@gmail.com"
-              placeholderTextColor={theme.textSecondary}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-
-            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Role</ThemedText>
-            <View style={styles.chipRow}>
-              {ROLE_OPTIONS.map((r) => (
-                <Pressable
-                  key={r.value}
-                  onPress={() => setNewRole(r.value)}
-                  style={[styles.chip, { backgroundColor: newRole === r.value ? theme.primary : theme.backgroundElement }]}>
-                  <ThemedText type="small" style={newRole === r.value ? styles.chipLabelActive : undefined}>{r.label}</ThemedText>
-                </Pressable>
-              ))}
-            </View>
-
-            <ThemedText type="smallBold" style={styles.fieldLabel}>Payroll &amp; Device (Optional)</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">Monthly Salary (₹)</ThemedText>
-            <TextInput
-              value={newSalary}
-              onChangeText={setNewSalary}
-              placeholder="e.g. 25000"
-              placeholderTextColor={theme.textSecondary}
-              keyboardType="decimal-pad"
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-            <ThemedText type="small" themeColor="textSecondary">Joining Date</ThemedText>
-            <TextInput
-              value={newJoiningDate}
-              onChangeText={setNewJoiningDate}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-            <ThemedText type="small" themeColor="textSecondary">Device User ID</ThemedText>
-            <TextInput
-              value={newDeviceUserId}
-              onChangeText={setNewDeviceUserId}
-              placeholder="Auto-filled from phone"
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-            <ThemedText type="small" themeColor="textSecondary">EnNo from Salary Box device (the number shown next to the employee name)</ThemedText>
-
-            {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-            <Pressable onPress={onCreate} disabled={isCreating} style={styles.button}>
-              {isCreating ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>Create</ThemedText>}
-            </Pressable>
-          </GlassCard>
-        )}
-
-        {createdCredential && (
-          <ThemedView type="backgroundElement" style={styles.card}>
-            <ThemedText type="smallBold">Employee Created</ThemedText>
-            <ThemedText type="small">Account created!</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">Temporary password (save this now):</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {createdCredential.username} · {createdCredential.password}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">Share this password with the employee. They should change it on first login.</ThemedText>
-            <Pressable onPress={() => setCreatedCredential(null)} style={styles.button}>
-              <ThemedText style={styles.buttonLabel}>Done</ThemedText>
-            </Pressable>
-          </ThemedView>
-        )}
-
-        {employees === null ? (
-          <ActivityIndicator style={styles.spinner} />
-        ) : employees.length === 0 ? (
-          <ThemedText type="small" themeColor="textSecondary">No employees found.</ThemedText>
-        ) : (
-          employees.map((e) => (
-            <Pressable key={e.id} onPress={() => onSelect(e.id)}>
-              <ThemedView type="backgroundElement" style={styles.row}>
-                <View style={styles.flex1}>
-                  <ThemedText type="smallBold" numberOfLines={1} ellipsizeMode="tail">{e.name}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} ellipsizeMode="tail">
-                    {ROLE_BADGE[e.role] ?? e.role}{e.designation ? ` · ${e.designation}` : ''} · {e.isActive ? 'Active' : 'Inactive'}
-                  </ThemedText>
-                </View>
-                <ThemedText type="link">Edit ›</ThemedText>
-              </ThemedView>
-            </Pressable>
-          ))
-        )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      {addOpen ? <AddEmployeeSheet onClose={() => setAddOpen(false)} onCreated={load} /> : null}
+      {editEmp ? <EditEmployeeSheet employee={editEmp} restricted={hasEmployeesPerm} onClose={() => setEditEmp(null)} onSaved={load} /> : null}
+      {remarkEmp ? <AddRemarkSheet employee={remarkEmp} onClose={() => setRemarkEmp(null)} /> : null}
+      {resetEmp ? <ResetPasswordSheet employee={resetEmp} onClose={() => setResetEmp(null)} /> : null}
+      {deactivateEmp ? <DeactivateSheet employee={deactivateEmp} onClose={() => setDeactivateEmp(null)} onDone={load} /> : null}
+      {detailEmp ? (
+        <EmployeeDetailPanel
+          employee={detailEmp}
+          // Dashboard rule: the Owner, or a store manager looking at someone who is neither Owner nor store manager.
+          canEdit={isOwner || (isStoreManager && detailEmp.role !== 'OWNER' && detailEmp.role !== 'STORE_MANAGER')}
+          onClose={() => setDetailEmp(null)}
+        />
+      ) : null}
+      {deleteEmp ? <DeleteSheet employee={deleteEmp} onClose={() => setDeleteEmp(null)} onDone={load} /> : null}
+    </ThemedView>
   );
 }
 
@@ -1065,7 +958,17 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one, marginTop: Spacing.two },
   chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, borderRadius: Spacing.four },
   chipLabelActive: { color: '#ffffff', fontWeight: '600' },
-  newButton: { height: 44, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
+  headerWrap: { gap: Spacing.three, marginBottom: Spacing.three },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.three },
+  title: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold },
+  subtitle: { fontSize: 14, lineHeight: 20 },
+  search: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderWidth: 1, borderRadius: Radii.md },
+  searchInput: { flex: 1, minHeight: 44, fontSize: 14, paddingVertical: 0 },
+  skeletons: { gap: Spacing.three },
+  skeleton: { borderRadius: Radii.lg },
+  empty: { alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.six },
+  emptyText: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  bold: { fontFamily: FontWeights.medium },
   dangerZone: { gap: Spacing.two, marginTop: Spacing.two },
   configureHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: Layout.minTouchTarget },
   errorBlock: { gap: Spacing.two, alignItems: 'flex-start' },

@@ -64,5 +64,5 @@ test('eas.json: every existing profile is exactly as before', () => {
   assert.deepEqual(eas.build.production, { autoIncrement: true, env: { EXPO_PUBLIC_API_URL: 'https://dashboard.fasttrackscarcare.in/api/v1' } });
   assert.deepEqual(eas.build['development-voip'], { extends: 'development', env: { FASTTRACKS_VOIP_NATIVE: '1', EXPO_PUBLIC_VOIP_NATIVE: 'true' } });
   assert.deepEqual(eas.build['development-dialer'], { extends: 'development', env: { FASTTRACKS_DIALER: '1' } });
-  assert.deepEqual(Object.keys(eas.build).sort(), ['development', 'development-dialer', 'development-voip', 'preview', 'production', 'sales-trial']);
+  assert.deepEqual(Object.keys(eas.build).sort(), ['development', 'development-dialer', 'development-voip', 'preview', 'production', 'sales-trial', 'staging']);
 });

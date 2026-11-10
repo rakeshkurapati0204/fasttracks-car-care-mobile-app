@@ -1,192 +1,196 @@
-import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Sharing from 'expo-sharing';
 import { Stack } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { GlassCard } from '@/components/home/glass-card';
+import { DateField } from '@/components/call-tracker/date-field';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Button, Card } from '@/components/ui';
+import { FontWeights } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { downloadHrReport, getErrorMessage } from '@/lib/api';
+import { downloadHrReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { toYmd } from '@/lib/overview-format';
 import type { HrReportFormat, HrReportKind } from '@/types/api';
 
-// Whole /hr-reports router is router.use(verifyToken, requireHROrOwner) =
-// OWNER/STORE_MANAGER/HR/ACCOUNTING (backend/src/routes/hrReports.ts,
-// middleware/auth.ts) — a static role check with no hr_module override, same
-// as onboarding.tsx.
-const REPORT_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'ACCOUNTING'];
+// 4 roles only: the whole /hr-reports router is requireHROrOwner and the page
+// carries salary / ID-number / approval data (no hr_module override).
+const ADMIN_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'ACCOUNTING'];
+const WIDE_MIN = 560;
 
-const REPORTS: { key: HrReportKind; label: string; description: string }[] = [
+const CATEGORIES: { key: HrReportKind; label: string; description: string }[] = [
   { key: 'hiring', label: 'Hiring', description: 'Applications, status, and AI interview/assignment scores for the range.' },
   { key: 'onboarding', label: 'Onboarding', description: 'Checklists started, document verification activity, and probation check-ins.' },
-  { key: 'attendance', label: 'Attendance', description: 'Per-employee day-by-day attendance and rankings for the range.' },
+  { key: 'attendance', label: 'Attendance', description: 'Per-employee day-by-day attendance and rankings for any date range.' },
   { key: 'discipline', label: 'Discipline', description: 'Warnings, disciplinary actions, and acknowledgements issued in the range.' },
 ];
 
-// The backend wants YYYY-MM-DD. Built from local date parts — toISOString()
-// would shift the day for anyone east of UTC late at night / early morning.
-function toYmd(d: Date) {
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
-}
-
-function fromYmd(s: string) {
-  const [y, m, d] = s.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-
-function fmtDate(s: string) {
-  return fromYmd(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-function daysAgo(n: number) {
+const monthAgo = () => {
   const d = new Date();
-  d.setDate(d.getDate() - n);
+  d.setMonth(d.getMonth() - 1);
   return toYmd(d);
-}
+};
 
-function DateField({ label, value, onChange }: { label: string; value: string; onChange: (ymd: string) => void }) {
-  const theme = useTheme();
-  const [open, setOpen] = useState(false);
-  return (
-    <View style={styles.flex1}>
-      <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>{label}</ThemedText>
-      <Pressable onPress={() => setOpen(true)} style={[styles.input, { backgroundColor: theme.backgroundElement }]}>
-        <ThemedText>{fmtDate(value)}</ThemedText>
-      </Pressable>
-      {open && (
-        <DateTimePicker
-          value={fromYmd(value)}
-          mode="date"
-          display={Platform.OS === 'ios' ? 'inline' : 'default'}
-          onChange={(_e, selected) => {
-            setOpen(Platform.OS === 'ios');
-            if (selected) onChange(toYmd(selected));
-          }}
-        />
-      )}
-      {open && Platform.OS === 'ios' && (
-        <Pressable onPress={() => setOpen(false)} style={styles.doneLink}>
-          <ThemedText type="small">Done</ThemedText>
-        </Pressable>
-      )}
-    </View>
-  );
-}
+// The dashboard's status colours.
+const OK = '#22c55e';
+const BAD = '#ef4444';
 
 export default function HrReportsScreen() {
-  const insets = useSafeAreaInsets();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const allowed = REPORT_ROLES.includes(user?.role ?? '');
+  const allowed = ADMIN_ROLES.includes(user?.role ?? '');
 
-  const [from, setFrom] = useState(() => daysAgo(30));
-  const [to, setTo] = useState(() => daysAgo(0));
-  const [format, setFormat] = useState<HrReportFormat>('pdf');
-  const [downloading, setDownloading] = useState<HrReportKind | null>(null);
-  const [errors, setErrors] = useState<Partial<Record<HrReportKind, string>>>({});
+  const [width, setWidth] = useState(0);
+  const [category, setCategory] = useState<HrReportKind>('hiring');
+  const [from, setFrom] = useState(monthAgo);
+  const [to, setTo] = useState(() => toYmd(new Date()));
+  const [dlLoading, setDlLoading] = useState<string | null>(null);
+  const [dlMsg, setDlMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // YYYY-MM-DD strings compare correctly as text, same check the backend makes.
-  const invalidRange = from > to;
+  useEffect(() => () => { if (clearTimer.current) clearTimeout(clearTimer.current); }, []);
 
-  const download = async (kind: HrReportKind) => {
-    if (invalidRange || downloading) return;
-    setDownloading(kind);
-    setErrors((e) => ({ ...e, [kind]: undefined }));
+  // YYYY-MM-DD strings compare correctly as text, the same check the backend makes.
+  const invalidRange = !from || !to || from > to;
+
+  const handleDownload = async (format: HrReportFormat) => {
+    if (invalidRange) return;
+    setDlLoading(`${category}-${format}`);
+    setDlMsg(null);
     try {
-      const { uri, mimeType } = await downloadHrReport(kind, from, to, format);
+      // Same endpoint and filename as the dashboard; saved to the cache, then
+      // handed to the device share sheet so it can be saved, opened or sent.
+      const { uri, mimeType } = await downloadHrReport(category, from, to, format);
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { mimeType, dialogTitle: 'HR report' });
+        await Sharing.shareAsync(uri, { mimeType, dialogTitle: 'Report' });
+        setDlMsg({ ok: true, text: `${format.toUpperCase()} downloaded` });
       } else {
-        setErrors((e) => ({ ...e, [kind]: 'Sharing isn’t available on this device.' }));
+        setDlMsg({ ok: false, text: 'Sharing isn’t available on this device.' });
       }
-    } catch (err: any) {
-      setErrors((e) => ({ ...e, [kind]: err?.message ?? getErrorMessage(err, 'Could not download the report.') }));
+    } catch {
+      setDlMsg({ ok: false, text: `Failed to download ${format.toUpperCase()}` });
     } finally {
-      setDownloading(null);
+      setDlLoading(null);
+      if (clearTimer.current) clearTimeout(clearTimer.current);
+      clearTimer.current = setTimeout(() => setDlMsg(null), 4000);
     }
   };
 
   if (!allowed) {
     return (
-      <View style={[styles.content, styles.flex1]}>
-        <Stack.Screen options={{ title: 'HR Reports' }} />
-        <ThemedText type="small" themeColor="textSecondary">
-          HR Reports is available to Owner, Store Manager, HR and Accounting roles only.
-        </ThemedText>
-      </View>
+      <ThemedView style={styles.denied}>
+        <Stack.Screen options={{ title: 'Reports' }} />
+        <ThemedText themeColor="textMuted" style={styles.body}>Reports is available to Owner, Store Manager, HR and Accounting roles only.</ThemedText>
+      </ThemedView>
     );
   }
 
+  const wide = width >= WIDE_MIN;
+  const pad = wide ? 24 : 16;
+  const cols = wide ? 4 : 2;
+  const rows: (typeof CATEGORIES)[] = [];
+  for (let i = 0; i < CATEGORIES.length; i += cols) rows.push(CATEGORIES.slice(i, i + cols));
+
+  // Same height as the DateField box (44 + its 1px borders), so the bottoms line up exactly.
+  const pdfButton = (full: boolean) => (
+    <Button variant="secondary" fullWidth={full} style={styles.btn} loading={dlLoading === `${category}-pdf`} disabled={invalidRange || dlLoading !== null} onPress={() => handleDownload('pdf')}>
+      Download PDF
+    </Button>
+  );
+  const excelButton = (full: boolean) => (
+    <Button variant="secondary" fullWidth={full} style={styles.btn} loading={dlLoading === `${category}-excel`} disabled={invalidRange || dlLoading !== null} onPress={() => handleDownload('excel')}>
+      Download Excel
+    </Button>
+  );
+
   return (
-    <View style={styles.flex1}>
-      <Stack.Screen options={{ title: 'HR Reports' }} />
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}>
-        <ThemedText type="small" themeColor="textSecondary">
-          Export Hiring, Onboarding, Attendance or Discipline data for any date range as PDF or Excel.
-        </ThemedText>
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: 'Reports' }} />
+      <ScrollView contentContainerStyle={{ padding: pad, paddingBottom: insets.bottom + 40, gap: 24 }}>
+        <View>
+          <ThemedText style={styles.h1}>Reports</ThemedText>
+          <ThemedText themeColor="textMuted" style={styles.subtitle}>
+            Export Hiring, Onboarding, Attendance, or Discipline data for any date range as PDF or Excel.
+          </ThemedText>
+        </View>
 
-        <GlassCard>
-          <View style={styles.row}>
-            <DateField label="From" value={from} onChange={setFrom} />
-            <DateField label="To" value={to} onChange={setTo} />
-          </View>
-          {invalidRange && (
-            <ThemedText type="small" style={styles.error}>Pick a valid range — &quot;From&quot; must not be after &quot;To&quot;.</ThemedText>
-          )}
-
-          <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Format</ThemedText>
-          <View style={styles.row}>
-            {([['pdf', 'PDF'], ['excel', 'Excel']] as const).map(([key, label]) => (
-              <Pressable
-                key={key}
-                onPress={() => setFormat(key)}
-                style={[styles.chip, { backgroundColor: format === key ? theme.primary : theme.backgroundElement }]}>
-                <ThemedText type="small" style={format === key ? styles.chipLabelActive : undefined}>{label}</ThemedText>
-              </Pressable>
+        <View style={styles.stack}>
+          <View style={styles.grid}>
+            {rows.map((row, r) => (
+              <View key={r} style={styles.gridRow}>
+                {row.map((c) => {
+                  const selected = category === c.key;
+                  return (
+                    <View key={c.key} style={styles.cell}>
+                      <Card
+                        padding="md"
+                        onPress={() => setCategory(c.key)}
+                        style={[styles.card, selected && { borderColor: theme.primary, borderWidth: 2 }]}>
+                        <ThemedText style={[styles.cardTitle, { color: selected ? theme.primary : theme.text }]}>{c.label}</ThemedText>
+                        <ThemedText themeColor="textMuted" style={styles.cardText}>{c.description}</ThemedText>
+                      </Card>
+                    </View>
+                  );
+                })}
+                {Array.from({ length: cols - row.length }).map((_, k) => <View key={`p${k}`} style={styles.cell} />)}
+              </View>
             ))}
           </View>
-        </GlassCard>
 
-        {REPORTS.map((r) => (
-          <ThemedView key={r.key} type="backgroundElement" style={styles.report}>
-            <ThemedText type="smallBold">{r.label}</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">{r.description}</ThemedText>
-            {errors[r.key] && <ThemedText type="small" style={styles.error}>{errors[r.key]}</ThemedText>}
-            <Pressable
-              onPress={() => download(r.key)}
-              disabled={invalidRange || downloading !== null}
-              style={[styles.button, (invalidRange || (downloading !== null && downloading !== r.key)) && styles.disabled]}>
-              {downloading === r.key ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <ThemedText style={styles.buttonLabel}>Download {format === 'pdf' ? 'PDF' : 'Excel'}</ThemedText>
-              )}
-            </Pressable>
-          </ThemedView>
-        ))}
+          <Card padding="lg">
+            {wide ? (
+              // One line: From | To | Download PDF | Download Excel, bottom-aligned (wraps only if the width can't fit all four).
+              <View style={styles.controlsWide}>
+                <View style={styles.dateFixed}><DateField label="From" value={from} onChange={setFrom} /></View>
+                <View style={styles.dateFixed}><DateField label="To" value={to} onChange={setTo} /></View>
+                {pdfButton(false)}
+                {excelButton(false)}
+              </View>
+            ) : (
+              <View style={styles.controlsNarrow}>
+                <View style={styles.pair}>
+                  <View style={styles.half}><DateField label="From" value={from} onChange={setFrom} /></View>
+                  <View style={styles.half}><DateField label="To" value={to} onChange={setTo} /></View>
+                </View>
+                <View style={styles.pair}>
+                  <View style={styles.half}>{pdfButton(true)}</View>
+                  <View style={styles.half}>{excelButton(true)}</View>
+                </View>
+              </View>
+            )}
+            {invalidRange ? (
+              <ThemedText style={[styles.small, styles.msg, { color: BAD }]}>Pick a valid range — &quot;From&quot; must not be after &quot;To&quot;.</ThemedText>
+            ) : null}
+            {dlMsg ? <ThemedText style={[styles.small, styles.msg, { color: dlMsg.ok ? OK : BAD }]} accessibilityRole="alert">{dlMsg.text}</ThemedText> : null}
+          </Card>
+        </View>
       </ScrollView>
-    </View>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   flex1: { flex: 1 },
-  content: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  row: { flexDirection: 'row', gap: Spacing.two },
-  fieldLabel: { marginTop: Spacing.two, marginBottom: Spacing.one },
-  input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, justifyContent: 'center' },
-  doneLink: { alignSelf: 'flex-end', paddingVertical: Spacing.one },
-  chip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.one, borderRadius: Spacing.four },
-  chipLabelActive: { color: '#ffffff', fontWeight: '600' },
-  report: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.one },
-  error: { color: '#B83030', marginTop: Spacing.one },
-  button: { marginTop: Spacing.two, height: 48, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  disabled: { opacity: 0.5 },
-  buttonLabel: { color: '#ffffff', fontWeight: '600' },
+  denied: { flex: 1, padding: 24 },
+  stack: { gap: 16 },
+  grid: { gap: 12 },
+  gridRow: { flexDirection: 'row', gap: 12 },
+  cell: { flex: 1, minWidth: 0 },
+  card: { flex: 1 },
+  h1: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold },
+  subtitle: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  body: { fontSize: 14, lineHeight: 20 },
+  small: { fontSize: 12, lineHeight: 18 },
+  cardTitle: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  cardText: { fontSize: 12, lineHeight: 18, marginTop: 4 },
+  controlsWide: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 },
+  dateFixed: { width: 160 },
+  controlsNarrow: { gap: 12 },
+  pair: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  half: { flex: 1, minWidth: 0 },
+  btn: { height: 46 },
+  msg: { marginTop: 8 },
 });

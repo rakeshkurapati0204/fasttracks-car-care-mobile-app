@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CallDetail, CallDetailModal } from '@/components/call-tracker/call-detail';
@@ -17,6 +17,7 @@ import { FontWeights, Spacing, withAlpha } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { useContentWidth } from '@/lib/drawer-context';
 import { fetchCallTrackerEntries, type CallTrackerEntry } from '@/lib/call-tracker';
 import { rangeLabel } from '@/lib/call-tracker-format';
 import { istToday } from '@/lib/overview-format';
@@ -30,7 +31,7 @@ const TWO_PANE_WIDTH = 768;
 export default function CallTrackerScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const width = useContentWidth();
   const twoPane = width >= TWO_PANE_WIDTH;
   const { user } = useAuth();
   const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');

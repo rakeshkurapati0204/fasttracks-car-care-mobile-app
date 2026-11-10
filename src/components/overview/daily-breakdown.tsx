@@ -20,10 +20,10 @@ export function DailyBreakdown({ data }: { data: DailyReport }) {
   return (
     <View style={styles.wrap}>
       <StatGrid>
-        <OverviewStat label="Revenue Collected" value={formatINR(data.revenue.collected)} color={theme.success} sub="payments received (paidAt)" />
-        <OverviewStat label="Invoiced" value={formatINR(data.revenue.invoiced)} sub="new invoices total" />
-        <OverviewStat label="Invoice Count" value={data.revenue.invoiceCount} sub="invoices created" />
-        <OverviewStat label="Job Cards" value={data.jobs.total} color={INDIGO} sub="new jobs that day" />
+        <OverviewStat compact label="Revenue Collected" value={formatINR(data.revenue.collected)} color={theme.success} sub="payments received (paidAt)" />
+        <OverviewStat compact label="Invoiced" value={formatINR(data.revenue.invoiced)} sub="new invoices total" />
+        <OverviewStat compact label="Invoice Count" value={data.revenue.invoiceCount} sub="invoices created" />
+        <OverviewStat compact label="Job Cards" value={data.jobs.total} color={INDIGO} sub="new jobs that day" />
       </StatGrid>
 
       {data.jobs.total > 0 && (

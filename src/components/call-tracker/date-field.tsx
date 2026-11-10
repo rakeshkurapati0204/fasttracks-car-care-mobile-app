@@ -13,19 +13,21 @@ type Props = {
   /** YYYY-MM-DD, or '' when no date is chosen. */
   value: string;
   onChange: (ymd: string) => void;
+  /** Dashboard filter-bar look: no label above, card background, 12px corners. */
+  compact?: boolean;
 };
 
 // Optional date filter: shows "dd/mm/yyyy" or a placeholder, opens the native
 // picker (same pattern as the Overview DateChip), and can be cleared.
-export function DateField({ label, value, onChange }: Props) {
+export function DateField({ label, value, onChange, compact }: Props) {
   const theme = useTheme();
   const [open, setOpen] = useState(false);
   const [y, m, d] = value ? value.split('-') : [];
 
   return (
     <View>
-      <ThemedText themeColor="textSecondary" style={styles.label}>{label}</ThemedText>
-      <View style={[styles.field, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      {compact ? null : <ThemedText themeColor="textSecondary" style={styles.label}>{label}</ThemedText>}
+      <View style={[styles.field, { backgroundColor: compact ? theme.backgroundElement : theme.surface, borderColor: theme.border }, compact && { borderRadius: Radii.md }]}>
         <Pressable
           onPress={() => setOpen(true)}
           accessibilityRole="button"

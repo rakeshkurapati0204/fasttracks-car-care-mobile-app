@@ -23,8 +23,51 @@ function Metric({ label, children }: { label: string; children: React.ReactNode 
 // The dashboard's AdsTable, one card per ad: Ad / campaign, Spend, Clicks,
 // Leads, Cost / lead. An ad that ran before lead capture shows — and "ran
 // before lead capture", never a made-up zero.
-export function AdsList({ rows, onDrill }: { rows: AdsRunningRow[]; onDrill?: Drill }) {
+const ADS_COLS = [
+  { label: 'Ad / campaign', flex: 4 }, { label: 'Spend', flex: 1.4, right: true }, { label: 'Clicks', flex: 1.2, right: true },
+  { label: 'Leads', flex: 1.2, right: true }, { label: 'Cost / lead', flex: 2, right: true },
+];
+
+function WideHead({ cols }: { cols: { label: string; flex: number; right?: boolean }[] }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.wtr, { borderBottomColor: theme.border }]}>
+      {cols.map((c) => (
+        <ThemedText key={c.label} themeColor="textMuted" style={[styles.wth, { flex: c.flex }, c.right && styles.wright]}>{c.label.toUpperCase()}</ThemedText>
+      ))}
+    </View>
+  );
+}
+
+export function AdsList({ rows, onDrill, wide }: { rows: AdsRunningRow[]; onDrill?: Drill; wide?: boolean }) {
+  const theme = useTheme();
   if (!rows.length) return <Empty />;
+  if (wide) {
+    return (
+      <View>
+        <WideHead cols={ADS_COLS} />
+        {rows.map((r, i) => {
+          const drillAd = r.adId ? () => onDrill?.({ ad: { id: r.adId!, name: r.adName ?? r.adId! } }) : undefined;
+          return (
+            <View key={r.adId ?? i} style={[styles.wtr, { borderBottomColor: theme.border }]}>
+              <View style={{ flex: 4, paddingHorizontal: 12, paddingVertical: 10 }}>
+                {onDrill && drillAd && (r.leads ?? 0) > 0 ? <DrillLink onPress={drillAd} bold>{r.adName ?? 'Unnamed ad'}</DrillLink> : <ThemedText style={styles.wbold}>{r.adName ?? 'Unnamed ad'}</ThemedText>}
+                <ThemedText themeColor="textMuted" style={styles.wsub}>{r.campaignName ?? '—'}</ThemedText>
+              </View>
+              <ThemedText style={[styles.wtd, styles.wcell, { flex: 1.4 }, styles.wright]}>{inr(r.spend)}</ThemedText>
+              <ThemedText style={[styles.wtd, styles.wcell, { flex: 1.2 }, styles.wright]}>{num(r.clicks)}</ThemedText>
+              <View style={[styles.wtd, { flex: 1.2, alignItems: 'flex-end' }]}>
+                {r.comparable ? (onDrill && drillAd ? <DrillLink onPress={drillAd} disabled={!r.leads}>{num(r.leads)}</DrillLink> : <ThemedText style={styles.wcell}>{num(r.leads)}</ThemedText>) : <ThemedText style={styles.wcell}>—</ThemedText>}
+              </View>
+              <View style={[styles.wtd, { flex: 2, alignItems: 'flex-end' }]}>
+                {r.comparable ? <ThemedText style={[styles.wcell, styles.wbold]}>{inr(r.costPerLead)}</ThemedText> : <ThemedText themeColor="textMuted" style={styles.wsub}>ran before lead capture</ThemedText>}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
   return (
     <View style={styles.list}>
       {rows.map((r, i) => {
@@ -62,8 +105,48 @@ export function AdsList({ rows, onDrill }: { rows: AdsRunningRow[]; onDrill?: Dr
 
 // The dashboard's LeadTable, one card per lead: Lead / vehicle (+ grade), Source,
 // Received · IST, Accepted by, Latest recorded remark.
-export function LeadList({ rows }: { rows: AdLead[] }) {
+const LEAD_COLS = [
+  { label: 'Lead / vehicle', flex: 3.2 }, { label: 'Source', flex: 1.6 }, { label: 'Received · IST', flex: 1.6 },
+  { label: 'Accepted by', flex: 2.2 }, { label: 'Latest recorded remark', flex: 3 },
+];
+
+export function LeadList({ rows, wide }: { rows: AdLead[]; wide?: boolean }) {
+  const theme = useTheme();
   if (!rows.length) return <Empty />;
+  if (wide) {
+    return (
+      <View>
+        <WideHead cols={LEAD_COLS} />
+        {rows.map((l) => (
+          <View key={l.id} style={[styles.wtr, { borderBottomColor: theme.border, alignItems: 'flex-start' }]}>
+            <View style={{ flex: 3.2, paddingHorizontal: 12, paddingVertical: 10, gap: 2 }}>
+              <View style={styles.leadHead}>
+                <ThemedText numberOfLines={1} style={[styles.wbold, styles.flex1]}>{l.name?.trim() || 'Not recorded'}</ThemedText>
+                <TierChip tier={l.tier} />
+              </View>
+              <ThemedText themeColor="textMuted" style={styles.wsub}>{[l.vehicle, l.service].filter(Boolean).join(' · ') || 'Not recorded'}</ThemedText>
+            </View>
+            <View style={[styles.wtd, { flex: 1.6 }]}><SourceChip paid={l.isPaid} /></View>
+            <View style={[styles.wtd, { flex: 1.6 }]}>
+              <ThemedText style={styles.wcell}>{dayLabel(l.arrivedAt.slice(0, 10))}</ThemedText>
+              <ThemedText themeColor="textMuted" style={styles.wsub}>{clock(l.arrivedAt)}</ThemedText>
+            </View>
+            <View style={[styles.wtd, { flex: 2.2 }]}>
+              {l.seenBy ? (
+                <>
+                  <ThemedText style={styles.wbold}>{l.seenBy}</ThemedText>
+                  <ThemedText themeColor="textMuted" style={styles.wsub}>{(l.seenAt ? 'Accepted at ' + clock(l.seenAt) : 'Time not recorded') + (l.responseSec != null ? ' · ' + dur(l.responseSec) : '')}</ThemedText>
+                </>
+              ) : <ThemedText themeColor="textMuted" style={styles.wsub}>Not accepted</ThemedText>}
+            </View>
+            <View style={[styles.wtd, { flex: 3 }]}>
+              {l.remark ? <ThemedText style={styles.wcell}>{l.remark}</ThemedText> : <ThemedText themeColor="textMuted" style={styles.wcell}>No remark recorded</ThemedText>}
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  }
   return (
     <View style={styles.list}>
       {rows.map((l) => (
@@ -178,6 +261,13 @@ export function TeamTable({ owners, accepted, onDrill }: { owners: AdsOwnerRow[]
 }
 
 const styles = StyleSheet.create({
+  wtr: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1 },
+  wth: { paddingHorizontal: 12, paddingVertical: 8, fontSize: 11, fontWeight: '700', letterSpacing: 1.2 },
+  wtd: { paddingHorizontal: 12, paddingVertical: 10, minWidth: 0 },
+  wcell: { fontSize: 13, lineHeight: 18 },
+  wbold: { fontSize: 13, lineHeight: 18, fontWeight: '600' },
+  wsub: { fontSize: 11.5, lineHeight: 16 },
+  wright: { textAlign: 'right' },
   flex1: { flex: 1 },
   list: { gap: Spacing.two },
   card: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.one },

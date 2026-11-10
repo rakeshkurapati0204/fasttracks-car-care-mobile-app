@@ -8,6 +8,8 @@ export interface AuthUser {
   monthlySalary?: number | null;
   salaryType?: string | null;
   joiningDate?: string | null;
+  /** Set by POST /auth/login (and cleared once the password is changed) — see src/app/index.tsx. */
+  mustChangePassword?: boolean;
 }
 
 export interface LoginResponse {
@@ -45,6 +47,7 @@ export interface ConversationMessage {
   content: string;
   createdAt: string;
   deliveryStatus?: string | null;
+  deliveryError?: string | null;
 }
 
 export interface Conversation {
@@ -57,6 +60,8 @@ export interface Conversation {
   lastMessageAt: string | null;
   assignedTo: { id: string; name: string; username: string } | null;
   messages: ConversationMessage[];
+  lastCustomerMessageAt?: string | null;
+  businessPhoneNumberId?: string | null;
 }
 
 export type TaskStatus = 'PENDING' | 'ONGOING' | 'COMPLETED' | 'CANCELLED';
@@ -369,7 +374,7 @@ export interface TeamChatMember {
   id: string;
   userId: string;
   lastReadAt: string | null;
-  user: { id: string; name: string; phone: string | null; designation: string | null };
+  user: { id: string; name: string; phone: string | null; designation: string | null; role?: string };
 }
 
 // Server soft-deletes (deleted:true, content/mediaUrl/mediaType scrubbed to
@@ -394,6 +399,8 @@ export interface TeamChatMessage {
   content: string | null;
   mediaUrl: string | null;
   mediaType: string | null;
+  /** A document's original file name (the server also fills it from the url's #name=). */
+  mediaName?: string | null;
   sentAt: string;
   sender: { id: string; name: string };
   deleted?: boolean;
@@ -419,6 +426,19 @@ export interface TeamChat {
   // viewer-specific state on each returned chat.
   pinnedAt?: string | null;
 }
+
+// POST /team-chat/upload — documents come back as type 'file' with the original name in the url's #name=.
+export interface TeamChatUpload {
+  url: string;
+  type: 'image' | 'audio' | 'file';
+  mimeType: string;
+  fileName?: string;
+  name?: string;
+  size?: number;
+}
+
+export interface TeamChatForwardResult { chatId: string; message: TeamChatMessage }
+export interface TeamChatLeaveResult { outcome: string; newAdminId?: string | null }
 
 export interface TeamChatEmployee {
   id: string;
@@ -833,6 +853,9 @@ export interface ExpenseSummary {
   byDay: ExpenseSummaryByDay[];
 }
 
+// GET /employees/mentionable — the @-tag autocomplete list (any signed-in user).
+export interface MentionableUser { id: string; name: string; role: string }
+
 // Extract/bulk-import — added 2026-09-24, closing the gap flagged when
 // Expenses' core submit/approve flow was built earlier this pass. Neither
 // /extract nor /extract-statement ever persists anything — pure read, the
@@ -974,6 +997,8 @@ export interface CallInitiateResult {
 }
 
 export interface PayrollResult {
+  // Not returned by every backend build (the dashboard reads it defensively).
+  totalAdvanceDeduction?: number;
   userId?: string;
   userName?: string;
   designation?: string | null;
@@ -3209,4 +3234,1015 @@ export interface CustomerStatsReport {
     total: number;
     byEmployee: { name: string; employeeId: string | null; walkouts: number; totalJobs: number; walkoutRate: number }[];
   };
+}
+
+// ── Customers & Jobs (dashboard customers/page.tsx parity) ───────────────────
+export type BoardStage = 'CREATED' | 'QUOTED' | 'HANDED_OVER' | 'COLLECTED' | 'WALKED_OUT';
+
+export interface CjJobInvoice {
+  id: string;
+  invoiceNumber: string;
+  grandTotal: number;
+  balanceDue?: number;
+  status: string;
+}
+
+// GET /job-cards/active and GET /job-cards/board (raw JSON arrays).
+export interface CjJobCard {
+  id: string;
+  jobNumber: string;
+  vehicleNumber: string;
+  reasonForVisit: string;
+  status: JobCardStatus;
+  createdAt: string;
+  invoiceId?: string | null;
+  invoice?: CjJobInvoice | null;
+  walkoutReason?: string | null;
+  walkoutNote?: string | null;
+  customerRole?: 'OWNER' | 'DRIVER' | null;
+  customer: { id: string; name: string; phone: string };
+  vehicle?: { id: string; vehicleNumber: string; make?: string | null; model?: string | null } | null;
+  handledBy: { id: string; name: string; role?: string };
+  mediaCount?: number;
+  boardStage: BoardStage;
+  boardWalkoutReason?: string | null;
+  boardWalkoutRemarks?: string | null;
+}
+
+// GET /employees/handled-by — any logged-in user.
+export interface HandledByEmployee {
+  id: string;
+  name: string;
+  role: string;
+}
+
+// GET /crm/customers (paged, searchBy name|phone|vehicleNumber|vehicleModel).
+export type CrmSearchBy = 'name' | 'phone' | 'vehicleNumber' | 'vehicleModel';
+
+export interface CrmCustomerRow {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string | null;
+  source?: string | null;
+  isRegular: boolean;
+  visitCount: number;
+  isActive: boolean;
+  createdAt: string;
+  totalSpent?: number;
+  invoiceCount?: number;
+  vehicles: { id: string; vehicleNumber: string; make?: string | null; model?: string | null; isActive: boolean }[];
+  crmInvoices: { id: string; invoiceNumber: string; grandTotal: number; paidAmount?: number; status: string; createdAt: string }[];
+}
+
+export interface CrmCustomerPage {
+  customers: CrmCustomerRow[];
+  total: number;
+}
+
+export interface CrmVisitJobCard {
+  id: string;
+  jobNumber: string;
+  vehicleNumber: string;
+  reasonForVisit: string;
+  status: JobCardStatus;
+  createdAt: string;
+  invoiceId?: string | null;
+  walkoutReason?: string | null;
+  walkoutNote?: string | null;
+  estimatedTotal?: number | null;
+  handledBy: { id: string; name: string; designation?: string | null };
+  vehicle?: { vehicleNumber: string; make?: string | null; model?: string | null; year?: string | null } | null;
+  invoice?: { id: string; invoiceNumber: string; grandTotal: number; paidAmount: number; balanceDue: number; status: string } | null;
+}
+
+export interface CrmInteraction {
+  id: string;
+  description: string;
+  createdAt: string;
+  createdBy: { id: string; name: string };
+  jobCard?: { id: string; jobNumber: string; vehicleNumber: string; reasonForVisit: string } | null;
+  quotes: { amount: string; sortOrder: number }[];
+}
+
+// GET /crm/customers/:id — only the parts the panel reads.
+export interface CrmCustomerDetail {
+  jobCards: CrmVisitJobCard[];
+  interactions: CrmInteraction[];
+}
+
+// ── Team page (dashboard employees/page.tsx) ─────────────────────────────────
+// GET /employees returns more than EmployeeListItem declares: the card shows
+// branch and monthly salary, and the edit sheet pre-fills the rest. salary
+// fields are stripped server-side for callers who aren't salary-authorized.
+export interface EmployeeCardItem {
+  id: string;
+  name: string;
+  username: string;
+  role: string;
+  phone: string | null;
+  designation: string | null;
+  isActive: boolean;
+  monthlySalary?: number | null;
+  salaryType?: string | null;
+  joiningDate?: string | null;
+  deviceUserId?: string | null;
+  email?: string | null;
+  branch?: string | null;
+  personalEmail?: string | null;
+}
+
+// ── Employee detail panel, Overview tab (dashboard EmployeeDetailPanel) ─────
+// GET /employees/:id/analytics (nested shape; the panel flattens it).
+export interface EmployeeAnalyticsRaw {
+  jobs?: { thisMonth?: number };
+  financial?: { revenueGenerated?: number; averageDealSize?: number };
+  performance?: { conversionRate?: number; walkOutRate?: number; mostCommonService?: string | null };
+  attendance?: { present?: number; late?: number; absent?: number; halfDay?: number };
+}
+
+// GET /employees/:id/performance-chart — last six months.
+export interface EmployeePerformancePoint {
+  month: string;
+  label: string;
+  jobCount: number;
+  revenue: number;
+}
+
+// GET /attendance/punches — "interpretation" says which scan counted as the clock-in/out.
+export interface EmployeePunch {
+  id: string;
+  direction: string;
+  time: string;
+  interpretation?: 'CLOCK_IN' | 'CLOCK_OUT' | 'IGNORED';
+}
+
+// ── Applications page (dashboard applications/page.tsx) ─────────────────────
+// The list endpoint returns more than Application declares; these are the
+// extra fields the dashboard's row and detail view read.
+export interface ApplicationQuestionAnswers {
+  whyJoin?: string;
+  experience?: string;
+  expectedSalary?: string;
+  noticePeriod?: string;
+  preferredLocation?: string;
+  skills?: string;
+  additionalInfo?: string;
+}
+
+export interface ApplicationRowExtras extends ApplicationPhase2Extras {
+  hasAadhaar?: boolean;
+  aadhaarSelfDeclared?: boolean;
+  aadhaarSelfDeclaredAt?: string | null;
+  candidateQuestionAnswers?: ApplicationQuestionAnswers | null;
+  convertedUser?: { onboardingStatus?: string | null; _count: { onboardingInvitesReceived: number } } | null;
+  aiInterviewCompletedAt?: string | null;
+  aiAssignmentCompletedAt?: string | null;
+}
+
+export type ApplicationRowData = Application & ApplicationRowExtras;
+
+/** Fields the New / Edit Application form sends (dashboard ApplicationFormFields). */
+export interface ApplicationFormInput {
+  name: string;
+  email?: string;
+  phone?: string;
+  roleApplied: string;
+  department?: string;
+  notes?: string;
+  dateOfBirth?: string;
+  currentAddress?: string;
+  permanentAddress?: string;
+  fresher: boolean;
+}
+
+/** POST /applications/:id/status-email */
+export interface ApplicationStatusEmailResult {
+  emailSent: boolean;
+  sentTo: string | null;
+  hasEmail?: boolean;
+}
+
+// ── Applications Phase 2 (dashboard applications/page.tsx panels) ───────────
+export interface CompetencyScoreEntry {
+  competencyId: string;
+  name: string;
+  weightage: number;
+  score: number;
+  rationale?: string;
+  /** ARIA only: false when the interview ended before this competency was reached. */
+  covered?: boolean;
+  /** ARIA only: false when every reply was a non-answer. */
+  answered?: boolean;
+}
+
+// Interview / assignment scorecard (backend lib/aiInterview.ts, ariaInterview.ts, aiAssignment.ts).
+export interface AiFullScorecard {
+  competencyScores: CompetencyScoreEntry[];
+  weightedOverallScore: number;
+  /** ARIA only. 0 means "Not enough data". */
+  answeredCount?: number;
+  totalCompetencies?: number;
+  flaggedForReview: boolean;
+  flagReason: string | null;
+  modelUsed: string;
+}
+
+export interface AriaTranscriptTurn {
+  turnIndex: number;
+  role: 'aria' | 'candidate';
+  kind: 'intro' | 'question' | 'followup' | 'reprompt' | 'closing' | 'answer';
+  text: string;
+  competencyId?: string;
+  isEmpty?: boolean;
+  isRepeatRequest?: boolean;
+  isSkip?: boolean;
+  isNonAnswer?: boolean;
+  sttConfidence?: number;
+  answerAudioBlobName?: string;
+  timestamp: string;
+}
+
+export interface AriaProctoringEvent {
+  type: 'VIOLATION' | 'COPY_ATTEMPT' | 'PASTE_ATTEMPT';
+  reason?: string;
+  at: string;
+}
+
+// One INTERVIEW-type invite (an Aria session), most recent first on Application.interviewInvites.
+export interface AiInterviewInviteFull {
+  id: string;
+  engine: 'LEGACY' | 'ARIA';
+  transcript: AriaTranscriptTurn[] | null;
+  status: 'PENDING' | 'USED' | 'REVOKED' | 'EXPIRED';
+  terminationReason: string | null;
+  createdAt: string;
+  usedAt: string | null;
+  proctoringEvents: AriaProctoringEvent[] | null;
+  scorecard: AiFullScorecard | null;
+  cameraRecordingBlobName?: string | null;
+  screenRecordingBlobName?: string | null;
+}
+
+export interface CandidateActivity {
+  tabSwitches?: { leftAt: string; returnedAt?: string }[];
+  largePastes?: { competencyId: string; chars: number; at: string }[];
+  autoSubmitted?: boolean;
+}
+
+export interface CompetencyTaskItem {
+  competencyId: string;
+  competencyName: string;
+}
+
+export interface ApplicationPhase2Extras {
+  interviewInvites?: AiInterviewInviteFull[];
+  aiInterviewScorecard?: AiFullScorecard | null;
+  aiAssignmentScorecard?: AiFullScorecard | null;
+  aiInterviewActivity?: CandidateActivity | null;
+  aiAssignmentActivity?: CandidateActivity | null;
+  aiInterviewQuestions?: CompetencyTaskItem[] | null;
+  aiAssignmentTasks?: CompetencyTaskItem[] | null;
+  hasDraftQuestions?: boolean;
+  hasSentAssessmentInvite?: boolean;
+}
+
+export interface PracticalScorecard {
+  questionScores: { questionId: string; questionText: string; score: number; rationale: string }[];
+  overallScore: number;
+  flaggedForReview: boolean;
+  flagReason: string | null;
+  modelUsed: string;
+}
+
+// GET /:id/practical-questions in full: questions + the AI scorecard + sent-assessment recordings.
+export interface PracticalQuestionsFull {
+  questions: PracticalQuestion[];
+  scorecard: PracticalScorecard | null;
+  recordings?: { id: string; createdAt: string; usedAt: string | null }[];
+}
+
+// GET /applications/compare rows with the full scorecards the compare table breaks down.
+export interface CompareCandidateFull {
+  id: string;
+  name: string;
+  status: ApplicationStatus;
+  aiScreeningResult: AiScreeningResult | null;
+  aiScreenedAt: string | null;
+  aiInterviewScorecard: AiFullScorecard | null;
+  aiInterviewCompletedAt: string | null;
+  aiAssignmentScorecard: AiFullScorecard | null;
+  aiAssignmentCompletedAt: string | null;
+  createdAt: string;
+  interviewInvites: { engine: 'LEGACY' | 'ARIA'; status: string; terminationReason: string | null; proctoringEvents: AriaProctoringEvent[] | null; createdAt: string }[];
+}
+
+export interface HrChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+// ── Onboarding page (dashboard onboarding/page.tsx): Overview, Letters, candidates ──
+export type OnboardingStatus = 'INVITED' | 'IN_PROGRESS' | 'SUBMITTED' | 'HR_REVIEW' | 'APPROVED' | 'REJECTED';
+export type HRLetterType = 'OFFER' | 'EXPERIENCE' | 'RELIEVING' | 'LETTER_OF_INTENT' | 'LETTER_OF_ONBOARDING';
+
+// GET /employees rows as the Letters picker reads them (same endpoint as EmployeeListItem).
+export interface OnboardingEmployee {
+  id: string;
+  name: string;
+  employeeId: string | null;
+  role: string;
+  isActive: boolean;
+  designation?: string | null;
+  joiningDate?: string | null;
+  department?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  personalPhone?: string | null;
+  emergencyContactPhone?: string | null;
+}
+
+export interface Candidate {
+  id: string;
+  name: string;
+  personalEmail?: string | null;
+  personalPhone?: string | null;
+  department?: string | null;
+  address?: string | null;
+  emergencyContactPhone?: string | null;
+  onboardingStatus: OnboardingStatus;
+  isActive: boolean;
+  createdAt: string;
+  daysSinceInvited?: number | null;
+  overdue?: boolean;
+}
+
+export type CandidateOverviewMetric = 'inPipeline' | 'pendingVerification' | 'rejectedAwaitingReupload' | 'overdue';
+
+export interface CandidateOverviewCounts {
+  inPipeline: number;
+  pendingVerification: number;
+  rejectedAwaitingReupload: number;
+  overdue: number;
+}
+
+export interface CandidateOverviewListItem {
+  id: string;
+  name: string;
+  personalEmail: string | null;
+  personalPhone: string | null;
+  onboardingStatus: OnboardingStatus;
+  createdAt: string;
+  daysWaiting: number | null;
+  waitingOn: 'candidate' | 'hr';
+  rejectedDocuments: string[];
+}
+
+export interface IssuedLetterSummary {
+  id: string;
+  userId: string;
+  type: HRLetterType;
+  issuedAt: string;
+  user: { id: string; name: string; employeeId: string | null };
+  issuedBy: { id: string; name: string };
+}
+
+export interface HRLetter {
+  id: string;
+  userId: string;
+  type: HRLetterType;
+  issuedAt: string;
+  issuedBy: { id: string; name: string };
+  letterInvite?: { inviteLink: string; expiresAt: string; emailSent: boolean } | null;
+}
+
+export type OnboardingInviteStatus = 'PENDING' | 'USED' | 'REVOKED' | 'EXPIRED';
+
+export interface OnboardingInviteStatusInfo {
+  id: string;
+  status: OnboardingInviteStatus;
+  expiresAt: string;
+  createdAt: string;
+  usedAt?: string | null;
+}
+
+export interface OnboardingInviteResult {
+  inviteLink: string;
+  expiresAt: string;
+  emailSent: boolean;
+  sentTo: string | null;
+  hasEmail: boolean;
+}
+
+// Pre-Joining Terms: only what the Letters prefill reads.
+export interface PreJoiningTermsLite {
+  status: string;
+  monthlySalary?: number | null;
+  employmentType?: string | null;
+  jobLocation?: string | null;
+  dateOfJoining?: string | null;
+  probationMonths?: number | null;
+}
+
+export type ProbationMilestone = 'DAY_7' | 'DAY_30' | 'DAY_60' | 'DAY_90';
+export type ProbationCheckInStatus = 'OVERDUE' | 'DUE_SOON' | 'COMPLETED' | 'NOT_YET_DUE';
+
+export interface ProbationCheckIn {
+  userId: string;
+  employee: { id: string; name: string; employeeId?: string | null; designation?: string | null };
+  reportingManager?: { id: string; name: string } | null;
+  milestone: ProbationMilestone;
+  dueDate: string;
+  status: ProbationCheckInStatus;
+}
+
+// ── Onboarding Phase 2: Employment, Pre-Joining Terms, Documents, Discipline, Check-ins ──
+export type EmploymentType = 'FULL_TIME' | 'PART_TIME' | 'CONTRACT' | 'INTERN';
+export type EmploymentStatus = 'PROBATION' | 'CONFIRMED' | 'NOTICE_PERIOD' | 'EXITED';
+
+export interface EducationEntry {
+  qualification: string;
+  institution: string;
+  yearOfPassing: number;
+  score?: string;
+}
+
+export interface WorkExperienceEntry {
+  company: string;
+  designation: string;
+  /** YYYY-MM */
+  fromDate: string;
+  /** YYYY-MM; absent = still working there */
+  toDate?: string;
+  reasonForLeaving?: string;
+}
+
+// GET /hr/employment/:userId
+export interface EmploymentDetails {
+  id: string;
+  designation?: string | null;
+  department?: string | null;
+  branch?: string | null;
+  joiningDate?: string | null;
+  employmentType?: EmploymentType | null;
+  employmentStatus?: EmploymentStatus | null;
+  probationEndDate?: string | null;
+  reportingManagerId?: string | null;
+  coreResponsibilities?: string | null;
+  emergencyContactName?: string | null;
+  emergencyContactRelationship?: string | null;
+  emergencyContactPhone?: string | null;
+  educationDetails?: EducationEntry[] | null;
+  workExperience?: WorkExperienceEntry[] | null;
+  passportPlaceOfIssue?: string | null;
+  passportExpiryDate?: string | null;
+}
+
+export interface EmploymentUpdate {
+  designation: string | null;
+  department: string | null;
+  branch: string | null;
+  joiningDate: string | null;
+  employmentType: EmploymentType | null;
+  employmentStatus: EmploymentStatus | null;
+  probationEndDate: string | null;
+  reportingManagerId: string | null;
+  coreResponsibilities: string | null;
+  emergencyContactName: string | null;
+  emergencyContactRelationship: string | null;
+  emergencyContactPhone: string | null;
+}
+
+export type PreJoiningTermsStatus = 'DRAFT' | 'APPROVED';
+
+export interface PreJoiningTerms {
+  id: string;
+  userId: string;
+  status: PreJoiningTermsStatus;
+  monthlySalary?: number | null;
+  salaryType?: string | null;
+  employmentType?: EmploymentType | null;
+  jobLocation?: string | null;
+  dateOfJoining?: string | null;
+  probationMonths?: number | null;
+  workingHours?: string | null;
+  roster?: string | null;
+  approvedBy?: { id: string; name: string } | null;
+  approvedAt?: string | null;
+}
+
+export interface PreJoiningTermsInput {
+  monthlySalary: string | null;
+  salaryType: string | null;
+  employmentType: EmploymentType | null;
+  jobLocation: string | null;
+  dateOfJoining: string | null;
+  probationMonths: string | null;
+  workingHours: string | null;
+  roster: string | null;
+}
+
+export type IdentityDocumentStatus = 'PENDING' | 'VERIFIED' | 'REJECTED';
+
+// GET /identity-documents/:userId and the cross-employee queue (HR view).
+export interface OnboardingDocument {
+  id: string;
+  type: IdentityDocType;
+  label?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  fileSize?: number | null;
+  createdAt: string;
+  status: IdentityDocumentStatus;
+  verifiedAt?: string | null;
+  rejectionReason?: string | null;
+  hasValue: boolean;
+  maskedValue?: string | null;
+  bankIfsc?: string | null;
+  bankBranch?: string | null;
+  uploadedBy: { id: string; name: string };
+  verifiedBy?: { id: string; name: string } | null;
+  user?: { id: string; name: string; employeeId?: string | null; designation?: string | null };
+}
+
+export interface CandidateVerificationQueueItem extends Candidate {
+  documentsSummary: { required: number; verified: number; pending: number; missing: number; rejectedTypes: string[] };
+  daysSinceStatusChange: number;
+}
+
+export type DisciplineRecordType = 'WARNING' | 'POLICY_ACKNOWLEDGEMENT' | 'DISCIPLINARY_ACTION' | 'OTHER';
+
+export interface DisciplineRecord {
+  id: string;
+  type: DisciplineRecordType;
+  description: string;
+  date: string;
+  issuedBy: { id: string; name: string };
+}
+
+export interface ProbationCheckInDetail extends ProbationCheckIn {
+  rating?: number | null;
+  notes?: string | null;
+  completedAt?: string | null;
+}
+
+// ── Tasks page: Daily Tasks with proof (dashboard my-tasks) ──
+export type RecurringTaskProof = 'NONE' | 'PHOTO' | 'NOTE_PHOTO';
+
+// GET /recurring-tasks/my-current rows carry the proof requirement too (lifted
+// from the definition by the API).
+export interface DailyTaskCompletion extends RecurringTaskCompletion {
+  definition: RecurringTaskCompletion['definition'] & { proof?: RecurringTaskProof; proofLabel?: string | null };
+  proof?: RecurringTaskProof;
+  proofLabel?: string | null;
+}
+
+// ── Purchase page (dashboard accounting/page.tsx): ledger detail rows ──
+export interface PurchaseVoucherItemRow {
+  id: string; description: string; quantity: string; rate: string; amount: string;
+}
+
+// A debit note nested under a purchase voucher (the over-return check) or one
+// row of the ledger-wide `debitNotes` history (any status, incl. superseded).
+export interface PurchaseDebitNoteRow {
+  id: string; voucherNumber: string; voucherDate: string; totalAmount: string; status: string; narration: string | null;
+  purchaseVoucherId: string;
+  purchaseVoucher?: { id: string; voucherNumber: string };
+  replacementPurchaseVoucherId: string | null;
+  replacementPurchaseVoucher: { id: string; voucherNumber: string } | null;
+  items: { id: string; purchaseVoucherItemId: string; returnedQuantity: string; amount: string }[];
+  supersededById?: string | null;
+  supersededBy?: { id: string; voucherNumber: string } | null;
+  supersedes?: { id: string; voucherNumber: string } | null;
+}
+
+export interface PurchaseVoucherRow {
+  id: string; voucherNumber: string; voucherDate: string; totalAmount: string; status: string; outstanding: string;
+  narration: string | null;
+  transporterName: string | null;
+  purchaseOrder: { id: string; status: string; totalAmount: number; supplierId: string } | null;
+  allocations: { paymentVoucher: { voucherNumber: string } }[];
+  items: PurchaseVoucherItemRow[];
+  debitNotesAsSource: PurchaseDebitNoteRow[];
+  debitNotesAsReplacement: PurchaseDebitNoteRow[];
+  supersededById?: string | null;
+  supersededBy?: { id: string; voucherNumber: string } | null;
+  supersedes?: { id: string; voucherNumber: string } | null;
+}
+
+export interface PaymentVoucherRow {
+  id: string; ledgerId: string; voucherNumber: string; voucherType: string; voucherDate: string; totalAmount: string;
+  bankAccountId: string | null; narration: string | null; status: string; available: string;
+  allocations: { id: string; purchaseVoucherId: string; amountAllocated: string; purchaseVoucher: { id: string; voucherNumber: string } }[];
+  supersededById: string | null;
+  supersededBy: { id: string; voucherNumber: string } | null;
+  supersedes: { id: string; voucherNumber: string } | null;
+}
+
+export interface PurchaseLedgerDetail {
+  ledger: {
+    id: string; name: string; gstin: string | null; phone: string | null; email: string | null; address: string | null; isActive: boolean;
+    partyType: 'SUPPLIER' | 'TRANSPORTER' | null;
+  };
+  balance: string;
+  purchaseVouchers: PurchaseVoucherRow[];
+  paymentVouchers: PaymentVoucherRow[];
+  debitNotes: PurchaseDebitNoteRow[];
+}
+
+export interface EditPurchaseVoucherInput {
+  editReason: string;
+  voucherNumber?: string;
+  voucherDate: string;
+  narration?: string;
+  transporterName?: string;
+  purchaseOrderId?: string;
+  items: { description: string; quantity?: number; rate: number; amount: number }[];
+}
+
+export interface EditPaymentVoucherInput {
+  editReason: string;
+  ledgerId: string;
+  voucherType: 'PAYMENT' | 'RECEIPT';
+  voucherNumber?: string;
+  voucherDate: string;
+  totalAmount: number;
+  bankAccountId?: string;
+  narration?: string;
+  // Omitted = keep the current allocation set; [] = clear it.
+  allocations?: { purchaseVoucherId: string; amount: number }[];
+}
+
+export interface EditDebitNoteInput {
+  editReason: string;
+  purchaseVoucherId: string;
+  replacementPurchaseVoucherId?: string;
+  voucherNumber?: string;
+  voucherDate: string;
+  narration?: string;
+  items: { purchaseVoucherItemId: string; returnedQuantity: number; amount: number }[];
+}
+
+// Payroll page: a salary payment with the breakdown parsed from its JSON note.
+// Payments made before the breakdown existed (note null / plain text) come back
+// with grossSalary null, and the row then falls back to the live figures.
+export interface SalaryPaymentWithBreakdown {
+  id: string;
+  userId: string;
+  amount: number;
+  mode: string | null;
+  paidAt: string;
+  paidBy: { name: string } | null;
+  grossSalary: number | null;
+  attendanceDeduction: number;
+  advanceDeduction: number | null;
+  advanceSkipped: boolean;
+  loanDeduction: number | null;
+  netPayable: number | null;
+}
+
+// ── Conversations page (dashboard conversations/page.tsx) ──
+export interface ConversationListParams {
+  category?: string;
+  status?: string;
+  search?: string;
+  staffPhoneNumberId?: string;
+}
+
+export interface ConversationStats {
+  total: number;
+  active: number;
+  waiting: number;
+  highValue: number;
+  byCategory: Record<ConversationCategory, number>;
+}
+
+export interface StaffPhoneNumberRow {
+  id: string;
+  phoneNumberId: string;
+  displayPhone: string | null;
+  label: string | null;
+  employee?: { id: string; name: string } | null;
+  employeeId?: string | null;
+}
+
+// ── Conversations Phase 2: call recordings, new conversation, staff numbers ──
+// GET /call-recordings?conversationId= (OWNER / STORE_MANAGER only).
+export interface ConversationCallRecording {
+  id: string;
+  conversationId: string | null;
+  callerPhone: string;
+  audioUrl: string;
+  durationSecs: number | null;
+  callTimestamp: string;
+  transcriptText: string | null;
+  transcriptStatus: TranscriptStatus;
+}
+
+// GET /call-recordings/my-summary: no audio URL and no transcript, by design.
+export interface ConversationCallSummary {
+  id: string;
+  callTimestamp: string;
+  durationSecs: number | null;
+  customerName: string;
+  summary: string;
+  source: string;
+}
+
+export interface CreateConversationInput {
+  customerName: string;
+  customerPhone: string;
+  assignedToId: string;
+  category: ConversationCategory;
+}
+
+// One number on the WhatsApp Business Account (GET /staff-phone-numbers/waba-numbers).
+export interface WabaNumber {
+  id: string;
+  display_phone_number: string;
+  verified_name: string;
+  status: string;
+  quality_rating: string;
+}
+
+// ── Inventory page (dashboard parity) ───────────────────────────────────────
+// GET /inventory-items (list) — every row carries totalStock and the derived
+// effectiveStatus (computeEffectiveStatus in inventory_items_route.ts), plus
+// its receipts with the last reconciliation attached.
+export type InventoryEffectiveStatus = 'ACTIVE' | 'OUT_OF_STOCK' | 'EXPIRED' | 'DISCONTINUED';
+
+export interface InventoryListReceipt extends StockReceipt {
+  lastReconciliation?: { reconciledAt: string; difference: number; user?: { name: string } | null } | null;
+}
+
+export interface InventoryListItem {
+  id: string;
+  product: string;
+  category: string;
+  unit: string;
+  status: string;
+  effectiveStatus: InventoryEffectiveStatus;
+  totalStock?: number;
+  sellingPrice?: number | null;
+  incentiveValue?: number | null;
+  compatibility?: string | null;
+  warranty?: string | null;
+  notes?: string | null;
+  storeLocation?: string | null;
+  imageUrls?: string[];
+  lastVerifiedAt?: string | null;
+  lastVerifiedCount?: number | null;
+  receipts?: InventoryListReceipt[];
+  createdAt: string;
+}
+
+export interface InventoryListParams {
+  category?: string;
+  status?: string;
+  q?: string;
+}
+
+// GET /inventory-items/check-seller-match → { receiptId, barcode, quantityReceived, sellerName } | null
+export interface SellerMatch {
+  receiptId: string;
+  barcode: string;
+  quantityReceived: number;
+  sellerName: string;
+}
+
+// GET /inventory-items/lookup-barcode → { itemName, receiptId?, remainingQty? }
+export interface BarcodeLookup {
+  itemName: string;
+  receiptId?: string;
+  remainingQty?: number;
+}
+
+// ── Accounts page: the reminder fields the dashboard reads beyond PaymentReminder ──
+export interface PaymentReminderFull extends PaymentReminder {
+  bankAccountId: string | null;
+  paymentMethod: string | null;
+  accountReference: string | null;
+  paidBy: { id: string; name: string } | null;
+  receiptUrl: string | null;
+}
+
+// ── Quotations, dashboard parity (quotations/page.tsx, new/page.tsx, [id]/print/page.tsx) ──
+// GET /quotations/:id as the dashboard reads it: the raw row plus the supplier block and per-line GST
+// that the route adds for the print page.
+export interface QuotationFullLineItem {
+  id: string;
+  description: string;
+  hsnSacCode: string | null;
+  quantity: number;
+  unitPrice: number;
+  discountPct: number;
+  discountAmount?: number;
+  discountMode?: 'PERCENT' | 'FIXED';
+  amount: number;
+  sortOrder: number;
+  gstPercent?: number;
+  inventoryItemId?: string | null;
+  sku?: string | null;
+  erpItemId?: string | null;
+}
+
+export interface QuotationFull {
+  id: string;
+  quotationNumber: string;
+  status: QuotationStatus;
+  createdAt: string;
+  validUntil: string | null;
+  companyName: string;
+  companyAddress: string;
+  companyCity: string;
+  companyState: string;
+  companyPin: string;
+  companyGstin: string;
+  companyStateCode: string;
+  companyPhone: string;
+  companyEmail: string;
+  customerName: string;
+  customerPhone: string | null;
+  customerEmail: string | null;
+  customerAddress: string | null;
+  customerGSTIN: string | null;
+  vehicleNumber: string | null;
+  vehicleBrand: string | null;
+  vehicleModel: string | null;
+  vehicleYear: string | number | null;
+  vehicleColour: string | null;
+  subtotal: number;
+  discountAmount: number;
+  overallDiscountAmount?: number;
+  overallDiscountMode?: string;
+  gstRate?: number;
+  cgstRate: number;
+  cgstAmount: number;
+  sgstRate: number;
+  sgstAmount: number;
+  roundOff: number;
+  grandTotal: number;
+  notes: string | null;
+  termsConditions: string | null;
+  lineItems: QuotationFullLineItem[];
+  createdBy: { id: string; name: string; username: string } | null;
+  salesperson: { id: string; name: string; phone: string | null } | null;
+}
+
+export interface QuotationStaffOption { id: string; name: string; phone: string | null }
+
+export interface QuotationItemSearchResult {
+  id: string;
+  name: string;
+  quantity?: number;
+  unit?: string;
+  sellingPrice?: number;
+  gstApplicable?: boolean;
+  gstPercent?: number;
+}
+
+export interface QuotationGstData {
+  tradeName?: string; legalName?: string; businessName?: string; address?: string; stateName?: string;
+  gstinStatus?: string; taxPayerType?: string; dateOfRegistration?: string; isActive?: boolean;
+}
+
+export interface QuotationVehicleData { make?: string; model?: string; year?: string | number; fuelType?: string }
+
+// ── Devices, dashboard parity (devices/page.tsx, alerts, location, policies) ──
+export interface DeviceFull {
+  id: string;
+  deviceName: string;
+  deviceType: 'WINDOWS' | 'ANDROID' | 'IOS' | 'MAC';
+  deviceModel?: string | null;
+  osVersion?: string | null;
+  isCompanyOwned: boolean;
+  isActive: boolean;
+  isOnline: boolean;
+  isLocked: boolean;
+  enrollmentCode?: string;
+  lastSeen?: string | null;
+  currentLocation?: { latitude: number; longitude: number; timestamp?: string } | null;
+  registeredAt: string;
+  user?: { id: string; name: string; role: string } | null;
+  alerts?: { id: string; alertType: string }[];
+}
+
+export interface DeviceAlertFull {
+  id: string;
+  alertType: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+  device: { id: string; deviceName: string; deviceType: string };
+}
+
+// ── Sales Invoices, dashboard parity (invoices/page.tsx, new/page.tsx, open/page.tsx, [id]/print/page.tsx) ──
+export interface InvoiceFullLine {
+  id?: string;
+  description: string;
+  hsnSacCode?: string | null;
+  quantity: number;
+  unitPrice: number;
+  discountPct?: number;
+  discountAmount?: number;
+  discountMode?: 'PERCENT' | 'FIXED';
+  amount: number;
+  sortOrder?: number;
+  erpItemId?: string | null;
+}
+
+export interface InvoiceFull {
+  id: string;
+  invoiceNumber: string;
+  status: string;
+  paymentMode?: string | null;
+  paymentMethod?: string | null;
+  paymentRef?: string | null;
+  paymentNote?: string | null;
+  paidAmount: number;
+  subtotal: number;
+  cgst: number;
+  sgst: number;
+  roundOff?: number;
+  grandTotal: number;
+  balanceDue: number;
+  notes?: string | null;
+  termsConditions?: string | null;
+  createdAt: string;
+  paidAt?: string | null;
+  isPaid?: boolean;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  customerAddress?: string | null;
+  customerGstin?: string | null;
+  vehicleNumber?: string | null;
+  vehicleBrand?: string | null;
+  vehicleModel?: string | null;
+  vehicleYear?: string | number | null;
+  vehicleColour?: string | null;
+  vehicleFuel?: string | null;
+  lineItems?: InvoiceFullLine[];
+  gstRate?: number;
+  displayGstPercent?: number | null;
+  cgstRate?: number | null;
+  sgstRate?: number | null;
+  cgstAmount?: number;
+  sgstAmount?: number;
+  waybillNo?: string | null;
+  emailSent?: boolean;
+  whatsappSent?: boolean;
+  serviceCharges?: { description: string; amount: number }[];
+  splitPayments?: { mode: string; label: string; amount: number }[];
+  overallDiscountAmount?: number;
+  overallDiscountMode?: 'PERCENT' | 'FIXED';
+  discountAmount?: number;
+  companyName?: string;
+  companyAddress?: string;
+  companyCity?: string;
+  companyState?: string;
+  companyPin?: string;
+  companyStateCode?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+  salesperson?: { id: string; name: string; phone: string | null } | null;
+}
+
+export interface InvoiceRow extends InvoiceFull {
+  vehicleBrand?: string | null;
+}
+
+export interface InvoiceStats { total: number; monthRevenue: number; todayRevenue: number; totalOutstanding: number; totalCollected: number }
+
+export interface InvoiceReport {
+  totalInvoices: number; totalBilled: number; totalCollected: number; totalOutstanding: number; invoices: InvoiceRow[];
+}
+
+export interface InvoicePaymentHistoryRow {
+  _type?: string; createdAt: string; amount: number; paymentMode?: string | null; notes?: string | null; confirmedBy?: { name: string } | null;
+}
+
+export interface OpenInvoiceRow {
+  id: string; invoiceNumber: string; customerName: string | null; customerPhone?: string | null;
+  vehicleNumber: string | null; vehicleBrand: string | null; vehicleModel: string | null;
+  grandTotal: number; paidAmount: number; balanceDue: number; status: string; createdAt: string; updatedAt: string;
+}
+
+// ── Employee detail → Timesheet tab (dashboard employees/page.tsx TimesheetBlock) ──
+export interface EmployeeTimesheetEntry {
+  id: string;
+  date: string;
+  status: string;
+  totalHours: number;
+  notes: string | null;
+  entries: { task: string; hours: number; notes?: string | null }[];
+  approvedBy?: { id: string; name: string } | null;
+}
+
+// Employee attendance defaults come back on GET /employees (read by the detail panel's Configure tab).
+export interface EmployeeAttendanceDefaultsFields {
+  defaultLeaves?: number | null;
+  workingDaysPerMonth?: number | null;
+  customClockIn?: string | null;
+  customClockOut?: string | null;
 }

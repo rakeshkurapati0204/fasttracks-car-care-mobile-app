@@ -2,9 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { GlassCard } from '@/components/home/glass-card';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -51,30 +49,31 @@ export function Stat({ label, value, sub, icon, onPress }: {
 }) {
   const theme = useTheme();
   const body = (
-    <ThemedView type="backgroundElement" style={styles.stat}>
+    <View style={[styles.stat, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <View style={styles.statHead}>
-        <ThemedText type="small" themeColor="textSecondary" style={styles.flex1}>{label}</ThemedText>
-        <Ionicons name={icon} size={16} color={theme.textSecondary} />
+        <ThemedText style={[styles.statLabel, { color: theme.textMuted }]}>{label}</ThemedText>
+        <Ionicons name={icon} size={16} color={theme.textMuted} />
       </View>
-      <ThemedText type="subtitle" style={onPress ? { color: theme.primary } : undefined}>{value}</ThemedText>
-      {sub ? <ThemedText type="small" themeColor="textSecondary">{sub}</ThemedText> : null}
-    </ThemedView>
+      <ThemedText style={styles.statValue}>{value}</ThemedText>
+      {sub ? <ThemedText style={[styles.statSub, { color: theme.textMuted }]}>{sub}</ThemedText> : null}
+    </View>
   );
-  return onPress ? <Pressable onPress={onPress}>{body}</Pressable> : body;
+  return onPress ? <Pressable onPress={onPress} accessibilityRole="button" style={styles.statWrap}>{body}</Pressable> : <View style={styles.statWrap}>{body}</View>;
 }
 
 export function Panel({ title, note, right, children }: { title: string; note?: string; right?: ReactNode; children: ReactNode }) {
+  const theme = useTheme();
   return (
-    <GlassCard>
+    <View style={[styles.panel, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <View style={styles.panelHead}>
         <View style={styles.flex1}>
-          <ThemedText type="smallBold">{title}</ThemedText>
-          {note ? <ThemedText type="small" themeColor="textSecondary">{note}</ThemedText> : null}
+          <ThemedText style={styles.panelTitle}>{title}</ThemedText>
+          {note ? <ThemedText style={[styles.panelNote, { color: theme.textMuted }]}>{note}</ThemedText> : null}
         </View>
         {right}
       </View>
       <View style={styles.panelBody}>{children}</View>
-    </GlassCard>
+    </View>
   );
 }
 
@@ -165,10 +164,17 @@ const styles = StyleSheet.create({
   chip: { alignSelf: 'flex-start', paddingHorizontal: Spacing.two, paddingVertical: 2, borderRadius: Spacing.four },
   chipText: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.6 },
   dashed: { borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(122,114,109,.5)' },
-  stat: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.one, flexBasis: '47%', flexGrow: 1 },
-  statHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  statWrap: { flex: 1, minWidth: 0 },
+  stat: { borderWidth: 1, borderRadius: 12, padding: 20, gap: 8, flex: 1 },
+  statHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: Spacing.two },
+  statLabel: { fontSize: 12, lineHeight: 16, fontWeight: '600', flex: 1 },
+  statValue: { fontSize: 34, lineHeight: 38, fontWeight: '700', letterSpacing: -0.8 },
+  statSub: { fontSize: 12.5, lineHeight: 18 },
+  panel: { borderWidth: 1, borderRadius: 12, padding: 20 },
+  panelTitle: { fontSize: 15, lineHeight: 22, fontWeight: '700' },
+  panelNote: { fontSize: 12.5, lineHeight: 18, marginTop: 2 },
   panelHead: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
-  panelBody: { marginTop: Spacing.three },
+  panelBody: { marginTop: 16 },
   empty: { paddingVertical: Spacing.three },
   filterChip: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one, borderRadius: Spacing.four },
   followRow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, paddingBottom: Spacing.two, borderBottomWidth: StyleSheet.hairlineWidth },

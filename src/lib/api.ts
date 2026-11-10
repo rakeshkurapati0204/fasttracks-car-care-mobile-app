@@ -30,6 +30,19 @@ import type {
   RecurrenceType,
   RecurringTaskCompletion,
   RecurringTaskDefinition,
+  DailyTaskCompletion,
+  PurchaseLedgerDetail,
+  EditPurchaseVoucherInput,
+  EditPaymentVoucherInput,
+  EditDebitNoteInput,
+  SalaryPaymentWithBreakdown,
+  ConversationListParams,
+  ConversationStats,
+  StaffPhoneNumberRow,
+  ConversationCallRecording,
+  ConversationCallSummary,
+  CreateConversationInput,
+  WabaNumber,
   Task,
   TaskStatus,
   CallCapabilities,
@@ -67,6 +80,7 @@ import type {
   ExpenseReply,
   ExpenseStatus,
   ExpenseSummary,
+  MentionableUser,
   ExtractedReceiptFields,
   ExtractedStatementResult,
   ResolvedPermissions,
@@ -107,6 +121,9 @@ import type {
   TeamChat,
   TeamChatEmployee,
   TeamChatMessage,
+  TeamChatUpload,
+  TeamChatForwardResult,
+  TeamChatLeaveResult,
   TrackerJob,
   FinancialOverview,
   FinancialKpis,
@@ -174,6 +191,11 @@ import type {
   ReconcileReason,
   ReconciliationRecord,
   DraftReceipt,
+  PaymentReminderFull,
+  InventoryListItem,
+  InventoryListParams,
+  SellerMatch,
+  BarcodeLookup,
   ConfirmArrivalInput,
   ItemOutInput,
   ItemOutLog,
@@ -239,6 +261,59 @@ import type {
   RegenerateCompetencyTemplateInput,
   CustomerStatsReport,
   DailyReport,
+  BoardStage,
+  CjJobCard,
+  CrmCustomerDetail,
+  CrmCustomerPage,
+  CrmSearchBy,
+  HandledByEmployee,
+  ApplicationFormInput,
+  CompareCandidateFull,
+  HrChatMessage,
+  PracticalQuestionsFull,
+  ApplicationRowData,
+  ApplicationStatusEmailResult,
+  EmployeeAnalyticsRaw,
+  EmployeeCardItem,
+  EmployeePerformancePoint,
+  EmployeePunch,
+  Candidate,
+  CandidateOverviewCounts,
+  CandidateOverviewListItem,
+  CandidateOverviewMetric,
+  HRLetter,
+  HRLetterType,
+  IssuedLetterSummary,
+  OnboardingEmployee,
+  OnboardingInviteResult,
+  OnboardingInviteStatusInfo,
+  PreJoiningTermsLite,
+  ProbationCheckIn,
+  CandidateVerificationQueueItem,
+  DisciplineRecord,
+  DisciplineRecordType,
+  EmploymentDetails,
+  EmploymentUpdate,
+  IdentityDocumentStatus,
+  OnboardingDocument,
+  PreJoiningTerms,
+  PreJoiningTermsInput,
+  ProbationCheckInDetail,
+  ProbationMilestone,
+  DeviceFull,
+  EmployeeTimesheetEntry,
+  InvoiceFull,
+  InvoiceRow,
+  InvoiceStats,
+  InvoiceReport,
+  InvoicePaymentHistoryRow,
+  OpenInvoiceRow,
+  DeviceAlertFull,
+  QuotationFull,
+  QuotationStaffOption,
+  QuotationItemSearchResult,
+  QuotationGstData,
+  QuotationVehicleData,
 } from '@/types/api';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -409,7 +484,7 @@ export interface DeviceImportRow {
 }
 export interface DeviceImportResult {
   summary: { updated: number; skipped: number; notFound: number };
-  results: Array<{ employeeName: string; deviceUserId: string; punchTime: string; status: string; result: string }>;
+  results: { employeeName: string; deviceUserId: string; punchTime: string; status: string; result: string }[];
 }
 export async function importDeviceAttendance(rows: DeviceImportRow[]) {
   const { data } = await api.post<DeviceImportResult>('/attendance/import-device', { rows });
@@ -791,6 +866,16 @@ export async function sendTeamChatMessage(
   return data;
 }
 
+// Newest `limit` messages (oldest-first); pass `before` (id of the oldest message
+// you hold) for the next older page. X-Has-More says whether anything older exists.
+export async function fetchTeamChatMessagesPage(chatId: string, opts?: { before?: string; limit?: number }) {
+  const { data, headers } = await api.get<TeamChatMessage[]>(`/team-chat/${chatId}/messages`, {
+    params: { limit: opts?.limit ?? 60, before: opts?.before },
+  });
+  const raw = (headers as Record<string, unknown> | undefined)?.['x-has-more'];
+  return { messages: Array.isArray(data) ? data : [], hasMore: raw === 'true' };
+}
+
 export async function markTeamChatRead(chatId: string) {
   await api.post(`/team-chat/${chatId}/read`);
 }
@@ -888,6 +973,65 @@ export async function uploadTeamChatMedia(
     onUploadProgress: (evt) => ctrl.onProgress(progressToPercent(evt)),
   });
   return data;
+}
+
+// Team Chat phase 2 — same upload route as above, but typed for documents too
+// (images, voice notes and PDF/Word/Excel/PPT/TXT/CSV/ZIP; the server picks by MIME or extension).
+export async function uploadTeamChatAttachment(
+  file: { uri: string; name: string; mimeType: string },
+  ctrl: { onProgress: (pct: number | null) => void; signal: AbortSignal },
+) {
+  const form = new FormData();
+  form.append('file', { uri: file.uri, name: file.name, type: file.mimeType } as any);
+  const { data } = await api.post<TeamChatUpload>('/team-chat/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000,
+    signal: ctrl.signal,
+    onUploadProgress: (evt) => ctrl.onProgress(progressToPercent(evt)),
+  });
+  return data;
+}
+
+// { messageId, chatIds[] } — the forwarder must be in the source chat and every destination
+// (checked server-side, all-or-nothing); each destination gets a copy marked forwarded.
+export async function forwardTeamChatMessage(messageId: string, chatIds: string[]) {
+  const { data } = await api.post<TeamChatForwardResult[]>('/team-chat/forward', { messageId, chatIds });
+  return data;
+}
+
+// Group admin only (server re-checks on every one of these and answers 403 otherwise).
+export async function renameTeamChatGroup(chatId: string, name: string) {
+  const { data } = await api.patch<TeamChat>(`/team-chat/${chatId}`, { name });
+  return data;
+}
+
+export async function addTeamChatMembers(chatId: string, memberIds: string[]) {
+  const { data } = await api.post<TeamChat>(`/team-chat/${chatId}/members`, { memberIds });
+  return data;
+}
+
+export async function removeTeamChatMember(chatId: string, userId: string) {
+  const { data } = await api.delete<TeamChat>(`/team-chat/${chatId}/members/${userId}`);
+  return data;
+}
+
+// Any member can leave; the server decides whether admin passes on or the group is archived.
+export async function leaveTeamChat(chatId: string) {
+  const { data } = await api.post<TeamChatLeaveResult>(`/team-chat/${chatId}/leave`);
+  return data;
+}
+
+// A shared document lives at a public storage URL (the dashboard opens it with a plain link),
+// so it downloads to the cache without auth and then goes to the share sheet.
+export async function downloadTeamChatDocument(url: string, filename: string): Promise<{ uri: string }> {
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_') || 'document';
+  const dest = `${FileSystem.cacheDirectory}chat-${Date.now()}-${safe}`;
+  const result = await FileSystem.downloadAsync(url.split('#')[0], dest);
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to open document');
+  }
+  return { uri: result.uri };
 }
 
 // Per-owner, upserted (empty nickname deletes it) — the GET /employees list
@@ -1173,6 +1317,51 @@ export async function fetchExpenseAttachmentDataUri(attachmentId: string, mimeTy
 export async function replyToExpense(expenseId: string, message: string) {
   const { data } = await api.post<ApiEnvelope<ExpenseReply>>(`/expenses/${expenseId}/replies`, { message, mentions: [] });
   return data.data;
+}
+
+// ── Expenses page parity: @-mentions, tagged replies, bill download ─────────
+export async function fetchMentionableUsers() {
+  const { data } = await api.get<ApiEnvelope<MentionableUser[]>>('/employees/mentionable');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Same as submitExpense plus the dashboard's `mentions` field (ids picked in the @ dropdown).
+export async function submitExpenseTagged(
+  input: { amount: number; category: ExpenseCategory; description: string; date: string; mentions: string[] },
+  file?: { uri: string; name: string; mimeType: string },
+) {
+  const form = new FormData();
+  form.append('amount', String(input.amount));
+  form.append('category', input.category);
+  form.append('description', input.description);
+  form.append('date', input.date);
+  form.append('mentions', JSON.stringify(input.mentions));
+  if (file) form.append('file', { uri: file.uri, name: file.name, type: file.mimeType } as any);
+  const { data } = await api.post<ApiEnvelope<Expense>>('/expenses', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+  return data.data;
+}
+
+export async function replyToExpenseTagged(expenseId: string, message: string, mentions: string[]) {
+  const { data } = await api.post<ApiEnvelope<ExpenseReply>>(`/expenses/${expenseId}/replies`, { message, mentions });
+  return data.data;
+}
+
+// Streams a private bill to the cache so it can be opened in the share sheet.
+export async function downloadExpenseAttachment(attachmentId: string, filename: string): Promise<{ uri: string }> {
+  const token = await tokenStorage.get();
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const dest = `${FileSystem.cacheDirectory}expense-${attachmentId}-${safe}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/expenses/attachments/${attachmentId}/file`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to open bill');
+  }
+  return { uri: result.uri };
 }
 
 export async function fetchMyMonthTimesheets(month: number, year: number) {
@@ -1778,6 +1967,72 @@ export async function uploadInventoryBill(
     signal: ctrl.signal,
     onUploadProgress: (evt) => ctrl.onProgress(progressToPercent(evt)),
   });
+  return data.data;
+}
+
+// ── Inventory page (dashboard parity) ───────────────────────────────────────
+// GET /inventory-items with the dashboard's own server-side filters. Rows carry
+// effectiveStatus, receipts and incentive/compatibility/warranty/notes.
+export async function fetchInventoryList(params?: InventoryListParams) {
+  const { data } = await api.get<ApiEnvelope<InventoryListItem[]>>('/inventory-items', { params });
+  return data.data;
+}
+
+// PATCH /inventory-items/:id with the Edit Product payload (status may be
+// EXPIRED, which the narrower ItemStatus type does not list).
+export async function saveInventoryItemEdits(id: string, input: Record<string, unknown>) {
+  const { data } = await api.patch<ApiEnvelope<InventoryListItem>>(`/inventory-items/${id}`, input);
+  return data.data;
+}
+
+// The wizard's receipt body (barcode, seller, dealer price, GST, logistics…).
+// POST /inventory-items/:id/receipts, requireInventoryWrite.
+export async function createInventoryReceiptFull(itemId: string, input: Record<string, unknown>) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/inventory-items/${itemId}/receipts`, input);
+  return data.data;
+}
+
+// The dashboard's LogisticsForm asks the legacy router for the next barcode
+// (GET /inventory/next-barcode): the /inventory-items copy sits behind /:id.
+export async function fetchNextBatchBarcode() {
+  const { data } = await api.get<ApiEnvelope<{ barcode: string }>>('/inventory/next-barcode');
+  return data.data;
+}
+
+// GET /inventory-items/check-seller-match — null when no batch matches.
+export async function checkSellerMatch(itemId: string, sellerName: string) {
+  const { data } = await api.get<ApiEnvelope<SellerMatch | null>>('/inventory-items/check-seller-match', { params: { itemId, sellerName } });
+  return data.data;
+}
+
+// POST /inventory-items/receipts/:receiptId/assign-barcode → { barcode }
+export async function assignReceiptBarcode(receiptId: string) {
+  const { data } = await api.post<ApiEnvelope<{ barcode: string }>>(`/inventory-items/receipts/${receiptId}/assign-barcode`);
+  return data.data.barcode;
+}
+
+// GET /inventory-items/lookup-barcode?barcode= (Items Out form).
+export async function lookupInventoryBarcode(barcode: string) {
+  const { data } = await api.get<ApiEnvelope<BarcodeLookup | null>>('/inventory-items/lookup-barcode', { params: { barcode } });
+  return data.data;
+}
+
+// GET /inventory-items/receipts/:receiptId — the fresh batch Edit Batch loads.
+export async function fetchInventoryReceipt(receiptId: string) {
+  const { data } = await api.get<ApiEnvelope<StockReceipt & { eta?: string | null }>>(`/inventory-items/receipts/${receiptId}`);
+  return data.data;
+}
+
+// PATCH /inventory-items/receipts/:receiptId with Edit Batch's full body
+// (nullable dealerPrice / eta, which UpdateReceiptInput can't express).
+export async function saveInventoryReceiptEdits(receiptId: string, input: Record<string, unknown>) {
+  const { data } = await api.patch<ApiEnvelope<StockReceipt>>(`/inventory-items/receipts/${receiptId}`, input);
+  return data.data;
+}
+
+// POST /inventory-items/import — pre-parsed spreadsheet rows (requireInventoryWrite).
+export async function importInventoryRows(rows: Record<string, unknown>[]) {
+  const { data } = await api.post<ApiEnvelope<{ created: number; skipped: number; errors: number }>>('/inventory-items/import', { rows });
   return data.data;
 }
 
@@ -2666,6 +2921,50 @@ export async function markPaymentReminderPaid(id: string) {
   return data.data;
 }
 
+// Accounts page (dashboard parity) — the same routes with the dashboard's own
+// bodies (nullable EMI fields, reminder reference/paid-by fields).
+export async function fetchPaymentRemindersFull() {
+  const { data } = await api.get<ApiEnvelope<PaymentReminderFull[]>>('/accounts/reminders');
+  return data.data;
+}
+
+export async function saveBankAccountRecord(id: string | null, body: Record<string, unknown>) {
+  const { data } = id
+    ? await api.put<ApiEnvelope<BankAccount>>(`/accounts/bank/${id}`, body)
+    : await api.post<ApiEnvelope<BankAccount>>('/accounts/bank', body);
+  return data.data;
+}
+
+export async function saveEmiRecord(id: string | null, body: Record<string, unknown>) {
+  const { data } = id
+    ? await api.put<ApiEnvelope<EMI>>(`/accounts/emis/${id}`, body)
+    : await api.post<ApiEnvelope<EMI>>('/accounts/emis', body);
+  return data.data;
+}
+
+export async function saveReminderRecord(id: string | null, body: Record<string, unknown>) {
+  const { data } = id
+    ? await api.put<ApiEnvelope<PaymentReminderFull>>(`/accounts/reminders/${id}`, body)
+    : await api.post<ApiEnvelope<PaymentReminderFull>>('/accounts/reminders', body);
+  return data.data;
+}
+
+// Streams a private bank-account / EMI document to the cache for the share sheet.
+export async function downloadAccountDocument(kind: 'bank' | 'emi', documentId: string, filename: string): Promise<{ uri: string }> {
+  const token = await tokenStorage.get();
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const dest = `${FileSystem.cacheDirectory}account-${documentId}-${safe}`;
+  const path = kind === 'bank' ? `/accounts/bank/documents/${documentId}/file` : `/accounts/emis/documents/${documentId}/file`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}${path}`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to open document');
+  }
+  return { uri: result.uri };
+}
+
 // ── ERP Finance — server-gated to OWNER/STORE_MANAGER/ACCOUNTING ───────────
 export async function fetchErpFinanceOverview(from?: string, to?: string) {
   const { data } = await api.get<ApiEnvelope<ErpFinanceOverview>>('/erp/finance/overview', {
@@ -3476,4 +3775,927 @@ export async function fetchDailyReport(date: string) {
 export async function fetchCustomerStats(fromDate: string, toDate: string) {
   const { data } = await api.get<ApiEnvelope<CustomerStatsReport>>('/reports/customer-stats', { params: { fromDate, toDate } });
   return data.data;
+}
+
+// ── Customers & Jobs (dashboard customers/page.tsx parity) ───────────────────
+// All gated server-side by hasCJAccess/getCJMode (view_only blocks writes,
+// sales_mode scopes to own jobs); raw JSON, no ApiEnvelope.
+export async function fetchActiveJobCards() {
+  const { data } = await api.get<CjJobCard[]>('/job-cards/active');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchBoardJobCards() {
+  const { data } = await api.get<CjJobCard[]>('/job-cards/board');
+  return Array.isArray(data) ? data : [];
+}
+
+// Status board stage change. boardWalkoutReason is required for WALKED_OUT.
+export async function setJobBoardStage(id: string, stage: BoardStage, walkout?: { boardWalkoutReason: string; boardWalkoutRemarks?: string }) {
+  const { data } = await api.patch<CjJobCard>(`/job-cards/${id}/board-stage`, { stage, ...walkout });
+  return data;
+}
+
+// Same list New Entry uses for "handled by" — feeds the inline reassign picker.
+export async function fetchHandledByEmployees() {
+  const { data } = await api.get<HandledByEmployee[]>('/employees/handled-by');
+  return Array.isArray(data) ? data : [];
+}
+
+export async function fetchCrmCustomerPage(params: { page: number; limit: number; search?: string; searchBy?: CrmSearchBy; fromDate?: string; toDate?: string; source?: string }) {
+  const { search, searchBy, ...rest } = params;
+  const { data } = await api.get<CrmCustomerPage>('/crm/customers', {
+    params: { ...rest, ...(search?.trim() ? { search: search.trim(), searchBy } : {}), fromDate: rest.fromDate || undefined, toDate: rest.toDate || undefined, source: rest.source || undefined },
+  });
+  return data;
+}
+
+// GET /crm/customers/:id — job cards (with invoice summaries) + logged interactions.
+export async function fetchCrmCustomerDetail(id: string): Promise<CrmCustomerDetail> {
+  const { data } = await api.get<Partial<CrmCustomerDetail>>(`/crm/customers/${id}`);
+  return { jobCards: data.jobCards ?? [], interactions: data.interactions ?? [] };
+}
+
+// Verification remarks (requireCustomerRemarksAccess), customer-level.
+export async function fetchCustomerRemarksFor(customerId: string) {
+  const { data } = await api.get<ApiEnvelope<CustomerRemark[]>>(`/customer-remarks/customer/${customerId}`);
+  return data.data;
+}
+
+export async function addCustomerRemarkFor(customerId: string, note: string) {
+  const { data } = await api.post<ApiEnvelope<CustomerRemark>>(`/customer-remarks/customer/${customerId}`, { note });
+  return data.data;
+}
+
+// ── Team page (dashboard employees/page.tsx) ─────────────────────────────────
+// The list endpoint answers a bare array or { data: [...] }; the dashboard
+// accepts both, so this does too.
+export async function fetchEmployeeCards() {
+  const { data } = await api.get<EmployeeCardItem[] | { data?: EmployeeCardItem[] }>('/employees');
+  return Array.isArray(data) ? data : (data?.data ?? []);
+}
+
+// PUT /employees/:id with exactly the fields the dashboard's edit modal sends
+// (clearing a field means sending null, which updateEmployee's types forbid).
+export async function saveEmployee(id: string, payload: Record<string, unknown>) {
+  const { data } = await api.put<unknown>(`/employees/${id}`, payload);
+  return data;
+}
+
+// PATCH /employees/:id/deactivate with the optional departure date + reason
+// the dashboard captures at deactivation time.
+export async function deactivateEmployeeWithDetails(id: string, fields: { departureDate?: string; departureReason?: string }) {
+  const { data } = await api.patch<unknown>(`/employees/${id}/deactivate`, fields);
+  return data;
+}
+
+// ── Employee detail panel, Overview tab ─────────────────────────────────────
+// requireManagerOrOwner on both analytics routes.
+export async function fetchEmployeeAnalytics(id: string) {
+  const { data } = await api.get<ApiEnvelope<EmployeeAnalyticsRaw>>(`/employees/${id}/analytics`);
+  return data.data;
+}
+
+export async function fetchEmployeePerformanceChart(id: string) {
+  const { data } = await api.get<ApiEnvelope<EmployeePerformancePoint[]>>(`/employees/${id}/performance-chart`);
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Same route as fetchAttendancePunches, typed with the "interpretation" field it returns.
+export async function fetchEmployeePunches(userId: string, date: string) {
+  const { data } = await api.get<ApiEnvelope<EmployeePunch[]>>('/attendance/punches', { params: { userId, date } });
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// ── Applications page (dashboard applications/page.tsx) ─────────────────────
+// Same GET /applications as fetchApplications, typed with the extra row fields.
+export async function fetchApplicationRows(status?: ApplicationStatus) {
+  const { data } = await api.get<ApiEnvelope<ApplicationRowData[]>>('/applications', { params: status ? { status } : undefined });
+  return data.data ?? [];
+}
+
+// POST /applications (multipart: the fields plus an optional résumé).
+export async function createApplication(fields: ApplicationFormInput, resume?: { uri: string; name: string; mimeType: string } | null) {
+  const form = new FormData();
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') form.append(key, String(value));
+  });
+  if (resume) form.append('resume', { uri: resume.uri, name: resume.name, type: resume.mimeType } as any);
+  const { data } = await api.post<ApiEnvelope<ApplicationRowData>>('/applications', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+  return data.data;
+}
+
+// PATCH /applications/:id
+export async function updateApplication(id: string, fields: Partial<ApplicationFormInput>) {
+  const { data } = await api.patch<ApiEnvelope<ApplicationRowData>>(`/applications/${id}`, fields);
+  return data.data;
+}
+
+// PATCH /applications/:id/status, keeping the hasEmail flag the dashboard
+// uses to offer the outcome email after Select / Reject.
+export async function changeApplicationStatus(id: string, status: ApplicationStatus) {
+  const { data } = await api.patch<ApiEnvelope<ApplicationRowData & { hasEmail?: boolean }>>(`/applications/${id}/status`, { status });
+  return { application: data.data, message: data.message };
+}
+
+// POST /applications/:id/status-email — HR's "Send Email" / "Resend email".
+export async function sendApplicationStatusEmail(id: string) {
+  const { data } = await api.post<ApiEnvelope<ApplicationStatusEmailResult>>(`/applications/${id}/status-email`);
+  return data.data;
+}
+
+// ── Applications Phase 2 ─────────────────────────────────────────────────────
+export async function fetchPracticalQuestionsFull(id: string) {
+  const { data } = await api.get<ApiEnvelope<PracticalQuestionsFull>>(`/applications/${id}/practical-questions`);
+  return data.data;
+}
+
+// POST /:id/interview-schedule/:scheduleId/resend: re-sends the same invite, no changes.
+export async function resendInterviewScheduleInvite(id: string, scheduleId: string) {
+  const { data } = await api.post<ApiEnvelope<{ candidateEmailed: boolean; interviewerEmailed: boolean; candidateHasEmail: boolean; interviewerHasEmail: boolean }>>(
+    `/applications/${id}/interview-schedule/${scheduleId}/resend`,
+  );
+  return data.data;
+}
+
+// GET /applications/compare?role= with the full scorecards (competency breakdowns).
+export async function fetchCandidateComparisonFull(role: string) {
+  const { data } = await api.get<ApiEnvelope<CompareCandidateFull[]>>('/applications/compare', { params: { role } });
+  return data.data ?? [];
+}
+
+// POST /applications/job-description (AI draft; slow, like the other AI routes).
+export async function generateJobDescription(fields: { roleName: string; department?: string; context?: string }) {
+  const { data } = await api.post<ApiEnvelope<{ description: string }>>('/applications/job-description', fields, { timeout: 120000 });
+  return data.data.description;
+}
+
+// POST /hr-assistant/chat: read-only lookups, nothing persisted server-side.
+export async function hrAssistantChat(messages: HrChatMessage[]) {
+  const { data } = await api.post<ApiEnvelope<{ reply: string }>>('/hr-assistant/chat', { messages }, { timeout: 120000 });
+  return data.data.reply;
+}
+
+// Interview recordings are streamed behind the Bearer token (HR only). Same
+// download-to-cache approach as downloadApplicationFile; a non-2xx is deleted
+// rather than saved as a "file".
+async function downloadRecording(path: string, filename: string): Promise<string> {
+  const token = await tokenStorage.get();
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}${path}`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    throw new Error(result.status === 404 ? 'This recording is no longer available.' : `Could not download the recording (error ${result.status}).`);
+  }
+  return result.uri;
+}
+
+export function downloadInterviewRecording(applicationId: string, inviteId: string, kind: 'camera' | 'screen') {
+  return downloadRecording(`/applications/${applicationId}/interview-invite/${inviteId}/recording/${kind}`, `interview-${kind}-${inviteId}.mp4`);
+}
+
+export function downloadAnswerRecording(applicationId: string, inviteId: string, turnIndex: number) {
+  return downloadRecording(`/applications/${applicationId}/interview-invite/${inviteId}/answer-recording/${turnIndex}`, `answer-${inviteId}-${turnIndex}.audio`);
+}
+
+// ── Onboarding page: Overview counts, Letters, candidates (dashboard hrAPI) ──
+
+
+export async function fetchOnboardingEmployees() {
+  const { data } = await api.get<ApiEnvelope<OnboardingEmployee[]>>('/employees');
+  return (data.data ?? []).filter((e) => e.isActive);
+}
+
+export async function fetchCandidateOverviewCounts() {
+  const { data } = await api.get<ApiEnvelope<CandidateOverviewCounts>>('/hr/candidates/overview-counts');
+  return data.data;
+}
+
+export async function fetchCandidateOverviewList(metric: CandidateOverviewMetric) {
+  const { data } = await api.get<ApiEnvelope<CandidateOverviewListItem[]>>('/hr/candidates/overview-list', { params: { metric } });
+  return data.data;
+}
+
+export async function fetchLettersCount() {
+  const { data } = await api.get<ApiEnvelope<{ count: number }>>('/hr/letters/count');
+  return data.data.count;
+}
+
+export async function fetchAllLetters() {
+  const { data } = await api.get<ApiEnvelope<IssuedLetterSummary[]>>('/hr/letters');
+  return data.data;
+}
+
+export async function fetchLetterHistory(userId: string) {
+  const { data } = await api.get<ApiEnvelope<HRLetter[]>>(`/hr/letters/${userId}`);
+  return data.data;
+}
+
+export async function generateLetter(userId: string, type: HRLetterType, fields: Record<string, unknown>) {
+  const { data } = await api.post<ApiEnvelope<HRLetter>>(`/hr/letters/${userId}`, { type, ...fields });
+  return data.data;
+}
+
+export async function emailLetter(letterId: string) {
+  const { data } = await api.post<ApiEnvelope<{ sentTo: string }>>(`/hr/letters/file/${letterId}/email`);
+  return data.data?.sentTo ?? null;
+}
+
+// GET /hr/letters/file/:id streams the PDF behind the Bearer token; saved to
+// the cache the same way as downloadApplicationFile so it can be opened/shared.
+export async function downloadLetterPdf(letterId: string, label: string): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const filename = `${label.replace(/[^\w.\-]+/g, '_')}-${letterId}.pdf`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/hr/letters/file/${letterId}`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    throw new Error(result.status === 404 ? 'This letter is no longer available.' : `Could not download the letter (error ${result.status}).`);
+  }
+  return { uri: result.uri, filename };
+}
+
+export async function fetchCandidates() {
+  const { data } = await api.get<ApiEnvelope<Candidate[]>>('/hr/candidates');
+  return data.data ?? [];
+}
+
+export async function createCandidate(fields: { name: string; personalEmail?: string; personalPhone?: string; department?: string }) {
+  const { data } = await api.post<ApiEnvelope<Candidate>>('/hr/candidates', fields);
+  return data.data;
+}
+
+export async function sendOnboardingInvite(userId: string): Promise<OnboardingInviteResult> {
+  const { data } = await api.post<ApiEnvelope<OnboardingInviteResult>>(`/hr/onboarding-invites/${userId}`);
+  const d = data.data;
+  return { inviteLink: d.inviteLink, expiresAt: d.expiresAt, emailSent: !!d.emailSent, sentTo: d.sentTo ?? null, hasEmail: !!d.hasEmail };
+}
+
+export async function fetchOnboardingInviteStatus(userId: string) {
+  const { data } = await api.get<ApiEnvelope<OnboardingInviteStatusInfo | null>>(`/hr/onboarding-invites/${userId}`);
+  return data.data ?? null;
+}
+
+export async function approveCandidateOnboarding(userId: string) {
+  const { data } = await api.post<ApiEnvelope<{ user: { username: string }; temporaryPassword: string }>>(`/hr/onboarding-invites/${userId}/approve`);
+  return { username: data.data.user.username, temporaryPassword: data.data.temporaryPassword };
+}
+
+export async function fetchPreJoiningTermsLite(userId: string) {
+  const { data } = await api.get<ApiEnvelope<PreJoiningTermsLite | null>>(`/pre-joining-terms/${userId}`);
+  return data.data ?? null;
+}
+
+export async function fetchCheckInOverviewCounts() {
+  const { data } = await api.get<ApiEnvelope<{ overdue: number; upcoming: number }>>('/probation-checkins/overview-counts');
+  return data.data;
+}
+
+export async function fetchProbationCheckIns() {
+  const { data } = await api.get<ApiEnvelope<ProbationCheckIn[]>>('/probation-checkins');
+  return data.data ?? [];
+}
+
+// ── Onboarding Phase 2 (dashboard hrAPI / identityDocumentsAPI / preJoiningTermsAPI) ──
+export async function fetchEmploymentDetails(userId: string) {
+  const { data } = await api.get<ApiEnvelope<EmploymentDetails>>(`/hr/employment/${userId}`);
+  return data.data;
+}
+
+export async function updateEmploymentDetails(userId: string, fields: EmploymentUpdate) {
+  const { data } = await api.patch<ApiEnvelope<EmploymentDetails>>(`/hr/employment/${userId}`, fields);
+  return data.data;
+}
+
+export async function fetchPreJoiningTerms(userId: string) {
+  const { data } = await api.get<ApiEnvelope<PreJoiningTerms | null>>(`/pre-joining-terms/${userId}`);
+  return data.data ?? null;
+}
+
+export async function savePreJoiningTerms(userId: string, fields: PreJoiningTermsInput) {
+  const { data } = await api.put<ApiEnvelope<PreJoiningTerms>>(`/pre-joining-terms/${userId}`, fields);
+  return data.data;
+}
+
+export async function approvePreJoiningTerms(userId: string) {
+  const { data } = await api.post<ApiEnvelope<PreJoiningTerms>>(`/pre-joining-terms/${userId}/approve`);
+  return data.data;
+}
+
+export async function fetchOnboardingDocuments(userId: string) {
+  const { data } = await api.get<ApiEnvelope<OnboardingDocument[]>>(`/identity-documents/${userId}`);
+  return data.data ?? [];
+}
+
+export async function fetchAllOnboardingDocuments(status?: IdentityDocumentStatus) {
+  const { data } = await api.get<ApiEnvelope<OnboardingDocument[]>>('/identity-documents', { params: status ? { status } : undefined });
+  return data.data ?? [];
+}
+
+export async function setOnboardingDocumentStatus(documentId: string, status: IdentityDocumentStatus, rejectionReason?: string) {
+  const { data } = await api.patch<ApiEnvelope<OnboardingDocument>>(`/identity-documents/file/${documentId}/status`, { status, rejectionReason });
+  return data.data;
+}
+
+// HR upload with the dashboard's full field set: type, label, number (encrypted
+// server-side), bank IFSC / branch. The file is optional for types where a
+// number alone is enough.
+export async function uploadOnboardingDocument(
+  userId: string,
+  file: { uri: string; name: string; mimeType: string } | null,
+  type: IdentityDocType,
+  extra: { label?: string; value?: string; ifsc?: string; branch?: string },
+  ctrl: { onProgress: (pct: number | null) => void; signal: AbortSignal },
+) {
+  const form = new FormData();
+  form.append('type', type);
+  if (file) form.append('file', { uri: file.uri, name: file.name, type: file.mimeType } as any);
+  if (extra.label) form.append('label', extra.label);
+  if (extra.value) form.append('value', extra.value);
+  if (extra.ifsc) form.append('ifsc', extra.ifsc);
+  if (extra.branch) form.append('branch', extra.branch);
+  const { data } = await api.post<ApiEnvelope<OnboardingDocument>>(`/identity-documents/${userId}`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+    signal: ctrl.signal,
+    onUploadProgress: (evt) => ctrl.onProgress(progressToPercent(evt)),
+  });
+  return data.data;
+}
+
+// The file route needs the Bearer header, so it is saved to the cache first
+// (same approach as downloadLetterPdf) and then opened / shared.
+export async function downloadIdentityDocumentFile(documentId: string, serverFilename?: string | null): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const safe = (serverFilename ?? 'document').replace(/[^\w.\-]+/g, '_');
+  const filename = `identity-${documentId}-${safe}`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/identity-documents/file/${documentId}`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    throw new Error(result.status === 404 ? 'This document is no longer available.' : `Could not download the file (error ${result.status}).`);
+  }
+  return { uri: result.uri, filename: serverFilename || filename };
+}
+
+export async function fetchVerificationQueue() {
+  const { data } = await api.get<ApiEnvelope<CandidateVerificationQueueItem[]>>('/hr/candidates/verification-queue');
+  return data.data ?? [];
+}
+
+export async function fetchDisciplineRecords(userId: string) {
+  const { data } = await api.get<ApiEnvelope<DisciplineRecord[]>>(`/hr/discipline/${userId}`);
+  return data.data ?? [];
+}
+
+export async function addDisciplineRecord(userId: string, fields: { type: DisciplineRecordType; description: string; date: string }) {
+  const { data } = await api.post<ApiEnvelope<DisciplineRecord>>(`/hr/discipline/${userId}`, fields);
+  return data.data;
+}
+
+export async function fetchProbationCheckInDetails() {
+  const { data } = await api.get<ApiEnvelope<ProbationCheckInDetail[]>>('/probation-checkins');
+  return data.data ?? [];
+}
+
+export async function completeProbationCheckIn(userId: string, milestone: ProbationMilestone, fields: { rating?: number; notes?: string }) {
+  const { data } = await api.post<ApiEnvelope<ProbationCheckInDetail>>(`/probation-checkins/${userId}/${milestone}/complete`, fields);
+  return data.data;
+}
+
+export async function downloadOnboardingPdf(userId: string, name: string): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const filename = `onboarding-${name.replace(/[^\w.\-]+/g, '_')}-${userId}.pdf`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/hr/onboarding/${userId}/pdf`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    throw new Error(`Could not download the checklist PDF (error ${result.status}).`);
+  }
+  return { uri: result.uri, filename };
+}
+
+// ── Tasks page: Daily Tasks with proof ──
+export async function fetchMyDailyTasks() {
+  const { data } = await api.get<ApiEnvelope<DailyTaskCompletion[]>>('/recurring-tasks/my-current');
+  return data.data;
+}
+
+// `proof` is needed when the task's proof is PHOTO (photo) or NOTE_PHOTO
+// (note + photo); the photo is a data: URL.
+export async function completeDailyTask(completionId: string, proof?: { note?: string; photo?: string; photoMime?: string }) {
+  const { data } = await api.patch<ApiEnvelope<DailyTaskCompletion>>(`/recurring-tasks/completions/${completionId}/complete`, proof ?? {});
+  return data.data;
+}
+
+// My Payslips download: same endpoint as downloadPayslipPdf, saved as
+// payslip-<safeName>-<month>-<year>.pdf (the dashboard's filename). downloadAsync
+// resolves even on a 4xx/5xx, so the status is checked and the server's own
+// message (a JSON body) is surfaced instead of saving it as the "PDF".
+export async function downloadMyPayslip(id: string, month: number, year: number, name: string): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const safeName = (name || 'payslip').replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `payslip-${safeName}-${month}-${year}.pdf`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/payslips/${id}/pdf`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status < 200 || result.status >= 300) {
+    let message: string | undefined;
+    try {
+      const body = JSON.parse(await FileSystem.readAsStringAsync(result.uri));
+      message = body?.error ?? body?.message;
+    } catch {
+      // not JSON: fall back to the generic message
+    }
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    throw new Error(message ?? 'Failed to download this payslip.');
+  }
+  return { uri: result.uri, filename };
+}
+
+// ── Purchase page: full ledger detail + edit purchase voucher ──
+export async function fetchPurchaseLedgerDetail(id: string) {
+  const { data } = await api.get<ApiEnvelope<PurchaseLedgerDetail>>(`/accounting/ledgers/${id}`);
+  return data.data;
+}
+
+// Changing anything besides the narration reverses the voucher and posts a
+// corrected one; a narration-only change updates in place.
+export async function editPurchaseVoucher(id: string, input: EditPurchaseVoucherInput) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/accounting/purchase-vouchers/${id}/edit`, input);
+  return data.data;
+}
+
+// ── Purchase Phase 2: edit payment voucher / edit debit note ──
+export async function editPaymentVoucher(id: string, input: EditPaymentVoucherInput) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/accounting/payment-vouchers/${id}/edit`, input);
+  return data.data;
+}
+
+export async function editDebitNote(id: string, input: EditDebitNoteInput) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/accounting/debit-notes/${id}/edit`, input);
+  return data.data;
+}
+
+// Finance Approvals: the dashboard's approve sheet sends its optional note as
+// `notes` (approveLoan above sends none).
+export async function approveLoanWithNotes(id: string, notes: string) {
+  const { data } = await api.patch<ApiEnvelope<Loan>>(`/loans/${id}/approve`, { notes });
+  return data.data;
+}
+
+// GET /payroll/salary-payments-all returns the raw rows with the note as an
+// unparsed string; it's parsed here with the dashboard's try/catch fallback.
+export async function fetchSalaryPaymentsWithBreakdown(month: number, year: number) {
+  const { data } = await api.get<ApiEnvelope<(Omit<SalaryPaymentWithBreakdown, 'grossSalary' | 'attendanceDeduction' | 'advanceDeduction' | 'advanceSkipped' | 'loanDeduction' | 'netPayable'> & { note: string | null })[]>>(
+    '/payroll/salary-payments-all',
+    { params: { month, year } },
+  );
+  const rows = Array.isArray(data.data) ? data.data : [];
+  return rows.map((p): SalaryPaymentWithBreakdown => {
+    let note: Record<string, unknown> = {};
+    try { note = JSON.parse(p.note || '{}') as Record<string, unknown>; } catch { /* plain-text note */ }
+    return {
+      id: p.id, userId: p.userId, amount: p.amount, mode: p.mode, paidAt: p.paidAt, paidBy: p.paidBy,
+      grossSalary: (note.grossSalary as number | undefined) ?? null,
+      attendanceDeduction: (note.attendanceDeduction as number | undefined) ?? 0,
+      advanceDeduction: (note.advanceDeduction as number | undefined) ?? null,
+      advanceSkipped: (note.advanceSkipped as boolean | undefined) ?? false,
+      loanDeduction: (note.loanDeduction as number | undefined) ?? null,
+      netPayable: (note.netPayable as number | undefined) ?? null,
+    };
+  });
+}
+
+// Payslips page: the issued payslip's PDF (what the dashboard's print page
+// shows), named like the dashboard's download, saved to the cache. Unlike
+// downloadPayslipPdf above, a non-200 response is an error and nothing is
+// written, so a JSON error body is never mistaken for the PDF.
+export async function downloadIssuedPayslipPdf(id: string, employeeName: string, month: number, year: number): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const safeName = employeeName.replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `payslip-${safeName}-${month}-${year}.pdf`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/payslips/${id}/pdf`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to download this payslip.');
+  }
+  return { uri: result.uri, filename };
+}
+
+// Financial page: the Revenue Trend line (GET /financial/revenue-trend, same
+// requireManagerOrOwner gate as the other /financial routes).
+export async function fetchFinancialRevenueTrend(period?: string) {
+  const { data } = await api.get<ApiEnvelope<{ date: string; revenue: number }[]>>('/financial/revenue-trend', { params: { period } });
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Legal Documents page: Save Changes sends every field, with null (not
+// undefined) for a blank hearing date / notes, so clearing a field really clears it.
+export async function saveLegalCase(id: string, input: { title: string; status: string; nextHearingDate: string | null; notes: string | null }) {
+  const { data } = await api.put<ApiEnvelope<LegalCase>>(`/legal/cases/${id}`, input);
+  return data.data;
+}
+
+// Streams a stored case document (behind requireLegalAccess) into the cache so
+// it can be opened. A non-200 response is an error and nothing is kept.
+export async function downloadLegalDocument(documentId: string, filename: string): Promise<{ uri: string }> {
+  const token = await tokenStorage.get();
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const dest = `${FileSystem.cacheDirectory}legal-${documentId}-${safe}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/legal/documents/${documentId}/file`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status !== 200) {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+    throw new Error('Failed to open document');
+  }
+  return { uri: result.uri };
+}
+
+// Job Tracker: the staff filter's list (GET /employees/assignable, any signed-in user).
+export async function fetchAssignableEmployees() {
+  const { data } = await api.get<ApiEnvelope<{ id: string; name: string }[]>>('/employees/assignable');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// ── Conversations page: filtered list, stats, status / flag / assign, call ──
+export async function fetchConversationList(params: ConversationListParams) {
+  const { data } = await api.get<ApiEnvelope<Conversation[]>>('/conversations', { params });
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Manager roles only (the server 403s others; the page treats that as no stats).
+export async function fetchConversationStats(params: { category?: string; staffPhoneNumberId?: string }) {
+  const { data } = await api.get<ApiEnvelope<ConversationStats>>('/conversations/stats', { params });
+  return data.data;
+}
+
+export async function updateConversationStatus(id: string, status: string) {
+  const { data } = await api.put<ApiEnvelope<Conversation>>(`/conversations/${id}/status`, { status });
+  return data.data;
+}
+
+export async function flagConversationHighValue(id: string, isHighValue: boolean) {
+  const { data } = await api.put<ApiEnvelope<Conversation>>(`/conversations/${id}/flag`, { isHighValue });
+  return data.data;
+}
+
+export async function assignConversation(id: string, assignedToId: string) {
+  const { data } = await api.put<ApiEnvelope<Conversation>>(`/conversations/${id}/assign`, { assignedToId });
+  return data.data;
+}
+
+// OWNER only: the business numbers shown as filter tabs under Customer.
+export async function fetchStaffPhoneNumbers() {
+  const { data } = await api.get<ApiEnvelope<StaffPhoneNumberRow[]>>('/staff-phone-numbers');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Click-to-call: only the conversation id is sent; the server looks the number up.
+export async function initiateConversationCall(conversationId: string) {
+  const { data } = await api.post<ApiEnvelope<unknown>>('/calls/initiate', {
+    conversationId,
+    idempotencyKey: `${conversationId}-${Date.now()}`,
+  });
+  return data;
+}
+
+// ── Conversations Phase 2 ──
+// OWNER / STORE_MANAGER get full recordings; the server 403s anyone else.
+export async function fetchConversationCallRecordings(conversationId: string) {
+  const { data } = await api.get<ApiEnvelope<ConversationCallRecording[]>>('/call-recordings', { params: { conversationId } });
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// A salesperson's own calls: summary text only, no audio.
+export async function fetchConversationCallSummaries() {
+  const { data } = await api.get<ApiEnvelope<ConversationCallSummary[]>>('/call-recordings/my-summary');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function retranscribeCallRecording(id: string) {
+  const { data } = await api.post<ApiEnvelope<{ queued: boolean }>>(`/call-recordings/${id}/retranscribe`);
+  return data;
+}
+
+export async function createConversation(input: CreateConversationInput) {
+  const { data } = await api.post<ApiEnvelope<Conversation>>('/conversations', input);
+  return data.data;
+}
+
+// OWNER only (Manage Numbers).
+export async function fetchWabaNumbers() {
+  const { data } = await api.get<ApiEnvelope<WabaNumber[]>>('/staff-phone-numbers/waba-numbers');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function saveStaffPhoneNumber(input: { phoneNumberId: string; displayPhone: string; employeeId: string | null }) {
+  const { data } = await api.post<ApiEnvelope<StaffPhoneNumberRow>>('/staff-phone-numbers', input);
+  return data.data;
+}
+
+// ── Quotations, dashboard parity ──
+// The list the dashboard page reads: server paging (page/limit/search/status) with the total count.
+export async function fetchQuotationsPage(params: { page: number; limit: number; search?: string; status?: string }) {
+  const { data } = await api.get<ApiEnvelope<PaginatedResponse<QuotationListItem> | QuotationListItem[]>>('/quotations', {
+    params: { page: params.page, limit: params.limit, search: params.search || undefined, status: params.status || undefined },
+  });
+  const body = data.data;
+  if (Array.isArray(body)) return { items: body, total: body.length };
+  return { items: body?.data ?? [], total: body?.total ?? 0 };
+}
+
+// GET /quotations/:id with the supplier block, per-line GST and salesperson (what the dashboard edit modal and print page read).
+export async function fetchQuotationFull(id: string) {
+  const { data } = await api.get<ApiEnvelope<QuotationFull>>(`/quotations/${id}`);
+  return data.data;
+}
+
+// POST /quotations / PUT /quotations/:id with the dashboard's own payload shape (the wizard adds manualAmounts, the edit modal gstRate).
+export async function createQuotationRaw(body: Record<string, unknown>) {
+  const { data } = await api.post<ApiEnvelope<{ id: string; quotationNumber: string }>>('/quotations', body);
+  return data.data;
+}
+
+export async function updateQuotationRaw(id: string, body: Record<string, unknown>) {
+  const { data } = await api.put<ApiEnvelope<unknown>>(`/quotations/${id}`, body);
+  return data.data;
+}
+
+// Salesperson picker source (the dashboard reuses the invoices endpoint).
+export async function fetchQuotationStaff() {
+  const { data } = await api.get<ApiEnvelope<QuotationStaffOption[]>>('/invoices/staff-directory');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// Line-item picker search — local inventory, 2+ characters.
+export async function searchQuotationItems(q: string) {
+  const { data } = await api.get<ApiEnvelope<QuotationItemSearchResult[]>>('/inventory-items/search', { params: { q } });
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function verifyQuotationGstin(gstin: string) {
+  const { data } = await api.get<ApiEnvelope<QuotationGstData>>(`/gst/verify/${encodeURIComponent(gstin)}`);
+  return data.data;
+}
+
+export async function lookupQuotationVehicle(regNo: string) {
+  const { data } = await api.get<ApiEnvelope<QuotationVehicleData>>(`/vehicle/${encodeURIComponent(regNo)}`);
+  return data.data;
+}
+
+// ── Devices, dashboard parity ──
+// GET /devices with the dashboard's own filters (deviceType, status = online | offline | locked).
+export async function fetchDevicesFull(params?: { deviceType?: string; status?: string }) {
+  const { data } = await api.get<ApiEnvelope<{ devices: DeviceFull[] }>>('/devices', { params: params && Object.keys(params).length ? params : undefined });
+  return data.data?.devices ?? [];
+}
+
+export async function unenrollDevice(id: string) {
+  const { data } = await api.delete<ApiEnvelope<unknown>>(`/devices/${id}`);
+  return data.data;
+}
+
+export async function fetchDeviceAlertsFull() {
+  const { data } = await api.get<ApiEnvelope<DeviceAlertFull[]>>('/devices/alerts');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// ── Sales Invoices, dashboard parity ──
+export async function fetchInvoiceStats() {
+  const { data } = await api.get<InvoiceStats>('/invoices/stats');
+  return data;
+}
+
+// The dashboard list: server paging + status / date filters + sortable columns. Returns rows and the total count.
+export async function fetchInvoicesPage(params: { page: number; limit: number; sortBy: string; sortDir: 'asc' | 'desc'; search?: string; status?: string; from?: string; to?: string }) {
+  const { data } = await api.get<unknown>('/invoices', {
+    params: { page: params.page, limit: params.limit, sortBy: params.sortBy, sortDir: params.sortDir, search: params.search || undefined, status: params.status || undefined, from: params.from || undefined, to: params.to || undefined },
+  });
+  const root = data as { data?: unknown; invoices?: unknown; total?: number; count?: number } | unknown[];
+  const raw = (Array.isArray(root) ? root : ((root as { data?: unknown }).data ?? root)) as { invoices?: InvoiceRow[]; data?: InvoiceRow[]; total?: number; count?: number } | InvoiceRow[];
+  if (Array.isArray(raw)) return { items: raw, total: raw.length };
+  return { items: raw.invoices ?? raw.data ?? [], total: raw.total ?? raw.count ?? 0 };
+}
+
+export async function fetchInvoiceFull(id: string) {
+  const { data } = await api.get<ApiEnvelope<InvoiceFull>>(`/invoices/${id}`);
+  return data.data;
+}
+
+export async function fetchInvoicePaymentHistory(id: string) {
+  const { data } = await api.get<ApiEnvelope<InvoicePaymentHistoryRow[]>>(`/payments/history/${id}`);
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function fetchInvoiceReport(params: Record<string, string>) {
+  const { data } = await api.get<{ summary?: { invoiceCount?: number; totalRevenue?: number; totalCollected?: number; totalOutstanding?: number }; totalInvoices?: number; totalBilled?: number; totalCollected?: number; totalOutstanding?: number; invoices?: InvoiceRow[] }>('/invoices/reports', { params });
+  const d = data;
+  return {
+    totalInvoices: d?.summary?.invoiceCount ?? d?.totalInvoices ?? 0,
+    totalBilled: d?.summary?.totalRevenue ?? d?.totalBilled ?? 0,
+    totalCollected: d?.summary?.totalCollected ?? d?.totalCollected ?? 0,
+    totalOutstanding: d?.summary?.totalOutstanding ?? d?.totalOutstanding ?? 0,
+    invoices: d?.invoices ?? [],
+  } as InvoiceReport;
+}
+
+export async function fetchOpenInvoices() {
+  const { data } = await api.get<ApiEnvelope<OpenInvoiceRow[]>>('/invoices/open');
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+export async function cancelInvoice(id: string) {
+  const { data } = await api.patch<ApiEnvelope<unknown>>(`/invoices/${id}/cancel`);
+  return data.data;
+}
+
+export async function deleteInvoice(id: string) {
+  const { data } = await api.delete<ApiEnvelope<unknown>>(`/invoices/${id}`);
+  return data.data;
+}
+
+export async function updateInvoiceRaw(id: string, body: Record<string, unknown>) {
+  const { data } = await api.put<ApiEnvelope<unknown>>(`/invoices/${id}`, body);
+  return data.data;
+}
+
+export async function createInvoiceRaw(body: Record<string, unknown>) {
+  const { data } = await api.post<ApiEnvelope<{ id: string; invoiceNumber: string }>>('/invoices', body);
+  return data.data;
+}
+
+// POST /invoices/:id/pay — the wizard's payment call (CASH | UPI | CARD). Returns the updated invoice figures.
+export async function payInvoice(id: string, body: { paymentMethod: string; amount: number; salespersonId?: string }) {
+  const { data } = await api.post<ApiEnvelope<{ invoiceNumber?: string; grandTotal?: number; balanceDue?: number; status?: string }>>(`/invoices/${id}/pay`, body);
+  return data.data;
+}
+
+export async function notifyInvoice(id: string, channels: string[], pdfUrl: string) {
+  const { data } = await api.post<ApiEnvelope<unknown>>(`/invoices/${id}/notify`, { channels, pdfUrl });
+  return data.data;
+}
+
+// ── SIM Tracker, dashboard parity ──
+// The dashboard sends explicit nulls for blank fields so an edit really clears them (PUT only touches fields that
+// are present in the body); the typed createSim/updateSim above drop blanks to undefined, which would not.
+export async function saveSimRaw(id: number | null, body: Record<string, unknown>) {
+  const { data } = id == null
+    ? await api.post<ApiEnvelope<SimCard>>('/sims', body)
+    : await api.put<ApiEnvelope<SimCard>>(`/sims/${id}`, body);
+  return data.data;
+}
+
+// New Entry (dashboard /dashboard/entry) — exact dashboard shapes. Added for the New Entry parity pass.
+export interface NewEntryLookupCustomer {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string | null;
+  gstin?: string | null;
+  address?: string | null;
+  visitCount: number;
+  isRegular?: boolean;
+}
+
+// POST /job-cards body exactly as the dashboard sends it: every form field as a string, plus noVehicle/customerRole/owner*.
+export interface NewEntryDashboardPayload {
+  customerPhone: string;
+  customerName: string;
+  customerEmail: string;
+  customerAddress: string;
+  customerGSTIN: string;
+  customerSource: string;
+  vehicleNumber: string;
+  vehicleMake: string;
+  vehicleModel: string;
+  vehicleYear: string;
+  vehicleFuel: string;
+  vehicleColour: string;
+  reasonForVisit: string;
+  estimatedTotal: string;
+  handledById: string;
+  visitDate: string;
+  noVehicle: boolean;
+  customerRole: 'OWNER' | 'DRIVER';
+  ownerName?: string;
+  ownerPhone?: string;
+}
+
+export async function lookupNewEntryCustomer(phone: string) {
+  const { data } = await api.get<NewEntryLookupCustomer | null>('/job-cards/lookup', { params: { phone } });
+  return data;
+}
+
+export async function fetchNewEntryHandledBy() {
+  const { data } = await api.get<{ id: string; name: string; role: string; designation?: string }[] | { employees?: { id: string; name: string; role: string; designation?: string }[] }>('/employees/handled-by');
+  return Array.isArray(data) ? data : (data?.employees ?? []);
+}
+
+export async function submitNewEntryJobCard(payload: NewEntryDashboardPayload) {
+  const { data } = await api.post<{ jobCard: { id: string; jobNumber: string }; invoice?: { id: string } }>('/job-cards', payload);
+  return data;
+}
+
+// Dashboard uploads every picked file in ONE multipart request, field name 'files' (max 20), 120 s timeout.
+export async function uploadNewEntryInspectionFiles(jobId: string, files: { uri: string; name: string; mimeType: string }[]) {
+  const form = new FormData();
+  files.forEach((f) => form.append('files', { uri: f.uri, name: f.name, type: f.mimeType } as any));
+  const { data } = await api.post(`/job-cards/${jobId}/inspection-media`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+  return data;
+}
+
+// ── All Timesheets (dashboard /dashboard/timesheets parity) ────────────────
+// GET /timesheets/summary — requireManagerOrOwner; the page's "Pending Review" card.
+export async function fetchTimesheetSummaryCounts() {
+  const { data } = await api.get<ApiEnvelope<{ submittedToday: number; pendingApproval: number; notSubmittedToday: unknown }>>('/timesheets/summary');
+  return data.data;
+}
+
+// Same route as replyToTimesheetEntry plus the dashboard's `mentions` (ids picked in the @ dropdown).
+export async function replyToTimesheetEntryMentions(timesheetId: string, entryId: string, message: string, mentions: string[]) {
+  const { data } = await api.post<ApiEnvelope<TimesheetEntryReply>>(`/timesheets/${timesheetId}/entries/${entryId}/reply`, { message, mentions });
+  return data.data;
+}
+
+export async function replyToWorkDocMentions(workDocId: string, message: string, mentions: string[]) {
+  const { data } = await api.post<ApiEnvelope<{ reply: WorkDocReply; task: TimesheetFollowUpTask }>>(`/work-docs/${workDocId}/reply`, { message, mentions });
+  return data.data;
+}
+
+// GET /timesheets (manager: everyone) paged at the server max of 200, for the phone-built CSV export that
+// stands in for the dashboard's server-side GET /timesheets/export .xlsx (same rows/columns, see the screen).
+export async function fetchTimesheetsForCsvExport(dateFrom: string, dateTo: string) {
+  type Row = { date: string; entries: { task: string; hours: number; notes?: string }[] | null; totalHours: number; notes: string | null; status: string; user: { name: string; designation: string | null } };
+  const all: Row[] = [];
+  for (let page = 1; page <= 50; page++) {
+    const { data } = await api.get<ApiEnvelope<{ timesheets: Row[]; totalPages: number }>>('/timesheets', { params: { dateFrom, dateTo, page, limit: 200 } });
+    all.push(...data.data.timesheets);
+    if (page >= data.data.totalPages) break;
+  }
+  return all;
+}
+
+// GET /timesheets?userId=… — one employee's timesheets, newest first, capped at 200 like the dashboard's Timesheet tab.
+// (Managers only see another person's rows; the server scopes everyone else to their own.)
+export async function fetchEmployeeTimesheetEntries(userId: string) {
+  const { data } = await api.get<ApiEnvelope<{ timesheets: EmployeeTimesheetEntry[] }>>('/timesheets', { params: { userId, limit: 200 } });
+  return data.data?.timesheets ?? [];
+}
+
+// All Customers → "Download CSV" (dashboard customers/page.tsx downloadCsv): GET /crm/customers/export with the
+// same filters as the list (fromDate, toDate, source, search + searchBy). The server builds the CSV (one row per
+// visit) and allows OWNER / STORE_MANAGER / HR / CASHIER only. Saved to the cache with the dashboard's file name.
+export async function downloadCustomersCsv(filters: {
+  fromDate?: string;
+  toDate?: string;
+  source?: string;
+  search?: string;
+  searchBy?: string;
+}): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const q: string[] = [];
+  if (filters.fromDate) q.push(`fromDate=${encodeURIComponent(filters.fromDate)}`);
+  if (filters.toDate) q.push(`toDate=${encodeURIComponent(filters.toDate)}`);
+  if (filters.source) q.push(`source=${encodeURIComponent(filters.source)}`);
+  if (filters.search?.trim()) {
+    q.push(`search=${encodeURIComponent(filters.search.trim())}`);
+    q.push(`searchBy=${encodeURIComponent(filters.searchBy ?? 'name')}`);
+  }
+  const filename = `customers_jobs_${filters.fromDate || 'all'}_to_${filters.toDate || 'today'}.csv`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/crm/customers/export${q.length ? `?${q.join('&')}` : ''}`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    throw new Error(`CSV export failed (error ${result.status}).`);
+  }
+  return { uri: result.uri, filename };
+}
+
+// POST /auth/forgot-password — public. Same body as the dashboard's forgot-password page; the backend always answers
+// success for an unknown username (no enumeration) and sends the reset link, which opens the dashboard's reset page.
+export async function requestPasswordReset(username: string) {
+  const { data } = await api.post<{ success: boolean; message: string; noContact?: boolean }>('/auth/forgot-password', { username });
+  return data;
 }

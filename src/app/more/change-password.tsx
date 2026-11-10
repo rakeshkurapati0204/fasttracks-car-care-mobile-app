@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { changeMyPassword, getErrorMessage } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { tokenStorage } from '@/lib/token-storage';
 
 // Mirrors backend/src/routes/auth.ts POST /auth/change-password exactly —
@@ -16,6 +17,9 @@ export default function ChangePasswordScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const router = useRouter();
+  const { user, markPasswordChanged } = useAuth();
+  // Forced change after sign-in (mustChangePassword): finish by going to Overview, like the dashboard.
+  const [forced] = useState(() => !!user?.mustChangePassword);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -42,6 +46,7 @@ export default function ChangePasswordScreen() {
     try {
       const token = await changeMyPassword(currentPassword, newPassword);
       await tokenStorage.set(token);
+      markPasswordChanged();
       setDone(true);
     } catch (err: any) {
       setError(getErrorMessage(err, 'Could not change your password.'));
@@ -56,7 +61,7 @@ export default function ChangePasswordScreen() {
         <Stack.Screen options={{ title: 'Change Password' }} />
         <ScrollView contentContainerStyle={[styles.content, styles.center, { paddingBottom: insets.bottom + Spacing.three }]}>
           <ThemedText type="smallBold">Password changed successfully.</ThemedText>
-          <Pressable onPress={() => router.back()} style={[styles.button, { backgroundColor: theme.primary }]}>
+          <Pressable onPress={() => (forced ? router.replace('/more/overview' as never) : router.back())} style={[styles.button, { backgroundColor: theme.primary }]}>
             <ThemedText style={styles.buttonLabel}>Done</ThemedText>
           </Pressable>
         </ScrollView>

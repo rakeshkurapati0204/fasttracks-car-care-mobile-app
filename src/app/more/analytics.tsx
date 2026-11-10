@@ -1,24 +1,29 @@
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BarChart } from '@/components/analytics/bar-chart';
-import { GlassCard } from '@/components/home/glass-card';
+import { HorizontalBarChart, VerticalBarChart } from '@/components/analytics/bar-chart';
+import { ErrorBanner, OverviewStat } from '@/components/overview/parts';
 import { PermissionGate } from '@/components/permission-gate';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
-import { fetchHiringAnalytics, fetchRetentionAnalytics, getErrorMessage } from '@/lib/api';
+import { Card, Skeleton } from '@/components/ui';
+import { FontWeights } from '@/constants/theme';
+import { fetchHiringAnalytics, fetchRetentionAnalytics } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import type { HiringAnalytics, RetentionAnalytics } from '@/types/api';
 
-// GET /analytics/* is router.use(verifyToken, requireHRModuleAccess)
-// (backend/src/routes/analytics.ts): OWNER/STORE_MANAGER/HR/ACCOUNTING, or
-// anyone granted the hr_module tab. Those four roles pass statically; anyone
-// else goes through PermissionGate('hr_module') — fail-closed, same as the
-// server.
-const ANALYTICS_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'ACCOUNTING'];
+// GET /analytics/* is requireHRModuleAccess: OWNER/STORE_MANAGER/HR/ACCOUNTING,
+// or anyone granted the hr_module tab (checked by PermissionGate, fail-closed).
+const ADMIN_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'ACCOUNTING'];
+const WIDE_MIN = 560;
+
+// The dashboard's colours.
+const GREEN = '#36C87E';
+const RED = '#e06868';
+const AMBER = '#f59e0b';
+const BLUE = '#6AA4CC';
 
 const STAGE_LABELS: Record<keyof HiringAnalytics['stagesCompletedBeforeRejection'], string> = {
   NONE: 'None',
@@ -27,137 +32,136 @@ const STAGE_LABELS: Record<keyof HiringAnalytics['stagesCompletedBeforeRejection
   ASSESSED: 'Assessed',
 };
 
-function fmtDate(d: string) {
-  return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-function plural(n: number, word: string) {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
-
-function StatTile({ label, value, color, note }: { label: string; value: string | number | null; color?: string; note?: string }) {
+// Stat tiles: 2 per row on a phone, `wideCols` per row at 560 or wider
+// (dashboard `grid-cols-2 sm:grid-cols-N`).
+function TileGrid({ wide, wideCols, children }: { wide: boolean; wideCols: number; children: ReactNode[] }) {
+  const cols = wide ? wideCols : 2;
+  const rows: ReactNode[][] = [];
+  for (let i = 0; i < children.length; i += cols) rows.push(children.slice(i, i + cols));
   return (
-    <ThemedView type="backgroundElement" style={styles.tile}>
-      <ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>
-      <ThemedText type="subtitle" style={color ? { color } : undefined}>{value === null ? '—' : value}</ThemedText>
-      {note ? <ThemedText type="small" themeColor="textSecondary">{note}</ThemedText> : null}
-    </ThemedView>
+    <View style={styles.grid}>
+      {rows.map((row, r) => (
+        <View key={r} style={styles.gridRow}>
+          {row.map((c, i) => <View key={i} style={styles.cell}>{c}</View>)}
+          {Array.from({ length: cols - row.length }).map((_, k) => <View key={`p${k}`} style={styles.cell} />)}
+        </View>
+      ))}
+    </View>
   );
 }
 
-function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <GlassCard>
-      <ThemedText style={styles.error}>{message}</ThemedText>
-      <Pressable onPress={onRetry} style={styles.button}>
-        <ThemedText style={styles.buttonLabel}>Retry</ThemedText>
-      </Pressable>
-    </GlassCard>
+    <View>
+      <ThemedText style={styles.h2}>{title}</ThemedText>
+      <ThemedText themeColor="textMuted" style={styles.subtitle}>{subtitle}</ThemedText>
+    </View>
   );
 }
 
-function HiringSection({ data }: { data: HiringAnalytics }) {
-  const stageRows = (Object.keys(STAGE_LABELS) as (keyof typeof STAGE_LABELS)[])
-    .map((k) => ({ label: STAGE_LABELS[k], value: data.stagesCompletedBeforeRejection[k] }));
-  // Roles with no averageable scorecard (all flagged) are skipped, as on the dashboard.
-  const roleRows = data.avgScoreByRole
+function Loading() {
+  return <Card padding="md"><Skeleton height={20} width="30%" /><Skeleton height={64} /><Skeleton height={160} /></Card>;
+}
+
+function HiringSection({ data, wide }: { data: HiringAnalytics; wide: boolean }) {
+  const stageData = (Object.keys(STAGE_LABELS) as (keyof typeof STAGE_LABELS)[]).map((key) => ({
+    label: STAGE_LABELS[key],
+    value: data.stagesCompletedBeforeRejection[key],
+    tip: `Rejected applications: ${data.stagesCompletedBeforeRejection[key]}`,
+  }));
+  const roleData = data.avgScoreByRole
     .filter((r) => r.avgScore !== null)
-    .map((r) => ({ label: r.role, value: r.avgScore as number, caption: `${plural(r.scoredCount, 'scorecard')}${r.flaggedCount > 0 ? ` · ${r.flaggedCount} flagged excluded` : ''}` }));
+    .map((r) => ({ label: r.role, value: r.avgScore as number, tip: `Avg score: ${r.avgScore} (n=${r.scoredCount})` }));
+
+  const charts = [
+    <Card key="stage" padding="md">
+      <ThemedText style={styles.cardTitle}>Stages Completed Before Rejection</ThemedText>
+      <ThemedText themeColor="textMuted" style={styles.cardNote}>
+        There&apos;s no exact &quot;rejected from stage X&quot; record in the system — status is a single, overwritten value with no history. This shows which AI stages actually ran before each rejected application was marked REJECTED, which is the closest honest signal available.
+      </ThemedText>
+      {data.totalRejected === 0 ? (
+        <ThemedText themeColor="textMuted" style={styles.empty}>No rejected applications yet.</ThemedText>
+      ) : (
+        <VerticalBarChart data={stageData} color={RED} />
+      )}
+    </Card>,
+    <Card key="role" padding="md">
+      <ThemedText style={styles.cardTitle}>Average Interview Score by Role</ThemedText>
+      <ThemedText themeColor="textMuted" style={styles.cardNote}>Excludes applications never interviewed and any AI-flagged (degraded) scorecards.</ThemedText>
+      {roleData.length === 0 ? (
+        <ThemedText themeColor="textMuted" style={styles.empty}>No completed interview scorecards yet.</ThemedText>
+      ) : (
+        <VerticalBarChart data={roleData} color={BLUE} yMax={100} />
+      )}
+    </Card>,
+  ];
 
   return (
-    <View style={styles.section}>
-      <ThemedText type="smallBold">Hiring</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        Time-to-hire, rejection funnel and interview scores across the AI recruitment pipeline.
-      </ThemedText>
+    <View style={styles.sectionStack}>
+      <SectionTitle title="Hiring" subtitle="Time-to-hire, rejection funnel, and interview scores across the AI Recruitment pipeline." />
 
-      {data.totalApplications === 0 ? (
-        <GlassCard>
-          <ThemedText type="small" themeColor="textSecondary">No applications yet.</ThemedText>
-        </GlassCard>
+      <TileGrid wide={wide} wideCols={4}>
+        {[
+          <OverviewStat key="a" label="Total Applications" value={data.totalApplications} />,
+          <OverviewStat key="b" label="Hired" value={data.totalHired} color={GREEN} />,
+          <OverviewStat key="c" label="Rejection Rate" value={data.rejectionRate !== null ? `${data.rejectionRate}%` : '—'} color={RED} />,
+          <OverviewStat key="d" label="Avg. Time to Hire" value={data.avgTimeToHireDays !== null ? `${data.avgTimeToHireDays}d` : '—'} color={AMBER} />,
+        ]}
+      </TileGrid>
+      {data.avgTimeToHireDays !== null ? (
+        <ThemedText themeColor="textMuted" style={[styles.small, styles.pullUp]}>
+          {`Based on ${data.timeToHireSampleSize} converted application${data.timeToHireSampleSize === 1 ? '' : 's'}.`}
+        </ThemedText>
+      ) : null}
+
+      {wide ? (
+        <View style={styles.chartRow}>{charts.map((c, i) => <View key={i} style={styles.cell}>{c}</View>)}</View>
       ) : (
-        <>
-          <View style={styles.tileGrid}>
-            <StatTile label="Total applications" value={data.totalApplications} />
-            <StatTile label="Hired" value={data.totalHired} color="#167A48" />
-            <StatTile label="Rejection rate" value={data.rejectionRate !== null ? `${data.rejectionRate}%` : null} color="#B83030" />
-            <StatTile
-              label="Avg. time to hire"
-              value={data.avgTimeToHireDays !== null ? `${data.avgTimeToHireDays}d` : null}
-              color="#A86018"
-              note={data.avgTimeToHireDays !== null ? `Based on ${plural(data.timeToHireSampleSize, 'hire')}` : 'No hires yet'}
-            />
-          </View>
-
-          <GlassCard>
-            <ThemedText type="smallBold">Stages completed before rejection</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.cardNote}>
-              There is no exact &quot;rejected from stage X&quot; record, so this shows which AI stages had run by the time each application was rejected.
-            </ThemedText>
-            {data.totalRejected === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">No rejected applications yet.</ThemedText>
-            ) : (
-              <BarChart rows={stageRows} color="#B83030" />
-            )}
-          </GlassCard>
-
-          <GlassCard>
-            <ThemedText type="smallBold">Average interview score by role</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.cardNote}>
-              Out of 100. Excludes applicants never interviewed and AI-flagged scorecards.
-            </ThemedText>
-            {roleRows.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">No completed interview scorecards yet.</ThemedText>
-            ) : (
-              <BarChart rows={roleRows} max={100} />
-            )}
-          </GlassCard>
-        </>
+        <View style={styles.sectionStack}>{charts}</View>
       )}
     </View>
   );
 }
 
-function RetentionSection({ data }: { data: RetentionAnalytics }) {
+function RetentionSection({ data, wide }: { data: RetentionAnalytics; wide: boolean }) {
   const hasTracked = data.departedTrackedCount > 0;
-  return (
-    <View style={styles.section}>
-      <ThemedText type="smallBold">Retention</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        Departure date and reason are only captured going forward, from each deactivation — there is no historical backfill.
-      </ThemedText>
+  const n = data.departedNoDataCount;
+  const since = data.earliestTrackedDeparture
+    ? new Date(data.earliestTrackedDeparture).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+    : '—';
+  const reasons = data.reasonBreakdown.map((r) => ({ label: r.reason, value: r.count, tip: `Departures: ${r.count}` }));
 
-      <View style={styles.tileGrid}>
-        <StatTile label="Active employees" value={data.activeCount} />
-        <StatTile label="Tracked departures" value={data.departedTrackedCount} color="#B83030" />
-        <StatTile
-          label="Avg. tenure (tracked)"
-          value={data.avgTenureDays !== null ? `${data.avgTenureDays}d` : null}
-          color="#A86018"
-          note={data.avgTenureDays !== null ? `Based on ${plural(data.tenureSampleSize, 'departure')}` : 'No data'}
-        />
-      </View>
+  return (
+    <View style={styles.sectionStack}>
+      <SectionTitle title="Retention" subtitle="Departure date/reason are only captured going forward, from each deactivation — there is no historical backfill." />
+
+      <TileGrid wide={wide} wideCols={3}>
+        {[
+          <OverviewStat key="a" label="Active Employees" value={data.activeCount} />,
+          <OverviewStat key="b" label="Tracked Departures" value={data.departedTrackedCount} color={RED} />,
+          <OverviewStat key="c" label="Avg. Tenure (tracked)" value={data.avgTenureDays !== null ? `${data.avgTenureDays}d` : '—'} color={AMBER} />,
+        ]}
+      </TileGrid>
 
       {!hasTracked ? (
-        <GlassCard>
-          <ThemedText type="small">
-            No tracked departures yet — this fills in as employees are deactivated with a departure date.
-          </ThemedText>
-          {data.departedNoDataCount > 0 && (
-            <ThemedText type="small" themeColor="textSecondary" style={styles.cardNote}>
-              {plural(data.departedNoDataCount, 'earlier deactivation')} with no departure date on file — excluded from these numbers, not counted as zero.
+        <Card padding="md">
+          <ThemedText style={styles.body}>No tracked departures yet — this section will populate as employees are deactivated with a departure date going forward.</ThemedText>
+          {n > 0 ? (
+            <ThemedText themeColor="textMuted" style={[styles.small, styles.gapTop]}>
+              {`${n} earlier deactivation${n === 1 ? '' : 's'} exist${n === 1 ? 's' : ''} with no departure date on file (from before this feature, or left blank) — excluded from retention numbers, not counted as zero.`}
             </ThemedText>
-          )}
-        </GlassCard>
+          ) : null}
+        </Card>
       ) : (
-        <GlassCard>
-          <ThemedText type="smallBold">Departure reasons</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary" style={styles.cardNote}>
-            Tracking since {data.earliestTrackedDeparture ? fmtDate(data.earliestTrackedDeparture) : '—'}.
-            {data.departedNoDataCount > 0 ? ` ${plural(data.departedNoDataCount, 'additional past deactivation')} with no departure date are not included.` : ''}
+        <>
+          <ThemedText themeColor="textMuted" style={styles.small}>
+            {`Tracking since ${since}.${n > 0 ? ` ${n} additional past deactivation${n === 1 ? '' : 's'} with no departure date on file (not included above).` : ''}`}
           </ThemedText>
-          <BarChart rows={data.reasonBreakdown.map((r) => ({ label: r.reason, value: r.count }))} />
-        </GlassCard>
+          <Card padding="md">
+            <ThemedText style={[styles.cardTitle, styles.gapBottom]}>Departure Reasons</ThemedText>
+            <HorizontalBarChart data={reasons} color={BLUE} />
+          </Card>
+        </>
       )}
     </View>
   );
@@ -165,73 +169,62 @@ function RetentionSection({ data }: { data: RetentionAnalytics }) {
 
 function AnalyticsContent() {
   const insets = useSafeAreaInsets();
+  const [width, setWidth] = useState(0);
   const [hiring, setHiring] = useState<HiringAnalytics | null>(null);
   const [retention, setRetention] = useState<RetentionAnalytics | null>(null);
-  const [hiringError, setHiringError] = useState<string | null>(null);
-  const [retentionError, setRetentionError] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hiringError, setHiringError] = useState(false);
+  const [retentionError, setRetentionError] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Each section loads on its own so one failing endpoint never blanks the other.
   const loadHiring = useCallback(async () => {
-    setHiringError(null);
-    try {
-      setHiring(await fetchHiringAnalytics());
-    } catch (err: any) {
-      setHiringError(getErrorMessage(err, 'Could not load hiring analytics.'));
-    }
+    setHiringError(false);
+    try { setHiring(await fetchHiringAnalytics()); } catch { setHiringError(true); }
   }, []);
-
   const loadRetention = useCallback(async () => {
-    setRetentionError(null);
-    try {
-      setRetention(await fetchRetentionAnalytics());
-    } catch (err: any) {
-      setRetentionError(getErrorMessage(err, 'Could not load retention analytics.'));
-    }
+    setRetentionError(false);
+    try { setRetention(await fetchRetentionAnalytics()); } catch { setRetentionError(true); }
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
     loadHiring();
     loadRetention();
   }, [loadHiring, loadRetention]);
 
   const onRefresh = async () => {
-    setIsRefreshing(true);
+    setRefreshing(true);
     await Promise.all([loadHiring(), loadRetention()]);
-    setIsRefreshing(false);
+    setRefreshing(false);
   };
 
+  const wide = width >= WIDE_MIN;
+  const pad = wide ? 24 : 16;
+
   return (
-    <View style={styles.flex1}>
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <Stack.Screen options={{ title: 'Analytics' }} />
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-      >
-        {hiringError ? (
-          <ErrorCard message={hiringError} onRetry={loadHiring} />
-        ) : hiring === null ? (
-          <ActivityIndicator style={styles.spinner} />
-        ) : (
-          <HiringSection data={hiring} />
-        )}
+        contentContainerStyle={{ padding: pad, paddingBottom: insets.bottom + 40, gap: 32 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        <View>
+          <ThemedText style={styles.h1}>Analytics</ThemedText>
+          <ThemedText themeColor="textMuted" style={styles.subtitle}>Hiring and retention trends across the HR module.</ThemedText>
+        </View>
 
-        {retentionError ? (
-          <ErrorCard message={retentionError} onRetry={loadRetention} />
-        ) : retention === null ? (
-          <ActivityIndicator style={styles.spinner} />
-        ) : (
-          <RetentionSection data={retention} />
-        )}
+        {hiringError ? <ErrorBanner message="Failed to load hiring analytics." onRetry={loadHiring} />
+          : hiring === null ? <Loading /> : <HiringSection data={hiring} wide={wide} />}
+
+        {retentionError ? <ErrorBanner message="Failed to load retention analytics." onRetry={loadRetention} />
+          : retention === null ? <Loading /> : <RetentionSection data={retention} wide={wide} />}
       </ScrollView>
-    </View>
+    </ThemedView>
   );
 }
 
 export default function AnalyticsScreen() {
   const { user } = useAuth();
-  if (ANALYTICS_ROLES.includes(user?.role ?? '')) return <AnalyticsContent />;
+  if (ADMIN_ROLES.includes(user?.role ?? '')) return <AnalyticsContent />;
   return (
     <PermissionGate tabKey="hr_module" deniedMessage="Analytics is available to Owner, Store Manager, HR and Accounting roles, or users granted HR module access.">
       <AnalyticsContent />
@@ -241,13 +234,20 @@ export default function AnalyticsScreen() {
 
 const styles = StyleSheet.create({
   flex1: { flex: 1 },
-  content: { padding: Spacing.three, gap: Spacing.four, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  section: { gap: Spacing.two },
-  spinner: { marginTop: Spacing.three },
-  tileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
-  tile: { flexBasis: '47%', flexGrow: 1, borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.half, minHeight: Layout.minTouchTarget },
-  cardNote: { marginTop: Spacing.one, marginBottom: Spacing.two },
-  error: { color: '#B83030' },
-  button: { marginTop: Spacing.two, height: 48, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  buttonLabel: { color: '#ffffff', fontWeight: '600' },
+  sectionStack: { gap: 16 },
+  grid: { gap: 12 },
+  gridRow: { flexDirection: 'row', gap: 12 },
+  cell: { flex: 1, minWidth: 0 },
+  chartRow: { flexDirection: 'row', gap: 16, alignItems: 'flex-start' },
+  h1: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold },
+  h2: { fontSize: 18, lineHeight: 26, fontFamily: FontWeights.bold },
+  subtitle: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  cardTitle: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  cardNote: { fontSize: 12, lineHeight: 18, marginTop: 4, marginBottom: 12 },
+  empty: { fontSize: 14, lineHeight: 20, textAlign: 'center', paddingVertical: 24 },
+  body: { fontSize: 14, lineHeight: 20 },
+  small: { fontSize: 12, lineHeight: 18 },
+  pullUp: { marginTop: -8 },
+  gapTop: { marginTop: 8 },
+  gapBottom: { marginBottom: 12 },
 });

@@ -18,11 +18,13 @@ export type SelectProps = {
   error?: string;
   required?: boolean;
   disabled?: boolean;
+  /** Small inline field (32pt tall, 12px text), e.g. the job card's "By" picker. */
+  compact?: boolean;
 };
 
 // Dashboard Select, mobile style: an input-looking field that opens a bottom
 // sheet (react-native Modal) with the options. Single-select only.
-export function Select({ options, value, onChange, label, placeholder = 'Select…', error, required, disabled }: SelectProps) {
+export function Select({ options, value, onChange, label, placeholder = 'Select…', error, required, disabled, compact }: SelectProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
@@ -51,9 +53,10 @@ export function Select({ options, value, onChange, label, placeholder = 'Select�
         style={[
           styles.field,
           { backgroundColor: theme.surface, borderColor: error || open ? accent : theme.border },
+          compact && styles.fieldCompact,
           disabled && styles.disabled,
         ]}>
-        <ThemedText numberOfLines={1} style={[styles.value, !selected && { color: theme.textMuted }]}>
+        <ThemedText numberOfLines={1} style={[styles.value, compact && styles.valueCompact, !selected && { color: theme.textMuted }]}>
           {selected ? selected.label : placeholder}
         </ThemedText>
         <Ionicons name="chevron-down" size={18} color={theme.textMuted} />
@@ -107,6 +110,8 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, lineHeight: 18, fontFamily: FontWeights.medium, marginBottom: 4 },
   field: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, borderWidth: 1, borderRadius: Radii.sm, paddingHorizontal: 14, paddingVertical: 10 },
   value: { flex: 1, fontSize: 14, lineHeight: 20 },
+  fieldCompact: { minHeight: 32, paddingVertical: 4, paddingHorizontal: 8, gap: 4 },
+  valueCompact: { fontSize: 12, lineHeight: 16 },
   disabled: { opacity: 0.5 },
   helper: { fontSize: 12, lineHeight: 16, marginTop: 4 },
   overlay: { flex: 1, justifyContent: 'flex-end', alignItems: 'center' },

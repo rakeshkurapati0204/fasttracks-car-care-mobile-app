@@ -1,253 +1,336 @@
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { AccessCard, ACCESS_ACTION_LABELS, ACTION_LOG_LABELS, ActionCard, DateFilter } from '@/components/audit-trail/audit-ui';
-import { GlassCard } from '@/components/home/glass-card';
-import { SelectField } from '@/components/meta-ads/ads-ui';
+import {
+  ACCESS_ACTION_LABELS, ACTION_LOG_LABELS, CellText, FilterCard, LogCard, TableHeader, TableMessage, TableRow, fmtWhen, type Column,
+} from '@/components/audit-trail/audit-ui';
+import { DateField } from '@/components/call-tracker/date-field';
+import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { ThemedView } from '@/components/themed-view';
+import { Card, Select, Skeleton } from '@/components/ui';
+import { FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchActionLog, fetchDocumentAccessLog, fetchEmployees, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import type { ActionLogEntry, DocumentAccessEntry } from '@/types/api';
 
-// Read-only. The action-log and identity-documents/views routes are
-// requireHROrOwner = OWNER/STORE_MANAGER/HR/ACCOUNTING, and the dashboard page
-// is those four roles only (no hr_module override — it carries ID-number and
-// approval data), so this is a static role check, same as onboarding.tsx.
-const AUDIT_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'ACCOUNTING'];
-
+// 4 roles only — no hr_module override: this page carries ID-number and
+// approval data (same rule as the dashboard).
+const ADMIN_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'ACCOUNTING'];
+const WIDE_MIN = 560;
 // The server caps both logs at 200 rows, newest first.
 const SERVER_CAP = 200;
 
 type TabKey = 'documents' | 'actions';
 type Person = { id: string; name: string };
 
-function Filters({ children, onClear, show }: { children: React.ReactNode; onClear: () => void; show: boolean }) {
-  const theme = useTheme();
+const ACCESS_COLUMNS: Column[] = [
+  { title: 'Employee', flex: 1.2 }, { title: 'Document', flex: 1.2 }, { title: 'Action', flex: 1 }, { title: 'Viewed By', flex: 1 }, { title: 'When', flex: 1.2 },
+];
+const ACTION_COLUMNS: Column[] = [
+  { title: 'Action', flex: 1.1 }, { title: 'Subject', flex: 1.1 }, { title: 'Detail', flex: 1.6 }, { title: 'Actor', flex: 1 }, { title: 'When', flex: 1.1 },
+];
+
+type LogListProps<T extends { id: string }> = {
+  header: ReactNode;
+  wide: boolean;
+  rows: T[] | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  columns: Column[];
+  cells: (r: T) => ReactNode[];
+  fields: (r: T) => { label: string; primary: string; sub?: string | null; muted?: boolean }[];
+  empty: string;
+  capLabel: string;
+  refreshing: boolean;
+  onRefresh: () => void;
+  pad: number;
+  bottom: number;
+};
+
+// FlatList of log rows: the page header + filters are its header; a bordered
+// table on wide screens (rows carry side borders so the list reads as one card),
+// stacked cards on a phone.
+function LogList<T extends { id: string }>({ header, wide, rows, loading, error, onRetry, columns, cells, fields, empty, capLabel, refreshing, onRefresh, pad, bottom }: LogListProps<T>) {
+  const data = !loading && rows ? rows : [];
+  const message = loading || rows === null
+    ? <><Skeleton height={16} width="60%" /><Skeleton height={16} width="80%" /><Skeleton height={16} width="50%" /></>
+    : rows.length === 0
+      ? <ThemedText themeColor="textMuted" style={styles.body}>{empty}</ThemedText>
+      : null;
+
   return (
-    <GlassCard>
-      <View style={styles.filters}>{children}</View>
-      {show && (
-        <Pressable onPress={onClear} hitSlop={8} style={styles.clear}>
-          <ThemedText type="small" style={{ color: theme.primary, fontWeight: '600' }}>Clear filters</ThemedText>
-        </Pressable>
-      )}
-    </GlassCard>
+    <FlatList
+      data={data}
+      keyExtractor={(r) => r.id}
+      renderItem={({ item, index }) => (wide
+        ? <TableRow columns={columns} cells={cells(item)} last={index === data.length - 1} />
+        : <LogCard fields={fields(item)} />)}
+      ItemSeparatorComponent={wide ? undefined : Gap}
+      ListHeaderComponent={<View style={styles.header}>{header}{error ? <ErrorBanner message={error} onRetry={onRetry} /> : null}{wide ? <TableHeader columns={columns} /> : null}</View>}
+      ListEmptyComponent={error ? null : wide
+        ? <TableMessage>{message}</TableMessage>
+        : <Card padding="md"><View style={styles.phoneMessage}>{message}</View></Card>}
+      ListFooterComponent={!loading && rows && rows.length >= SERVER_CAP
+        ? <ThemedText themeColor="textMuted" style={[styles.small, styles.cap]}>{`Showing the most recent ${SERVER_CAP} matching ${capLabel} — narrow the filters to see older ones.`}</ThemedText>
+        : null}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      keyboardShouldPersistTaps="handled"
+      initialNumToRender={15}
+      windowSize={7}
+      contentContainerStyle={{ padding: pad, paddingBottom: bottom }}
+    />
   );
 }
 
-function ListState({ error, retry, rows, empty, cap, capLabel, children }: {
-  error: string | null; retry: () => void; rows: unknown[] | null; empty: string; capLabel: string; cap: number; children: React.ReactNode;
-}) {
-  if (error) {
-    return (
-      <GlassCard>
-        <ThemedText style={styles.error}>{error}</ThemedText>
-        <Pressable onPress={retry} style={styles.retry}>
-          <ThemedText style={styles.btnLabel}>Retry</ThemedText>
-        </Pressable>
-      </GlassCard>
-    );
-  }
-  if (rows === null) return <ActivityIndicator style={styles.spinner} />;
-  if (rows.length === 0) return <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>{empty}</ThemedText>;
-  return (
-    <>
-      {children}
-      {rows.length >= cap && (
-        <ThemedText type="small" themeColor="textSecondary">
-          Showing the most recent {cap} matching {capLabel} — narrow the filters to see older ones.
-        </ThemedText>
-      )}
-    </>
-  );
+function Gap() {
+  return <View style={styles.gap} />;
 }
 
-// "Document Access Log" — every document view / reveal.
-function DocumentAccessLog({ employees, refreshSignal, onSettled }: { employees: Person[]; refreshSignal: number; onSettled: () => void }) {
-  const [employeeId, setEmployeeId] = useState('all');
+type TabProps = { header: ReactNode; wide: boolean; employees: Person[]; pad: number; bottom: number };
+
+// "Document Access Log": every document view / reveal.
+function DocumentAccessLog({ header, wide, employees, pad, bottom }: TabProps) {
+  const [employeeId, setEmployeeId] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [action, setAction] = useState('all');
+  const [action, setAction] = useState('');
   const [rows, setRows] = useState<DocumentAccessEntry[] | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
-      setRows(await fetchDocumentAccessLog({
-        employeeId: employeeId === 'all' ? undefined : employeeId,
-        from: from || undefined,
-        to: to || undefined,
-        action: action === 'all' ? undefined : action,
-      }));
-    } catch (err: any) {
+      setRows(await fetchDocumentAccessLog({ employeeId: employeeId || undefined, from: from || undefined, to: to || undefined, action: action || undefined }));
+    } catch (err: unknown) {
+      setRows([]);
       setError(getErrorMessage(err, 'Failed to fetch audit log.'));
     } finally {
-      onSettled();
+      setLoading(false);
     }
-  }, [employeeId, from, to, action, onSettled]);
+  }, [employeeId, from, to, action]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / filter change / pull-to-refresh
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / filter change
     load();
-  }, [load, refreshSignal]);
+  }, [load]);
 
-  const filtersOn = employeeId !== 'all' || !!from || !!to || action !== 'all';
-  const clear = () => { setEmployeeId('all'); setFrom(''); setTo(''); setAction('all'); };
+  const people = useMemo(() => [{ value: '', label: 'All employees' }, ...employees.map((e) => ({ value: e.id, label: e.name }))], [employees]);
+  const actions = useMemo(() => [{ value: '', label: 'All actions' }, ...Object.entries(ACCESS_ACTION_LABELS).map(([value, label]) => ({ value, label }))], []);
+  const filtersOn = !!(employeeId || from || to || action);
 
   return (
-    <View style={styles.stack}>
-      <Filters show={filtersOn} onClear={clear}>
-        <SelectField label="Employee" value={employeeId} onChange={setEmployeeId}
-          options={[{ v: 'all', t: 'All employees' }, ...employees.map((e) => ({ v: e.id, t: e.name }))]} />
-        <View style={styles.dates}>
-          <DateFilter label="From" value={from} onChange={setFrom} />
-          <DateFilter label="To" value={to} onChange={setTo} />
-        </View>
-        <SelectField label="Action" value={action} onChange={setAction}
-          options={[{ v: 'all', t: 'All actions' }, ...Object.entries(ACCESS_ACTION_LABELS).map(([v, t]) => ({ v, t }))]} />
-      </Filters>
-      <ListState error={error} retry={load} rows={rows} empty="No document access events match these filters." cap={SERVER_CAP} capLabel="events">
-        {(rows ?? []).map((r) => <AccessCard key={r.id} row={r} />)}
-      </ListState>
-    </View>
+    <LogList<DocumentAccessEntry>
+      header={
+        <>
+          {header}
+          <FilterCard showClear={filtersOn} onClear={() => { setEmployeeId(''); setFrom(''); setTo(''); setAction(''); }}>
+            <Select label="Employee" options={people} value={employeeId} onChange={setEmployeeId} />
+            <DateField label="From" value={from} onChange={setFrom} />
+            <DateField label="To" value={to} onChange={setTo} />
+            <Select label="Action" options={actions} value={action} onChange={setAction} />
+          </FilterCard>
+        </>
+      }
+      wide={wide}
+      rows={rows}
+      loading={loading}
+      error={error}
+      onRetry={load}
+      columns={ACCESS_COLUMNS}
+      cells={(r) => [
+        <CellText key="e" primary={r.document.user.name} sub={r.document.user.employeeId} />,
+        <CellText key="d" primary={r.document.label || r.document.type.replace(/_/g, ' ')} />,
+        <CellText key="a" primary={ACCESS_ACTION_LABELS[r.action] ?? r.action} />,
+        <CellText key="v" primary={r.viewedBy.name} />,
+        <CellText key="w" primary={fmtWhen(r.createdAt)} muted />,
+      ]}
+      fields={(r) => [
+        { label: 'Employee', primary: r.document.user.name, sub: r.document.user.employeeId },
+        { label: 'Document', primary: r.document.label || r.document.type.replace(/_/g, ' ') },
+        { label: 'Action', primary: ACCESS_ACTION_LABELS[r.action] ?? r.action },
+        { label: 'Viewed By', primary: r.viewedBy.name },
+        { label: 'When', primary: fmtWhen(r.createdAt), muted: true },
+      ]}
+      empty="No document access events match these filters."
+      capLabel="events"
+      refreshing={refreshing}
+      onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+      pad={pad}
+      bottom={bottom}
+    />
   );
 }
 
-// "Action Log" — every hiring / discipline / letter decision HR made.
-function ActionLog({ employees, refreshSignal, onSettled }: { employees: Person[]; refreshSignal: number; onSettled: () => void }) {
-  const [employeeId, setEmployeeId] = useState('all');
-  const [actorId, setActorId] = useState('all');
+// "Action Log": every hiring / discipline / letter decision HR made.
+function ActionLog({ header, wide, employees, pad, bottom }: TabProps) {
+  const [employeeId, setEmployeeId] = useState('');
+  const [actorId, setActorId] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [actionType, setActionType] = useState('all');
+  const [actionType, setActionType] = useState('');
   const [rows, setRows] = useState<ActionLogEntry[] | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
       setRows(await fetchActionLog({
-        employeeId: employeeId === 'all' ? undefined : employeeId,
-        actorId: actorId === 'all' ? undefined : actorId,
-        from: from || undefined,
-        to: to || undefined,
-        actionType: actionType === 'all' ? undefined : actionType,
+        employeeId: employeeId || undefined, actorId: actorId || undefined, from: from || undefined, to: to || undefined, actionType: actionType || undefined,
       }));
-    } catch (err: any) {
+    } catch (err: unknown) {
+      setRows([]);
       setError(getErrorMessage(err, 'Failed to fetch action log.'));
     } finally {
-      onSettled();
+      setLoading(false);
     }
-  }, [employeeId, actorId, from, to, actionType, onSettled]);
+  }, [employeeId, actorId, from, to, actionType]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / filter change / pull-to-refresh
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / filter change
     load();
-  }, [load, refreshSignal]);
+  }, [load]);
 
-  const people = employees.map((e) => ({ v: e.id, t: e.name }));
-  const filtersOn = employeeId !== 'all' || actorId !== 'all' || !!from || !!to || actionType !== 'all';
-  const clear = () => { setEmployeeId('all'); setActorId('all'); setFrom(''); setTo(''); setActionType('all'); };
+  const everyone = useMemo(() => [{ value: '', label: 'Everyone' }, ...employees.map((e) => ({ value: e.id, label: e.name }))], [employees]);
+  const anyone = useMemo(() => [{ value: '', label: 'Anyone' }, ...employees.map((e) => ({ value: e.id, label: e.name }))], [employees]);
+  const types = useMemo(() => [{ value: '', label: 'All actions' }, ...Object.entries(ACTION_LOG_LABELS).map(([value, label]) => ({ value, label }))], []);
+  const filtersOn = !!(employeeId || actorId || from || to || actionType);
 
   return (
-    <View style={styles.stack}>
-      <Filters show={filtersOn} onClear={clear}>
-        <SelectField label="Employee / Candidate" value={employeeId} onChange={setEmployeeId} options={[{ v: 'all', t: 'Everyone' }, ...people]} />
-        <SelectField label="Actor (HR staff)" value={actorId} onChange={setActorId} options={[{ v: 'all', t: 'Anyone' }, ...people]} />
-        <View style={styles.dates}>
-          <DateFilter label="From" value={from} onChange={setFrom} />
-          <DateFilter label="To" value={to} onChange={setTo} />
-        </View>
-        <SelectField label="Action type" value={actionType} onChange={setActionType}
-          options={[{ v: 'all', t: 'All actions' }, ...Object.entries(ACTION_LOG_LABELS).map(([v, t]) => ({ v, t }))]} />
-      </Filters>
-      <ListState error={error} retry={load} rows={rows} empty="No HR actions match these filters." cap={SERVER_CAP} capLabel="actions">
-        {(rows ?? []).map((r) => <ActionCard key={r.id} row={r} />)}
-      </ListState>
-    </View>
+    <LogList<ActionLogEntry>
+      header={
+        <>
+          {header}
+          <FilterCard showClear={filtersOn} onClear={() => { setEmployeeId(''); setActorId(''); setFrom(''); setTo(''); setActionType(''); }}>
+            <Select label="Employee / Candidate" options={everyone} value={employeeId} onChange={setEmployeeId} />
+            <Select label="Actor (HR staff)" options={anyone} value={actorId} onChange={setActorId} />
+            <DateField label="From" value={from} onChange={setFrom} />
+            <DateField label="To" value={to} onChange={setTo} />
+            <Select label="Action type" options={types} value={actionType} onChange={setActionType} />
+          </FilterCard>
+        </>
+      }
+      wide={wide}
+      rows={rows}
+      loading={loading}
+      error={error}
+      onRetry={load}
+      columns={ACTION_COLUMNS}
+      cells={(r) => [
+        <CellText key="a" primary={ACTION_LOG_LABELS[r.actionType] ?? r.actionType} />,
+        <CellText key="s" primary={r.subjectName ?? '—'} sub={r.subjectEmployeeId} />,
+        <CellText key="d" primary={r.detail} />,
+        <CellText key="c" primary={r.actorName} />,
+        <CellText key="w" primary={fmtWhen(r.timestamp)} muted />,
+      ]}
+      fields={(r) => [
+        { label: 'Action', primary: ACTION_LOG_LABELS[r.actionType] ?? r.actionType },
+        { label: 'Subject', primary: r.subjectName ?? '—', sub: r.subjectEmployeeId },
+        { label: 'Detail', primary: r.detail },
+        { label: 'Actor', primary: r.actorName },
+        { label: 'When', primary: fmtWhen(r.timestamp), muted: true },
+      ]}
+      empty="No HR actions match these filters."
+      capLabel="actions"
+      refreshing={refreshing}
+      onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+      pad={pad}
+      bottom={bottom}
+    />
   );
 }
 
 export default function AuditTrailScreen() {
-  const insets = useSafeAreaInsets();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const allowed = AUDIT_ROLES.includes(user?.role ?? '');
+  const allowed = ADMIN_ROLES.includes(user?.role ?? '');
 
+  const [width, setWidth] = useState(0);
   const [tab, setTab] = useState<TabKey>('documents');
   const [employees, setEmployees] = useState<Person[]>([]);
-  const [refreshSignal, setRefreshSignal] = useState(0);
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     if (!allowed) return;
-    // The pickers are a convenience — if the employee list can't load they stay
-    // empty (as on the dashboard) and the logs still work unfiltered.
+    // The pickers are a convenience: if the list can't load they stay empty (as
+    // on the dashboard) and the logs still work unfiltered.
     fetchEmployees()
       .then((list) => setEmployees(list.filter((e) => e.isActive).map((e) => ({ id: e.id, name: e.name }))))
       .catch(() => setEmployees([]));
   }, [allowed]);
 
-  const onSettled = useCallback(() => setIsRefreshing(false), []);
-  const onRefresh = () => { setIsRefreshing(true); setRefreshSignal((n) => n + 1); };
-
   if (!allowed) {
     return (
-      <View style={[styles.content, styles.flex1]}>
+      <ThemedView style={styles.denied}>
         <Stack.Screen options={{ title: 'Audit Trail' }} />
-        <ThemedText type="small" themeColor="textSecondary">
-          Audit Trail is available to Owner, Store Manager, HR and Accounting roles only.
-        </ThemedText>
-      </View>
+        <ThemedText themeColor="textMuted" style={styles.body}>Audit Trail is available to Owner, Store Manager, HR and Accounting roles only.</ThemedText>
+      </ThemedView>
     );
   }
 
-  return (
-    <View style={styles.flex1}>
-      <Stack.Screen options={{ title: 'Audit Trail' }} />
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-        keyboardShouldPersistTaps="handled"
-      >
-        <ThemedText type="small" themeColor="textSecondary">
+  const wide = width >= WIDE_MIN;
+  const pad = wide ? 24 : 16;
+
+  const header = (
+    <View style={styles.headerStack}>
+      <View>
+        <ThemedText style={styles.h1}>Audit Trail</ThemedText>
+        <ThemedText themeColor="textMuted" style={styles.subtitle}>
           Document Access Log — every document view/reveal — and the HR Action Log — every hiring/discipline/letter decision HR made.
         </ThemedText>
-
-        <View style={styles.tabs}>
-          {([['documents', 'Document Access Log'], ['actions', 'Action Log']] as [TabKey, string][]).map(([key, label]) => (
-            <Pressable key={key} onPress={() => setTab(key)} style={[styles.tab, { backgroundColor: tab === key ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={tab === key ? styles.tabActive : undefined}>{label}</ThemedText>
+      </View>
+      <View style={[styles.switcher, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+        {([['documents', 'Document Access Log'], ['actions', 'Action Log']] as [TabKey, string][]).map(([key, label]) => {
+          const active = tab === key;
+          return (
+            <Pressable
+              key={key}
+              onPress={() => setTab(key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              style={[styles.pill, { backgroundColor: active ? theme.primary : 'transparent' }]}>
+              <ThemedText style={[styles.pillText, { color: active ? '#fff' : theme.textMuted }]}>{label}</ThemedText>
             </Pressable>
-          ))}
-        </View>
-
-        {tab === 'documents'
-          ? <DocumentAccessLog employees={employees} refreshSignal={refreshSignal} onSettled={onSettled} />
-          : <ActionLog employees={employees} refreshSignal={refreshSignal} onSettled={onSettled} />}
-      </ScrollView>
+          );
+        })}
+      </View>
     </View>
+  );
+
+  const common = { header, wide, employees, pad, bottom: insets.bottom + 40 };
+
+  return (
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: 'Audit Trail' }} />
+      {tab === 'documents' ? <DocumentAccessLog key="documents" {...common} /> : <ActionLog key="actions" {...common} />}
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   flex1: { flex: 1 },
-  content: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  tabs: { flexDirection: 'row', gap: Spacing.one, flexWrap: 'wrap' },
-  tab: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.one + 2, borderRadius: Spacing.four },
-  tabActive: { color: '#ffffff', fontWeight: '600' },
-  stack: { gap: Layout.cardGap },
-  filters: { gap: Spacing.three },
-  dates: { flexDirection: 'row', gap: Spacing.two },
-  clear: { alignSelf: 'flex-start', marginTop: Spacing.three },
-  spinner: { marginTop: Spacing.three },
-  empty: { textAlign: 'center', paddingVertical: Spacing.four },
-  error: { color: '#B83030' },
-  retry: { marginTop: Spacing.two, height: 48, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  btnLabel: { color: '#ffffff', fontWeight: '600' },
+  denied: { flex: 1, padding: 24 },
+  header: { gap: 16, marginBottom: 16 },
+  headerStack: { gap: 16 },
+  h1: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold },
+  subtitle: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  body: { fontSize: 14, lineHeight: 20 },
+  small: { fontSize: 12, lineHeight: 18 },
+  switcher: { flexDirection: 'row', flexWrap: 'wrap', alignSelf: 'flex-start', gap: 4, padding: 4, borderRadius: Radii.sm, borderWidth: 1 },
+  pill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, minHeight: 36, justifyContent: 'center' },
+  pillText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
+  gap: { height: 8 },
+  phoneMessage: { gap: 8, alignItems: 'center' },
+  cap: { marginTop: 12 },
 });

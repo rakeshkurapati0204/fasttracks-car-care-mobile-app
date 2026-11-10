@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AttendanceChart } from '@/components/overview/attendance-chart';
 import { DailyBreakdown } from '@/components/overview/daily-breakdown';
 import { DateChip } from '@/components/overview/date-chip';
-import { CompactListCard, ErrorBanner, LinkText, OverviewStat, OverviewStatSkeleton, SectionLabel, StatGrid, StatusBadge, useIsTablet } from '@/components/overview/parts';
+import { CompactListCard, ErrorBanner, LinkText, OverviewFrame, OverviewStat, OverviewStatSkeleton, SectionLabel, StatGrid, StatusBadge, useIsTablet } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
 import { Badge, Button, Card, Input, ListRow, Skeleton, SkeletonList } from '@/components/ui';
 import { FontWeights, Radii, Spacing, withAlpha } from '@/constants/theme';
@@ -266,6 +266,14 @@ function QuickActions() {
 }
 
 function OwnerOverviewScreen() {
+  return (
+    <OverviewFrame>
+      <OwnerOverviewBody />
+    </OverviewFrame>
+  );
+}
+
+function OwnerOverviewBody() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const theme = useTheme();
@@ -464,7 +472,7 @@ function OwnerOverviewScreen() {
       <Stack.Screen options={{ title: 'Overview' }} />
       <ScrollView
         style={{ backgroundColor: theme.background }}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
+        contentContainerStyle={[styles.content, { padding: isTablet ? Spacing.four : Spacing.three, paddingBottom: insets.bottom + Spacing.three }]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}>
         {/* Header */}
         <View style={[styles.header, isTablet && styles.headerRow]}>
@@ -496,8 +504,10 @@ function OwnerOverviewScreen() {
 
         {/* Customer & Walkout Stats */}
         <View style={styles.stack}>
-          <SectionLabel>Customer & Walkout Stats</SectionLabel>
+          <View style={styles.headingRow}>
+            <SectionLabel>Customer & Walkout Stats</SectionLabel>
           <View style={styles.controls}>
+            <ThemedText type="small" themeColor="textMuted">From</ThemedText>
             <DateChip
               value={statsFromDate}
               max={todayStr}
@@ -514,6 +524,7 @@ function OwnerOverviewScreen() {
             {statsRangeChanged && (
               <Button size="sm" onPress={() => { setStatsFromDate(todayStr); setStatsToDate(todayStr); loadStats(todayStr, todayStr); }}>Today</Button>
             )}
+          </View>
           </View>
           {statsError && !statsLoading && <ErrorBanner message={statsError} onRetry={() => loadStats(statsFromDate, statsToDate)} />}
           {statsLoading ? (
@@ -606,6 +617,7 @@ function OwnerOverviewScreen() {
 const styles = StyleSheet.create({
   content: { padding: Spacing.three, gap: Spacing.four, width: '100%' },
   flex1: { flex: 1, minWidth: 0 },
+  headingRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.three },
   stack: { gap: 12 },
   split: { gap: Spacing.three },
   splitRow: { flexDirection: 'row', alignItems: 'flex-start' },

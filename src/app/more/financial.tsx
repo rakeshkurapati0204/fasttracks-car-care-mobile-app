@@ -1,452 +1,540 @@
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { GlassCard } from '@/components/home/glass-card';
+import { Sheet } from '@/components/customers/sheet';
+import { BreakdownPie, CHART_COLORS, formatCurrency, GrowthBarChart, RevenueLineChart, SlabBarChart } from '@/components/financial/charts';
+import { ErrorBanner } from '@/components/overview/parts';
+import { shareCsv } from '@/components/purchase/helpers';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Badge, Button, Card, Skeleton } from '@/components/ui';
+import { Fonts, FontWeights } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
-  fetchCustomerSpendSlabCustomers, fetchCustomerSpendSlabs,
-  fetchFinancialGrowth, fetchFinancialOutstanding, fetchFinancialOverview,
-  fetchFinancialRevenueBreakdown, fetchFinancialTopCustomers, getErrorMessage,
+  fetchCustomerSpendSlabCustomers, fetchCustomerSpendSlabs, fetchFinancialGrowth, fetchFinancialOutstanding,
+  fetchFinancialOverview, fetchFinancialRevenueBreakdown, fetchFinancialRevenueTrend, fetchFinancialTopCustomers,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { usePermissions } from '@/lib/permissions-context';
 import type {
-  CustomerSpendSlab, FinancialOverview, MonthlyGrowthEntry, OutstandingResponse,
-  RevenueBreakdownItem, SlabCustomer, TopCustomerEntry,
+  CustomerSpendSlab, FinancialOverview, MonthlyGrowthEntry, OutstandingJob, RevenueBreakdownItem, SlabCustomer, TopCustomerEntry,
 } from '@/types/api';
 
-// requireManagerOrOwner (backend/src/middleware/auth.ts:83 =
-// [OWNER,STORE_MANAGER,HR,ACCOUNTING,CASHIER]) gates every /financial/*
-// route EXCEPT the two Customer Spend Slabs routes (backend/src/routes/
-// financial.ts, re-verified 2026-09-28), which use a narrower
-// requireRoles('OWNER','STORE_MANAGER') — gated separately below via
-// SLAB_ROLES, not folded into this screen's own VIEW_ROLES. The
-// dashboard's OWN client-side gate is actually a third, different thing
-// (OWNER/STORE_MANAGER always pass, everyone else needs a
-// permissions.financial tab-permission boolean the backend doesn't
-// enforce at all) — mobile intentionally follows the backend's real
-// requireManagerOrOwner array here rather than that dashboard-only flag,
-// same precedent as every other screen in this project.
-const VIEW_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'ACCOUNTING', 'CASHIER'];
-const SLAB_ROLES = ['OWNER', 'STORE_MANAGER'];
+const WIDE_MIN = 560;
 
-const PERIOD_OPTIONS = ['today', 'week', 'month', 'year', 'all'] as const;
+// The shared page-level period drives Breakdown and Customer Spend Slabs. The
+// stat cards, Revenue Trend, Outstanding and Top Customers deliberately don't
+// read it (they stay all-time / fixed window), as on the dashboard.
+const PERIOD_OPTIONS = ['today', 'week', 'month', 'year', 'all'];
 const PERIOD_LABELS: Record<string, string> = { today: 'Today', week: 'This Week', month: 'This Month', year: 'This Year', all: 'All Time' };
 const BREAKDOWN_TABS = ['service', 'employee', 'brand', 'payment_mode'] as const;
 const BREAKDOWN_LABELS: Record<string, string> = { service: 'By Service', employee: 'By Employee', brand: 'By Vehicle Brand', payment_mode: 'By Payment Mode' };
+
 const SLAB_ORDER: CustomerSpendSlab[] = ['BELOW_2L', '2L_TO_5L', '5L_TO_10L', 'ABOVE_10L'];
 const SLAB_LABELS: Record<CustomerSpendSlab, string> = {
   BELOW_2L: 'Below ₹2L', '2L_TO_5L': '₹2L – ₹5L', '5L_TO_10L': '₹5L – ₹10L', ABOVE_10L: 'Above ₹10L',
 };
-
-function formatCurrency(n: number) {
-  return `₹${n.toLocaleString('en-IN')}`;
-}
+// One fixed colour per slab; skips red, which reads as "danger" elsewhere.
+const SLAB_CHART_COLORS = [CHART_COLORS[0], CHART_COLORS[1], CHART_COLORS[2], CHART_COLORS[4]];
 
 function isoDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// week = trailing 7-day window (not calendar week) — matches the
-// dashboard's getPeriodDateParams() exactly.
-function periodToDateParams(period: string): { fromDate?: string; toDate?: string } {
+// 'week' is a trailing 7-day window (not a calendar week), like the backend's getPeriodRange().
+function getPeriodDateParams(period: string): { fromDate?: string; toDate?: string } {
   if (period === 'all') return {};
   const now = new Date();
   let from: Date;
   switch (period) {
     case 'today': from = now; break;
     case 'week': from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+    case 'month': from = new Date(now.getFullYear(), now.getMonth(), 1); break;
     case 'year': from = new Date(now.getFullYear(), 0, 1); break;
-    case 'month':
     default: from = new Date(now.getFullYear(), now.getMonth(), 1);
   }
   return { fromDate: isoDate(from), toDate: isoDate(now) };
 }
 
-function getOverdueBadgeColor(days: number) {
-  if (days > 30) return { bg: 'rgba(224,104,104,0.15)', text: '#e06868' };
-  if (days > 15) return { bg: 'rgba(232,168,40,0.15)', text: '#e8a828' };
-  return { bg: 'rgba(216,136,64,0.15)', text: '#d88840' };
+function overdueVariant(days: number): 'danger' | 'warning' | 'orange' {
+  if (days > 30) return 'danger';
+  if (days > 15) return 'warning';
+  return 'orange';
 }
 
-function csvCell(value: string | number): string {
-  const s = String(value);
-  // Guard against CSV/formula injection: text beginning with = + - @ (or a
-  // leading tab/CR) is executed as a formula by Excel/Sheets. Only string
-  // values can carry this, so prefix them with ' to keep them plain text;
-  // numeric values (including negatives) are left untouched.
-  const safe = typeof value === 'string' && /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
-  return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
-async function shareCsv(filename: string, rows: (string | number)[][]) {
-  const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
-  const uri = `${FileSystem.cacheDirectory}${filename}`;
-  await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
-  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'text/csv' });
+// Responsive grid: `cols` per row, equal widths.
+function Grid({ cols, gap = 16, children }: { cols: number; gap?: number; children: ReactNode[] }) {
+  const items = (Array.isArray(children) ? children : [children]).filter(Boolean);
+  const rows: ReactNode[][] = [];
+  for (let i = 0; i < items.length; i += cols) rows.push(items.slice(i, i + cols));
+  return (
+    <View style={{ gap }}>
+      {rows.map((row, r) => (
+        <View key={r} style={{ flexDirection: 'row', gap }}>
+          {row.map((c, k) => <View key={k} style={styles.cell}>{c}</View>)}
+          {Array.from({ length: cols - row.length }).map((_, k) => <View key={`p${k}`} style={styles.cell} />)}
+        </View>
+      ))}
+    </View>
+  );
 }
 
-type Tab = 'overview' | 'outstanding' | 'topCustomers' | 'breakdown' | 'growth' | 'slabs';
+function Pill({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      style={[styles.pill, { backgroundColor: active ? theme.primary : theme.backgroundElement }]}>
+      <ThemedText style={[styles.pillText, { color: active ? '#ffffff' : theme.textSecondary }]}>{label}</ThemedText>
+    </Pressable>
+  );
+}
+
+function Empty({ text, pad = 24 }: { text: string; pad?: number }) {
+  return <ThemedText themeColor="textMuted" style={[styles.empty, { paddingVertical: pad }]}>{text}</ThemedText>;
+}
+
+function SlabSheet({
+  slab, period, customers, loading, onClose,
+}: { slab: CustomerSpendSlab; period: string; customers: SlabCustomer[]; loading: boolean; onClose: () => void }) {
+  const theme = useTheme();
+  const [search, setSearch] = useState('');
+  const [exportError, setExportError] = useState('');
+  const q = search.trim().toLowerCase();
+  const filtered = q ? customers.filter((c) => c.name.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q)) : customers;
+  const vehicleText = (c: SlabCustomer, sep: string) => c.vehicles.map((v) => [v.make, v.model, v.year].filter(Boolean).join(' ') || 'Vehicle').join(sep);
+
+  // Exports exactly what's visible (respects the search box).
+  const exportCsv = async () => {
+    if (filtered.length === 0) return;
+    setExportError('');
+    const rows: (string | number)[][] = [
+      ['Name', 'Phone', 'Vehicle(s)', 'Total Spent', 'Purchased Items'],
+      ...filtered.map((c) => [c.name, c.phone, vehicleText(c, '; '), String(c.totalSpent), c.purchasedItems.join('; ')]),
+    ];
+    try {
+      if (!(await shareCsv(`customer-spend-${slab}-${period}.csv`, rows))) setExportError('Sharing isn’t available on this device.');
+    } catch (e: unknown) {
+      setExportError(e instanceof Error && e.message ? e.message : 'Failed to export CSV.');
+    }
+  };
+
+  return (
+    <Sheet visible fullHeight onClose={onClose} title={`Customers ${SLAB_LABELS[slab]} — ${PERIOD_LABELS[period]}`}>
+      {!loading && customers.length > 0 ? (
+        <View style={styles.searchRow}>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search by name or phone..."
+            placeholderTextColor={theme.textMuted}
+            style={[styles.search, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+          />
+          <Button size="sm" onPress={exportCsv} disabled={filtered.length === 0}>Download CSV</Button>
+        </View>
+      ) : null}
+      {exportError ? <ThemedText style={[styles.small, { color: theme.danger }]}>{exportError}</ThemedText> : null}
+      {loading ? (
+        <View style={styles.gap8}>{[0, 1, 2, 3].map((i) => <Skeleton key={i} height={72} />)}</View>
+      ) : customers.length === 0 ? (
+        <Empty text="No customers in this slab." pad={32} />
+      ) : filtered.length === 0 ? (
+        <Empty text={`No customers match "${search}".`} pad={32} />
+      ) : (
+        <View style={styles.gap8}>
+          {filtered.map((c) => (
+            <View key={c.id} style={[styles.slabRow, { backgroundColor: theme.backgroundElement }]}>
+              <View style={styles.between}>
+                <View style={styles.flex1}>
+                  <ThemedText style={styles.name}>{c.name}</ThemedText>
+                  <ThemedText themeColor="textMuted" style={styles.small}>{c.phone}</ThemedText>
+                </View>
+                <ThemedText style={[styles.mono, styles.semi]}>{formatCurrency(c.totalSpent)}</ThemedText>
+              </View>
+              {c.vehicles.length > 0 ? <ThemedText themeColor="textSecondary" style={[styles.small, { marginTop: 8 }]}>{vehicleText(c, ', ')}</ThemedText> : null}
+              {c.purchasedItems.length > 0 ? <ThemedText themeColor="textMuted" style={[styles.small, { marginTop: 4 }]}>{`Purchased: ${c.purchasedItems.join(', ')}`}</ThemedText> : null}
+            </View>
+          ))}
+        </View>
+      )}
+    </Sheet>
+  );
+}
 
 export default function FinancialScreen() {
-  const insets = useSafeAreaInsets();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
-  const canSeeSlabs = SLAB_ROLES.includes(user?.role ?? '');
+  const { hasTab } = usePermissions();
+  // Dashboard rule: Owner, Store Manager, or the per-employee `financial` permission.
+  const canAccess = user?.role === 'OWNER' || user?.role === 'STORE_MANAGER' || hasTab('financial');
 
-  const [tab, setTab] = useState<Tab>('overview');
+  const [width, setWidth] = useState(0);
+  const [period, setPeriod] = useState('month');
+  const [activeTab, setActiveTab] = useState<(typeof BREAKDOWN_TABS)[number]>('service');
   const [overview, setOverview] = useState<FinancialOverview | null>(null);
-  const [outstanding, setOutstanding] = useState<OutstandingResponse | null>(null);
-  const [topCustomers, setTopCustomers] = useState<TopCustomerEntry[] | null>(null);
-  const [breakdown, setBreakdown] = useState<RevenueBreakdownItem[] | null>(null);
-  const [breakdownGroupBy, setBreakdownGroupBy] = useState<typeof BREAKDOWN_TABS[number]>('service');
-  const [growth, setGrowth] = useState<MonthlyGrowthEntry[] | null>(null);
-  const [period, setPeriod] = useState<typeof PERIOD_OPTIONS[number]>('month');
-  const [error, setError] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [trend, setTrend] = useState<{ date: string; revenue: number }[]>([]);
+  const [breakdown, setBreakdown] = useState<RevenueBreakdownItem[]>([]);
+  const [outstanding, setOutstanding] = useState<OutstandingJob[]>([]);
+  const [topCustomers, setTopCustomers] = useState<TopCustomerEntry[]>([]);
+  const [growth, setGrowth] = useState<{ current: number; previous: number; growthPercent: number; chartData: MonthlyGrowthEntry[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Customer Spend Slabs
   const [slabCounts, setSlabCounts] = useState<Record<CustomerSpendSlab, number> | null>(null);
+  const [slabCountsLoading, setSlabCountsLoading] = useState(true);
   const [activeSlab, setActiveSlab] = useState<CustomerSpendSlab | null>(null);
-  const [slabCustomers, setSlabCustomers] = useState<SlabCustomer[] | null>(null);
-  const [slabSearch, setSlabSearch] = useState('');
-  const [isExportingSlab, setIsExportingSlab] = useState(false);
+  const [slabCustomers, setSlabCustomers] = useState<SlabCustomer[]>([]);
+  const [slabCustomersLoading, setSlabCustomersLoading] = useState(false);
 
-  const load = useCallback(async (which: Tab) => {
-    if (!isAuthorized) return;
-    setError(null);
+  const wide = width >= WIDE_MIN;
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setFailed(false);
     try {
-      if (which === 'overview') setOverview(await fetchFinancialOverview());
-      else if (which === 'outstanding') setOutstanding(await fetchFinancialOutstanding());
-      else if (which === 'topCustomers') setTopCustomers(await fetchFinancialTopCustomers());
-      else if (which === 'breakdown') setBreakdown(await fetchFinancialRevenueBreakdown(period, breakdownGroupBy));
-      else if (which === 'growth') setGrowth(await fetchFinancialGrowth());
-      else if (which === 'slabs' && canSeeSlabs) {
-        const { fromDate, toDate } = periodToDateParams(period);
-        setSlabCounts(await fetchCustomerSpendSlabs(fromDate, toDate));
+      const [ov, tr, out, top, gr] = await Promise.allSettled([
+        fetchFinancialOverview(),
+        fetchFinancialRevenueTrend(period),
+        fetchFinancialOutstanding(),
+        fetchFinancialTopCustomers(),
+        fetchFinancialGrowth(),
+      ]);
+      if (ov.status === 'fulfilled') setOverview(ov.value);
+      if (tr.status === 'fulfilled') setTrend(tr.value);
+      if (out.status === 'fulfilled') setOutstanding(out.value?.jobs ?? []);
+      if (top.status === 'fulfilled') setTopCustomers(top.value ?? []);
+      if (gr.status === 'fulfilled') {
+        const arr = gr.value;
+        if (Array.isArray(arr) && arr.length >= 2) {
+          const current = arr[arr.length - 1]?.revenue ?? 0;
+          const previous = arr[arr.length - 2]?.revenue ?? 0;
+          setGrowth({ current, previous, growthPercent: previous > 0 ? ((current - previous) / previous) * 100 : 0, chartData: arr });
+        } else if (Array.isArray(arr) && arr.length === 1) {
+          setGrowth({ current: arr[0].revenue, previous: 0, growthPercent: 0, chartData: arr });
+        }
       }
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load this data.'));
+      setFailed([ov, tr, out, top, gr].every((r) => r.status === 'rejected'));
+    } finally {
+      setLoading(false);
     }
-  }, [isAuthorized, canSeeSlabs, period, breakdownGroupBy]);
+  }, [period]);
+
+  const fetchBreakdown = useCallback(async () => {
+    try {
+      setBreakdown((await fetchFinancialRevenueBreakdown(period, activeTab)) ?? []);
+    } catch {
+      /* silent, as on the dashboard */
+    }
+  }, [period, activeTab]);
+
+  const fetchSlabCounts = useCallback(async () => {
+    setSlabCountsLoading(true);
+    try {
+      const { fromDate, toDate } = getPeriodDateParams(period);
+      setSlabCounts(await fetchCustomerSpendSlabs(fromDate, toDate));
+    } catch {
+      setSlabCounts(null);
+    } finally {
+      setSlabCountsLoading(false);
+    }
+  }, [period]);
+
+  const openSlab = useCallback(async (slab: CustomerSpendSlab) => {
+    setActiveSlab(slab);
+    setSlabCustomersLoading(true);
+    try {
+      const { fromDate, toDate } = getPeriodDateParams(period);
+      setSlabCustomers((await fetchCustomerSpendSlabCustomers(slab, fromDate, toDate)) ?? []);
+    } catch {
+      setSlabCustomers([]);
+    } finally {
+      setSlabCustomersLoading(false);
+    }
+  }, [period]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount / tab, period, groupBy change
-    load(tab);
-  }, [load, tab]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / period change
+    if (canAccess) fetchData();
+  }, [canAccess, fetchData]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / period or tab change
+    if (canAccess) fetchBreakdown();
+  }, [canAccess, fetchBreakdown]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / period change
+    if (canAccess) fetchSlabCounts();
+  }, [canAccess, fetchSlabCounts]);
+  // A slab sheet that's open refreshes when the period changes.
+  useEffect(() => {
+    if (activeSlab) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh the open slab list on a period change
+      openSlab(activeSlab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period]);
 
   const onRefresh = async () => {
-    setIsRefreshing(true);
-    await load(tab);
-    setIsRefreshing(false);
+    setRefreshing(true);
+    await Promise.all([fetchData(), fetchBreakdown(), fetchSlabCounts()]);
+    setRefreshing(false);
   };
 
-  const openSlab = async (slab: CustomerSpendSlab) => {
-    setActiveSlab(slab);
-    setSlabCustomers(null);
-    setSlabSearch('');
-    setError(null);
-    try {
-      const { fromDate, toDate } = periodToDateParams(period);
-      setSlabCustomers(await fetchCustomerSpendSlabCustomers(slab, fromDate, toDate));
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load customers for this slab.'));
-    }
-  };
+  const shell = (children: ReactNode) => (
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: 'Financial' }} />
+      {children}
+    </ThemedView>
+  );
 
-  const filteredSlabCustomers = (() => {
-    if (!slabCustomers) return [];
-    const q = slabSearch.trim().toLowerCase();
-    if (!q) return slabCustomers;
-    return slabCustomers.filter((c) => c.name.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q));
-  })();
-
-  const onExportSlabCsv = async () => {
-    if (!activeSlab || filteredSlabCustomers.length === 0) return;
-    setIsExportingSlab(true);
-    try {
-      const headers = ['Name', 'Phone', 'Vehicle(s)', 'Total Spent', 'Purchased Items'];
-      const rows = filteredSlabCustomers.map((c) => [
-        c.name,
-        c.phone,
-        c.vehicles.map((v) => [v.make, v.model, v.year].filter(Boolean).join(' ') || 'Vehicle').join('; '),
-        String(c.totalSpent),
-        c.purchasedItems.join('; '),
-      ]);
-      await shareCsv(`customer-spend-${activeSlab}-${period}.csv`, [headers, ...rows]);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not export this list.'));
-    } finally {
-      setIsExportingSlab(false);
-    }
-  };
-
-  if (!isAuthorized) {
-    return (
-      <ThemedView style={styles.center}>
-        <ThemedText themeColor="textSecondary">
-          Financial is only available to Owner, Store Manager, HR, Accounting, or Cashier accounts.
-        </ThemedText>
-      </ThemedView>
+  if (!canAccess) {
+    return shell(
+      <View style={[styles.page, { padding: wide ? 24 : 16 }]}>
+        <Card style={styles.centerCard}>
+          <ThemedText style={styles.emptyTitle}>You don&apos;t have access to Financial.</ThemedText>
+        </Card>
+      </View>,
     );
   }
 
-  return (
-    <>
-      <Stack.Screen options={{ title: 'Financial' }} />
-      <ScrollView contentContainerStyle={styles.tabScroll} horizontal showsHorizontalScrollIndicator={false}>
-        {([
-          ['overview', 'Overview'], ['outstanding', 'Outstanding'], ['topCustomers', 'Top Customers'],
-          ['breakdown', 'Breakdown'], ['growth', 'Growth'],
-          ...(canSeeSlabs ? [['slabs', 'Customer Spend Slabs']] : []),
-        ] as [Tab, string][]).map(([t, label]) => (
-          <Pressable key={t} onPress={() => setTab(t)} style={[styles.tabChip, { backgroundColor: tab === t ? theme.primary : theme.backgroundElement }]}>
-            <ThemedText type="small" style={tab === t ? styles.tabLabelActive : undefined}>{label}</ThemedText>
-          </Pressable>
-        ))}
-      </ScrollView>
+  const total = SLAB_ORDER.reduce((sum, s) => sum + (slabCounts?.[s] ?? 0), 0);
+  const slabChartData = SLAB_ORDER.map((slab) => {
+    const count = slabCounts?.[slab] ?? 0;
+    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+    return { slab, label: SLAB_LABELS[slab], count, pct, labelText: `${count} customer${count === 1 ? '' : 's'} (${pct}%)` };
+  });
+  const growthData = growth ?? { current: 0, previous: 0, growthPercent: 0, chartData: [] as MonthlyGrowthEntry[] };
 
-      {(tab === 'breakdown' || tab === 'slabs') && (
-        <ScrollView contentContainerStyle={styles.tabScroll} horizontal showsHorizontalScrollIndicator={false}>
-          {PERIOD_OPTIONS.map((p) => (
-            <Pressable key={p} onPress={() => setPeriod(p)} style={[styles.periodChip, { backgroundColor: period === p ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={period === p ? styles.tabLabelActive : undefined}>{PERIOD_LABELS[p]}</ThemedText>
-            </Pressable>
-          ))}
-        </ScrollView>
+  const stat = (label: string, value: string | number) => (
+    <Card>
+      <ThemedText themeColor="textSecondary" style={styles.statLabel}>{label}</ThemedText>
+      <ThemedText style={[styles.statValue, styles.mono]}>{String(value)}</ThemedText>
+    </Card>
+  );
+  const sectionTitle = (t: string) => <ThemedText style={styles.sectionTitle}>{t}</ThemedText>;
+
+  const skeletonCards = (n: number) => (
+    <Grid cols={wide ? 4 : 2}>
+      {Array.from({ length: n }).map((_, i) => <Skeleton key={i} height={84} />)}
+    </Grid>
+  );
+
+  const trendCard = (
+    <Card>
+      {sectionTitle('Revenue Trend')}
+      {trend.length > 0 ? <RevenueLineChart data={trend} /> : <Empty text="No revenue data for this period." pad={64} />}
+    </Card>
+  );
+  const growthCard = (
+    <Card>
+      {sectionTitle('Growth (MoM)')}
+      {growthData.chartData.length > 0 ? (
+        <>
+          <View style={styles.growthHead}>
+            <ThemedText style={[styles.statValue, styles.mono]}>{formatCurrency(growthData.current)}</ThemedText>
+            <Badge variant={growthData.growthPercent >= 0 ? 'success' : 'danger'}>
+              {`${growthData.growthPercent >= 0 ? '+' : ''}${growthData.growthPercent.toFixed(1)}%`}
+            </Badge>
+          </View>
+          <GrowthBarChart data={growthData.chartData} />
+        </>
+      ) : (
+        <Empty text="No growth data available." pad={48} />
+      )}
+    </Card>
+  );
+
+  return shell(
+    <ScrollView
+      contentContainerStyle={[styles.page, { padding: wide ? 24 : 16, paddingBottom: insets.bottom + 40 }]}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      keyboardShouldPersistTaps="handled">
+      <View style={[styles.head, wide && styles.headWide]}>
+        <View style={styles.flex1}>
+          <ThemedText style={styles.h1}>Current Finances</ThemedText>
+          <ThemedText themeColor="textSecondary" style={styles.subtitle}>Cash collected · outstanding balances · customer performance</ThemedText>
+        </View>
+        <View style={styles.pills}>
+          {PERIOD_OPTIONS.map((p) => <Pill key={p} label={PERIOD_LABELS[p]} active={period === p} onPress={() => setPeriod(p)} />)}
+        </View>
+      </View>
+
+      {failed ? <ErrorBanner message="Could not load financial data." onRetry={onRefresh} /> : null}
+
+      <View>
+        <ThemedText style={[styles.sectionTitle, { marginBottom: 12 }]}>
+          {'Customers by Spend Slab '}
+          <ThemedText themeColor="textMuted" style={styles.sectionSub}>{`— ${PERIOD_LABELS[period]}`}</ThemedText>
+        </ThemedText>
+        <View style={styles.gap16}>
+          {slabCountsLoading ? (
+            skeletonCards(4)
+          ) : (
+            <Grid cols={wide ? 4 : 2}>
+              {SLAB_ORDER.map((slab) => (
+                <Card key={slab} onPress={() => openSlab(slab)}>
+                  <ThemedText themeColor="textSecondary" style={styles.statLabel}>{SLAB_LABELS[slab]}</ThemedText>
+                  <ThemedText style={[styles.statValue, styles.mono]}>{String(slabCounts?.[slab] ?? 0)}</ThemedText>
+                  <ThemedText themeColor="textMuted" style={styles.tiny}>customers</ThemedText>
+                </Card>
+              ))}
+            </Grid>
+          )}
+          <Card>
+            {sectionTitle('Spend Slab Distribution')}
+            {slabCountsLoading ? <Skeleton height={180} /> : <SlabBarChart data={slabChartData} colors={SLAB_CHART_COLORS} />}
+          </Card>
+        </View>
+      </View>
+
+      {loading ? (
+        skeletonCards(4)
+      ) : (
+        <Grid cols={wide ? 4 : 2}>
+          {stat('Collected This Month', formatCurrency(overview?.revenue.thisMonth ?? 0))}
+          {stat('Collected This Year', formatCurrency(overview?.revenue.thisYear ?? 0))}
+          {stat('Invoices This Month', overview?.jobs.thisMonth ?? 0)}
+          {stat('Outstanding', formatCurrency(overview?.outstanding.amount ?? 0))}
+        </Grid>
       )}
 
-      {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+      {wide ? (
+        <View style={styles.threeCol}>
+          <View style={{ flex: 2, minWidth: 0 }}>{trendCard}</View>
+          <View style={styles.flex1}>{growthCard}</View>
+        </View>
+      ) : (
+        <View style={styles.gap16}>{trendCard}{growthCard}</View>
+      )}
 
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-      >
-        {tab === 'overview' && (
-          overview === null ? <ActivityIndicator style={styles.spinner} /> : (
-            <View style={styles.grid}>
-              <GlassCard style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">Revenue Today</ThemedText>
-                <ThemedText type="smallBold" style={styles.tabularNums}>{formatCurrency(overview.revenue.today)}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">This Week</ThemedText>
-                <ThemedText type="smallBold" style={styles.tabularNums}>{formatCurrency(overview.revenue.thisWeek)}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">This Month</ThemedText>
-                <ThemedText type="smallBold" style={styles.tabularNums}>{formatCurrency(overview.revenue.thisMonth)}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">This Year</ThemedText>
-                <ThemedText type="smallBold" style={styles.tabularNums}>{formatCurrency(overview.revenue.thisYear)}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">Jobs Today</ThemedText>
-                <ThemedText type="smallBold" style={styles.tabularNums}>{overview.jobs.today}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">Jobs This Month</ThemedText>
-                <ThemedText type="smallBold" style={styles.tabularNums}>{overview.jobs.thisMonth}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">Total Jobs</ThemedText>
-                <ThemedText type="smallBold" style={styles.tabularNums}>{overview.jobs.total}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">Outstanding</ThemedText>
-                <ThemedText type="smallBold" style={styles.tabularNums}>{formatCurrency(overview.outstanding.amount)}</ThemedText>
-              </GlassCard>
-            </View>
-          )
-        )}
-
-        {tab === 'outstanding' && (
-          outstanding === null ? <ActivityIndicator style={styles.spinner} /> : (
-            <>
-              <ThemedText type="smallBold" style={styles.tabularNums}>Total outstanding: {formatCurrency(outstanding.totalOutstanding)}</ThemedText>
-              {outstanding.jobs.length === 0 ? (
-                <ThemedText type="small" themeColor="textSecondary">No outstanding payments.</ThemedText>
-              ) : (
-                outstanding.jobs.map((j) => {
-                  const badge = getOverdueBadgeColor(j.daysSinceCreated ?? 0);
-                  return (
-                    <ThemedView key={j.id} type="backgroundElement" style={styles.row}>
-                      <View style={styles.headerRow}>
-                        <ThemedText type="smallBold" style={styles.flex1}>{j.customer?.name ?? 'Unknown customer'}</ThemedText>
-                        <View style={[styles.overdueBadge, { backgroundColor: badge.bg }]}>
-                          <ThemedText type="small" style={{ color: badge.text }}>{j.daysSinceCreated ?? 0}d overdue</ThemedText>
-                        </View>
-                      </View>
-                      <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>
-                        {formatCurrency(j.finalAmount ?? j.quotedAmount ?? 0)}
-                      </ThemedText>
-                      {j.assignedTo && <ThemedText type="small" themeColor="textSecondary">Handled by {j.assignedTo.name}</ThemedText>}
-                    </ThemedView>
-                  );
-                })
-              )}
-            </>
-          )
-        )}
-
-        {tab === 'topCustomers' && (
-          topCustomers === null ? <ActivityIndicator style={styles.spinner} /> : topCustomers.length === 0 ? (
-            <ThemedText type="small" themeColor="textSecondary">No customer data available.</ThemedText>
-          ) : (
-            topCustomers.map((c, i) => (
-              <ThemedView key={c.customer?.id ?? i} type="backgroundElement" style={styles.row}>
-                <ThemedText type="smallBold">{i + 1}. {c.customer?.name ?? 'Unknown'}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>
-                  {formatCurrency(c.totalSpent)} · {c.invoiceCount} invoices
-                </ThemedText>
-              </ThemedView>
-            ))
-          )
-        )}
-
-        {tab === 'breakdown' && (
-          <>
-            <View style={styles.tabScrollInline}>
-              {BREAKDOWN_TABS.map((g) => (
-                <Pressable key={g} onPress={() => setBreakdownGroupBy(g)} style={[styles.periodChip, { backgroundColor: breakdownGroupBy === g ? theme.primary : theme.backgroundElement }]}>
-                  <ThemedText type="small" style={breakdownGroupBy === g ? styles.tabLabelActive : undefined}>{BREAKDOWN_LABELS[g]}</ThemedText>
-                </Pressable>
+      <Card>
+        <View style={styles.tabs}>
+          {BREAKDOWN_TABS.map((t) => <Pill key={t} label={BREAKDOWN_LABELS[t]} active={activeTab === t} onPress={() => setActiveTab(t)} />)}
+        </View>
+        {breakdown.length > 0 ? (
+          <View style={[styles.gap16, wide && styles.twoColRow]}>
+            <View style={wide ? styles.flex1 : undefined}><BreakdownPie data={breakdown} /></View>
+            <View style={[styles.gap4, wide && styles.flex1]}>
+              {breakdown.map((row, i) => (
+                <View key={`${row.service}${i}`} style={[styles.listRow, { backgroundColor: theme.backgroundElement }]}>
+                  <View style={styles.legendLeft}>
+                    <View style={[styles.dot, { backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }]} />
+                    <ThemedText style={[styles.name, styles.flex1]}>{row.service}</ThemedText>
+                  </View>
+                  <View style={styles.right}>
+                    <ThemedText style={[styles.mono, styles.semi]}>{formatCurrency(row.revenue)}</ThemedText>
+                    <ThemedText themeColor="textMuted" style={styles.tiny}>{`${row.count} jobs`}</ThemedText>
+                  </View>
+                </View>
               ))}
             </View>
-            {breakdown === null ? <ActivityIndicator style={styles.spinner} /> : breakdown.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">No job payment data for this period.</ThemedText>
-            ) : (
-              breakdown.map((b) => (
-                <View key={b.service} style={styles.breakdownRow}>
-                  <ThemedText type="small" style={styles.flex1} numberOfLines={1}>{b.service}</ThemedText>
-                  <ThemedText type="small" style={styles.tabularNums}>{formatCurrency(b.revenue)}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>{b.count} jobs</ThemedText>
+          </View>
+        ) : (
+          <Empty text="No job payment data for this period." pad={32} />
+        )}
+      </Card>
+
+      <View style={wide ? styles.twoColRow : styles.gap16}>
+        <View style={wide ? styles.flex1 : undefined}>
+          <Card>
+            {sectionTitle('Outstanding Payments')}
+            <View style={styles.gap4}>
+              {outstanding.map((row) => {
+                const days = row.daysSinceCreated ?? 0;
+                return (
+                  <View key={row.id} style={[styles.listRow, { backgroundColor: theme.backgroundElement }]}>
+                    <View style={styles.flex1}>
+                      <ThemedText style={styles.name}>{row.customer?.name ?? '—'}</ThemedText>
+                      <ThemedText themeColor="textMuted" style={[styles.tiny, styles.mono]}>
+                        {String(row.vehicleNumber ?? row.vehicleBrand ?? '—')}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.right}>
+                      <ThemedText style={[styles.mono, styles.semi]}>{formatCurrency(Number(row.finalAmount ?? row.quotedAmount ?? 0))}</ThemedText>
+                      <Badge variant={overdueVariant(days)} size="sm">{`${days}d overdue`}</Badge>
+                    </View>
+                  </View>
+                );
+              })}
+              {outstanding.length === 0 ? <Empty text="No outstanding payments." /> : null}
+            </View>
+          </Card>
+        </View>
+
+        <View style={wide ? styles.flex1 : undefined}>
+          <Card>
+            {sectionTitle('Top Customers')}
+            <View style={styles.gap4}>
+              {topCustomers.map((row, i) => (
+                <View key={row.customer?.id ?? i} style={[styles.listRow, { backgroundColor: theme.backgroundElement }]}>
+                  <View style={styles.legendLeft}>
+                    <View style={[styles.rank, { backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }]}>
+                      <ThemedText style={styles.rankText}>{`#${i + 1}`}</ThemedText>
+                    </View>
+                    <View style={styles.flex1}>
+                      <ThemedText style={styles.name}>{row.customer?.name ?? '—'}</ThemedText>
+                      <ThemedText themeColor="textMuted" style={styles.tiny}>{`${row.invoiceCount} invoices`}</ThemedText>
+                    </View>
+                  </View>
+                  <ThemedText style={[styles.mono, styles.semi]}>{formatCurrency(row.totalSpent)}</ThemedText>
                 </View>
-              ))
-            )}
-          </>
-        )}
+              ))}
+              {topCustomers.length === 0 ? <Empty text="No customer data available." /> : null}
+            </View>
+          </Card>
+        </View>
+      </View>
 
-        {tab === 'slabs' && (
-          !canSeeSlabs ? (
-            <ThemedText type="small" themeColor="textSecondary">Customer Spend Slabs is only available to Owner or Store Manager accounts.</ThemedText>
-          ) : slabCounts === null ? (
-            <ActivityIndicator style={styles.spinner} />
-          ) : (
-            <>
-              <ThemedText type="smallBold" style={styles.sectionTitle}>Customers by Spend Slab — {PERIOD_LABELS[period]}</ThemedText>
-              <View style={styles.grid}>
-                {SLAB_ORDER.map((slab) => (
-                  <Pressable key={slab} onPress={() => openSlab(slab)} style={styles.slabCard}>
-                    <ThemedView type="backgroundElement" style={styles.slabCardInner}>
-                      <ThemedText type="small" themeColor="textSecondary">{SLAB_LABELS[slab]}</ThemedText>
-                      <ThemedText type="title" style={styles.tabularNums}>{slabCounts[slab] ?? 0}</ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">customers</ThemedText>
-                    </ThemedView>
-                  </Pressable>
-                ))}
-              </View>
-            </>
-          )
-        )}
-
-        {tab === 'growth' && (
-          growth === null ? <ActivityIndicator style={styles.spinner} /> : (
-            growth.map((g) => (
-              <View key={g.month} style={styles.breakdownRow}>
-                <ThemedText type="small" style={styles.flex1}>{g.month}</ThemedText>
-                <ThemedText type="small" style={styles.tabularNums}>{formatCurrency(g.revenue)}</ThemedText>
-                <ThemedText type="small" style={{ color: g.growthPercent == null ? theme.textSecondary : g.growthPercent >= 0 ? '#167A48' : '#B83030' }}>
-                  {g.growthPercent == null ? '—' : `${g.growthPercent > 0 ? '+' : ''}${g.growthPercent}%`}
-                </ThemedText>
-              </View>
-            ))
-          )
-        )}
-      </ScrollView>
-
-      <Modal visible={activeSlab != null} animationType="slide" onRequestClose={() => setActiveSlab(null)} presentationStyle="pageSheet">
-        <ThemedView style={styles.flex1}>
-          <View style={[styles.sheetHeader, { borderColor: theme.border }]}>
-            <ThemedText type="subtitle" style={styles.flex1} numberOfLines={1}>
-              {activeSlab ? `Customers ${SLAB_LABELS[activeSlab]} — ${PERIOD_LABELS[period]}` : ''}
-            </ThemedText>
-            <Pressable onPress={() => setActiveSlab(null)} hitSlop={8}><ThemedText type="subtitle">✕</ThemedText></Pressable>
-          </View>
-          <View style={styles.sheetToolbar}>
-            <TextInput
-              value={slabSearch}
-              onChangeText={setSlabSearch}
-              placeholder="Search by name or phone..."
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, styles.flex1, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-            <Pressable onPress={onExportSlabCsv} disabled={isExportingSlab || filteredSlabCustomers.length === 0} style={[styles.exportButton, { borderColor: theme.border, opacity: filteredSlabCustomers.length === 0 ? 0.5 : 1 }]}>
-              {isExportingSlab ? <ActivityIndicator size="small" /> : <ThemedText type="small">CSV</ThemedText>}
-            </Pressable>
-          </View>
-          <ScrollView contentContainerStyle={styles.sheetScroll}>
-            {slabCustomers === null ? (
-              <ActivityIndicator style={styles.spinner} />
-            ) : filteredSlabCustomers.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">
-                {slabSearch.trim() ? `No customers match "${slabSearch}".` : 'No customers in this slab.'}
-              </ThemedText>
-            ) : (
-              filteredSlabCustomers.map((c) => (
-                <ThemedView key={c.id} type="backgroundElement" style={styles.row}>
-                  <ThemedText type="smallBold">{c.name}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">{c.phone}</ThemedText>
-                  <ThemedText type="smallBold" style={styles.tabularNums}>{formatCurrency(c.totalSpent)}</ThemedText>
-                  {c.vehicles.length > 0 && (
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {c.vehicles.map((v) => [v.make, v.model, v.year].filter(Boolean).join(' ') || 'Vehicle').join(', ')}
-                    </ThemedText>
-                  )}
-                  {c.purchasedItems.length > 0 && (
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>Purchased: {c.purchasedItems.join(', ')}</ThemedText>
-                  )}
-                </ThemedView>
-              ))
-            )}
-          </ScrollView>
-        </ThemedView>
-      </Modal>
-    </>
+      {activeSlab ? (
+        <SlabSheet slab={activeSlab} period={period} customers={slabCustomers} loading={slabCustomersLoading} onClose={() => setActiveSlab(null)} />
+      ) : null}
+    </ScrollView>,
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.three },
-  error: { color: '#B83030', marginHorizontal: Spacing.three, marginTop: Spacing.two },
-  spinner: { marginTop: Spacing.three },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Layout.cardGap },
-  card: { width: '47%', minHeight: Layout.minTouchTarget, padding: Spacing.three, gap: Spacing.one },
-  tabScroll: { paddingHorizontal: Spacing.three, paddingTop: Spacing.three, gap: Spacing.one, flexDirection: 'row' },
-  tabChip: { paddingHorizontal: Spacing.three, height: 40, borderRadius: Spacing.two, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.one },
-  tabLabelActive: { color: '#ffffff', fontWeight: '600' },
-  row: { borderRadius: Spacing.three, padding: Spacing.three, minHeight: Layout.minTouchTarget, gap: Spacing.half },
-  breakdownRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.one, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(127,127,127,0.2)' },
-  flex1: { flex: 1 },
-  tabularNums: { fontVariant: ['tabular-nums'] },
-  periodChip: { paddingHorizontal: Spacing.three, height: 36, borderRadius: Spacing.two, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.one },
-  tabScrollInline: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one, marginBottom: Spacing.two },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
-  overdueBadge: { paddingHorizontal: Spacing.two, paddingVertical: 3, borderRadius: 999 },
-  sectionTitle: { marginBottom: Spacing.one },
-  slabCard: { width: '47%' },
-  slabCardInner: { minHeight: Layout.minTouchTarget, padding: Spacing.three, gap: Spacing.one, borderRadius: Spacing.three },
-  sheetHeader: { flexDirection: 'row', alignItems: 'center', padding: Spacing.three, borderBottomWidth: StyleSheet.hairlineWidth },
-  sheetToolbar: { flexDirection: 'row', gap: Spacing.two, padding: Spacing.three, paddingBottom: 0 },
-  sheetScroll: { padding: Spacing.three, gap: Spacing.two },
-  input: { height: 44, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
-  exportButton: { height: 44, paddingHorizontal: Spacing.three, borderRadius: Spacing.two, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  flex1: { flex: 1, minWidth: 0 },
+  cell: { flex: 1, minWidth: 0 },
+  page: { width: '100%', maxWidth: 1200, alignSelf: 'center', gap: 24 },
+  head: { gap: 12 },
+  headWide: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  h1: { fontSize: 20, lineHeight: 28, fontFamily: FontWeights.bold },
+  subtitle: { fontSize: 14, lineHeight: 20 },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  pill: { minHeight: 36, paddingHorizontal: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  pillText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.medium },
+  sectionTitle: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold, marginBottom: 12 },
+  sectionSub: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.regular },
+  statLabel: { fontSize: 12, lineHeight: 16, marginBottom: 4 },
+  statValue: { fontSize: 24, lineHeight: 32, fontWeight: '700' },
+  tiny: { fontSize: 10, lineHeight: 14, marginTop: 2 },
+  small: { fontSize: 12, lineHeight: 16 },
+  mono: { fontFamily: Fonts?.mono },
+  semi: { fontFamily: FontWeights.semiBold, fontWeight: '600' },
+  name: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.medium },
+  gap4: { gap: 4 },
+  gap8: { gap: 8 },
+  gap16: { gap: 16 },
+  threeCol: { flexDirection: 'row', gap: 16, alignItems: 'flex-start' },
+  twoColRow: { flexDirection: 'row', gap: 16, alignItems: 'flex-start' },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 16 },
+  growthHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  listRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  legendLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  right: { alignItems: 'flex-end', gap: 2 },
+  rank: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  rankText: { color: '#ffffff', fontSize: 10, lineHeight: 12, fontFamily: FontWeights.bold },
+  empty: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  centerCard: { alignItems: 'center', paddingVertical: 48 },
+  emptyTitle: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  search: { flex: 1, minHeight: 40, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, fontSize: 14, fontFamily: FontWeights.regular },
+  slabRow: { padding: 12, borderRadius: 8 },
+  between: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
 });

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "fasttracks-mobile",
+    "name": "Fasttracks",
     "slug": "fasttracks-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -15,7 +15,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#F6F5F5",
-        "foregroundImage": "./assets/images/brand-logo-icon.png",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -75,6 +75,6 @@
         "projectId": "9b5b2611-cbc0-4456-980b-06961063afb9"
       }
     },
-    "owner": "patilanjali"
+    "owner": "fast-track-car-care"
   }
 }

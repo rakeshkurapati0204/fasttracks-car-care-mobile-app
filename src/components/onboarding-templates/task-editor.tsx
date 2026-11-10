@@ -1,32 +1,21 @@
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 
-import { GlassCard } from '@/components/home/glass-card';
+import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Layout, Spacing } from '@/constants/theme';
+import { Button, Card, Input } from '@/components/ui';
+import { FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { OnboardingTaskInput } from '@/types/api';
 
+const WIDE_MIN = 560;
+
 type Row = { key: number; label: string; description: string; responsible: string };
 
-// Stable React keys (module-level so render stays pure) — rows move and are
-// removed, so an index key would shuffle their text.
-let rowKeySeq = 0;
-const blank = (): Row => ({ key: rowKeySeq++, label: '', description: '', responsible: '' });
+// Stable React keys (module-level so render stays pure): rows move and are removed.
+let keySeq = 0;
 
-function Label({ children, required }: { children: string; required?: boolean }) {
-  return (
-    <ThemedText type="small" themeColor="textSecondary" style={styles.label}>
-      {children.toUpperCase()}{required ? <ThemedText type="small" style={styles.req}> *</ThemedText> : null}
-    </ThemedText>
-  );
-}
-
-// The dashboard's TemplateEditor, used for a not-yet-saved template (manual or
-// AI-suggested) and for an existing one. Rows of Label / Description /
-// Responsible, add / remove / reorder; nothing is persisted until Save.
-export function TaskEditor({ roleName, initialTasks, saving, error, savedAt, onSave, onBack }: {
+type Props = {
   roleName: string;
   initialTasks: OnboardingTaskInput[];
   saving: boolean;
@@ -34,16 +23,23 @@ export function TaskEditor({ roleName, initialTasks, saving, error, savedAt, onS
   savedAt: Date | null;
   onSave: (tasks: OnboardingTaskInput[]) => void;
   onBack: () => void;
-}) {
+};
+
+// Dashboard TemplateEditor for onboarding templates: rows of Label /
+// Description / Responsible with add, remove and reorder. Nothing is persisted
+// until Save. Wide: the dashboard's 4-column row; phone: one stacked column.
+export function TaskEditor({ roleName, initialTasks, saving, error, savedAt, onSave, onBack }: Props) {
   const theme = useTheme();
+  const blank = (): Row => ({ key: keySeq++, label: '', description: '', responsible: '' });
   const [rows, setRows] = useState<Row[]>(() =>
     (initialTasks.length ? initialTasks : [{ label: '', description: '', responsible: '' }]).map((t) => ({
-      key: rowKeySeq++,
+      key: keySeq++,
       label: t.label,
       description: t.description ?? '',
       responsible: t.responsible ?? '',
     })),
   );
+  const [width, setWidth] = useState(0);
   const [formError, setFormError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
 
@@ -79,83 +75,84 @@ export function TaskEditor({ roleName, initialTasks, saving, error, savedAt, onS
     ]);
   };
 
-  const input = [styles.input, { color: theme.text, backgroundColor: theme.background }];
+  const wide = width >= WIDE_MIN;
   const shownError = formError ?? error;
 
   return (
-    <View style={styles.wrap}>
-      <Pressable onPress={back} style={styles.backLink}>
-        <ThemedText type="small" themeColor="textSecondary" style={styles.underline}>← Back to list</ThemedText>
-      </Pressable>
-      <ThemedText type="subtitle">{roleName}</ThemedText>
+    <View style={styles.stack} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <View>
+        <Pressable onPress={back} accessibilityRole="button" hitSlop={8} style={styles.back}>
+          <ThemedText themeColor="textMuted" style={[styles.body, styles.underline]}>← Back to list</ThemedText>
+        </Pressable>
+        <ThemedText style={styles.h2}>{roleName}</ThemedText>
+      </View>
 
-      {shownError && !saving ? <ThemedText style={styles.error}>{shownError}</ThemedText> : null}
+      {shownError && !saving ? <ErrorBanner message={shownError} /> : null}
 
-      <GlassCard>
-        <View style={styles.rows}>
+      <Card padding="md">
+        <View style={styles.stack}>
           {rows.map((r, i) => (
-            <ThemedView key={r.key} type="backgroundElement" style={styles.row}>
-              <Label required={i === 0}>Label</Label>
-              <TextInput value={r.label} onChangeText={(v) => update(r.key, { label: v })} style={input} />
-              <Label>Description</Label>
-              <TextInput value={r.description} onChangeText={(v) => update(r.key, { description: v })} multiline style={[...input, styles.multiline]} />
-              <Label>Responsible</Label>
-              <TextInput
-                value={r.responsible}
-                onChangeText={(v) => update(r.key, { responsible: v })}
-                placeholder="e.g. HR"
-                placeholderTextColor={theme.textSecondary}
-                style={input}
-              />
-              <View style={styles.rowActions}>
-                <Pressable onPress={() => move(i, -1)} disabled={i === 0} style={[styles.iconBtn, i === 0 && styles.disabled]}>
-                  <ThemedText type="small">↑</ThemedText>
-                </Pressable>
-                <Pressable onPress={() => move(i, 1)} disabled={i === rows.length - 1} style={[styles.iconBtn, i === rows.length - 1 && styles.disabled]}>
-                  <ThemedText type="small">↓</ThemedText>
-                </Pressable>
-                <Pressable onPress={() => remove(r.key)} disabled={rows.length === 1} style={[styles.iconBtn, rows.length === 1 && styles.disabled]}>
-                  <ThemedText type="small" style={styles.error}>✕</ThemedText>
-                </Pressable>
+            <View key={r.key} style={[wide ? styles.rowWide : styles.rowPhone, !wide && { borderBottomColor: theme.border, borderBottomWidth: i < rows.length - 1 ? 1 : 0, paddingBottom: i < rows.length - 1 ? 12 : 0 }]}>
+              <View style={wide ? styles.labelWide : undefined}><Input label="Label" required={i === 0} value={r.label} onChangeText={(v) => update(r.key, { label: v })} /></View>
+              <View style={wide ? styles.descWide : undefined}><Input label="Description" value={r.description} onChangeText={(v) => update(r.key, { description: v })} /></View>
+              <View style={wide ? styles.respWide : undefined}><Input label="Responsible" value={r.responsible} onChangeText={(v) => update(r.key, { responsible: v })} placeholder="e.g. HR" /></View>
+              <View style={styles.btns}>
+                <MiniButton label="↑" a11y="Move up" disabled={i === 0} onPress={() => move(i, -1)} />
+                <MiniButton label="↓" a11y="Move down" disabled={i === rows.length - 1} onPress={() => move(i, 1)} />
+                <MiniButton label="✕" a11y="Remove task" danger disabled={rows.length === 1} onPress={() => remove(r.key)} />
               </View>
-            </ThemedView>
+            </View>
           ))}
 
-          <Pressable onPress={add} style={[styles.button, styles.grey]}>
-            <ThemedText style={styles.buttonLabel}>+ Add Task</ThemedText>
-          </Pressable>
+          <View style={[styles.addRow, { borderTopColor: theme.border }]}>
+            <Button size="sm" variant="secondary" onPress={add}>+ Add Task</Button>
+          </View>
 
-          {savedAt && !saving ? (
-            <ThemedText type="small" style={styles.ok}>
-              ✓ Saved at {savedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-            </ThemedText>
-          ) : null}
-
-          <Pressable onPress={save} disabled={saving} style={styles.button}>
-            {saving ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>Save</ThemedText>}
-          </Pressable>
+          {/* Outcome right beside Save (a top banner is easy to miss below a long list). */}
+          <View style={styles.saveRow}>
+            {savedAt && !saving ? (
+              <ThemedText style={[styles.body, styles.bold, { color: theme.success }]} accessibilityRole="alert">
+                {`✓ Saved at ${savedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`}
+              </ThemedText>
+            ) : null}
+            {shownError && !saving ? <ThemedText style={[styles.body, { color: theme.danger }]} accessibilityRole="alert">{shownError}</ThemedText> : null}
+            <Button size="sm" loading={saving} onPress={save}>{saving ? 'Saving…' : 'Save'}</Button>
+          </View>
         </View>
-      </GlassCard>
+      </Card>
     </View>
   );
 }
 
+function MiniButton({ label, onPress, disabled, danger, a11y }: { label: string; onPress: () => void; disabled?: boolean; danger?: boolean; a11y: string }) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      style={[styles.mini, { borderColor: theme.border, backgroundColor: theme.surface }, disabled && { opacity: 0.3 }]}>
+      <ThemedText style={[styles.miniText, danger && { color: theme.danger }]}>{label}</ThemedText>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  wrap: { gap: Spacing.two },
-  backLink: { minHeight: Layout.minTouchTarget, justifyContent: 'center' },
+  stack: { gap: 12 },
+  body: { fontSize: 14, lineHeight: 20 },
+  bold: { fontFamily: FontWeights.semiBold },
   underline: { textDecorationLine: 'underline' },
-  rows: { gap: Spacing.three },
-  row: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.one },
-  label: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginTop: Spacing.one },
-  req: { color: '#B83030' },
-  input: { minHeight: 44, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one, fontSize: 15 },
-  multiline: { minHeight: 70, textAlignVertical: 'top', paddingTop: Spacing.two },
-  rowActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: Spacing.two, marginTop: Spacing.one },
-  iconBtn: { minWidth: 40, height: 36, borderRadius: Spacing.one, borderWidth: 1, borderColor: 'rgba(127,127,127,0.4)', alignItems: 'center', justifyContent: 'center' },
-  disabled: { opacity: 0.3 },
-  error: { color: '#B83030' },
-  ok: { color: '#167A48', fontWeight: '600', textAlign: 'right' },
-  button: { minHeight: 48, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.three },
-  grey: { backgroundColor: '#8A8A8E' },
-  buttonLabel: { color: '#ffffff', fontWeight: '600' },
+  h2: { fontSize: 20, lineHeight: 28, fontFamily: FontWeights.bold, marginTop: 4 },
+  back: { minHeight: 32, justifyContent: 'center' },
+  rowWide: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  rowPhone: { gap: 12 },
+  labelWide: { flex: 1.2, minWidth: 0 },
+  descWide: { flex: 2, minWidth: 0 },
+  respWide: { flex: 0.8, minWidth: 0 },
+  btns: { flexDirection: 'row', gap: 6, justifyContent: 'flex-end', paddingBottom: 2 },
+  mini: { width: 40, height: 44, borderWidth: 1, borderRadius: Radii.sm, alignItems: 'center', justifyContent: 'center' },
+  miniText: { fontSize: 14, lineHeight: 20 },
+  addRow: { borderTopWidth: 1, paddingTop: 12, flexDirection: 'row', justifyContent: 'space-between' },
+  saveRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' },
 });

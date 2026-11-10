@@ -1,373 +1,190 @@
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, RefreshControl,
-  ScrollView, StyleSheet, TextInput, TouchableOpacity, View,
-} from 'react-native';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { CaseDetailSheet, fmtDate, NewCaseSheet, type Section } from '@/components/legal/case-sheets';
+import { SuccessBanner } from '@/components/onboarding/form-parts';
+import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Badge, Button, Card, Skeleton } from '@/components/ui';
+import { FontWeights } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import {
-  createLegalCase, fetchLegalCaseDocuments, fetchLegalCases, getErrorMessage,
-  updateLegalCase, uploadLegalDocument,
-} from '@/lib/api';
-import { pickFromCamera, pickFromGallery, useFileUpload } from '@/lib/upload';
-import type { CreateLegalCaseInput, LegalCase, LegalDocument } from '@/types/api';
+import { fetchLegalCases } from '@/lib/api';
+import { usePermissions } from '@/lib/permissions-context';
+import type { LegalCase } from '@/types/api';
 
-// requireLegalAccess (backend/src/routes/legal_route.ts, verified 2026-09-19)
-// is hasLegalAccess(user) — a dynamic check against a LegalAccessConfig table
-// (an owner userId + one optional granted-seat userId), deny-by-default if no
-// config row exists. NOT role-based, so — same as CRM/Invoices — this entry
-// has no visibleToRoles in the registry and the screen just calls the API
-// and shows a graceful message on a 403 via getErrorMessage.
-//
-// Create case / edit case / upload document added 2026-09-24 (full-parity
-// pass) — same requireLegalAccess gate, applied to every route in the file
-// (router.use(verifyToken, requireLegalAccess), no exceptions, re-verified
-// by reading the file). File *viewing* (GET /legal/documents/:documentId/
-// file, streaming existing bytes) stays deliberately out of scope — that's
-// the real "most sensitive data in the app" concern; uploading a NEW
-// document or editing case metadata doesn't pull existing file content
-// onto the device, so it doesn't carry the same risk.
-const CASE_SECTIONS: CreateLegalCaseInput['section'][] = ['PERSONAL', 'PROFESSIONAL'];
-const UPLOAD_RULES = {
-  allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
-  maxSizeBytes: 10 * 1024 * 1024,
-};
+const WIDE_MIN = 560;
 
-export default function LegalScreen() {
-  const insets = useSafeAreaInsets();
+// Access is the per-person `hasLegalAccess` check (a LegalAccessConfig row on
+// the server), not a role. Every /legal route enforces it, so a 403 also lands
+// on the same "Access restricted." message.
+export default function LegalDocumentsScreen() {
   const theme = useTheme();
-  // Dashboard filters the case list by section (PERSONAL/PROFESSIONAL) via a
-  // GET /legal/cases?section= param — this was previously missing, mobile
-  // showed all cases mixed together regardless of the new-case section chip.
-  const [sectionTab, setSectionTab] = useState<CreateLegalCaseInput['section']>('PERSONAL');
-  const [cases, setCases] = useState<LegalCase[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const insets = useSafeAreaInsets();
+  const { status: permStatus, hasLegalAccess } = usePermissions();
+
+  const [width, setWidth] = useState(0);
+  const [section, setSection] = useState<Section>('PERSONAL');
+  const [cases, setCases] = useState<LegalCase[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [forbidden, setForbidden] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [docs, setDocs] = useState<Record<string, LegalDocument[]>>({});
-  const [docsError, setDocsError] = useState<Record<string, string>>({});
-
-  const [showNewCase, setShowNewCase] = useState(false);
-  const [newSection, setNewSection] = useState<CreateLegalCaseInput['section']>('PERSONAL');
-  const [newTitle, setNewTitle] = useState('');
-  const [newStatus, setNewStatus] = useState('');
-  const [newHearingDate, setNewHearingDate] = useState('');
-  const [newNotes, setNewNotes] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
-
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
-  const [editStatus, setEditStatus] = useState('');
-  const [editHearingDate, setEditHearingDate] = useState('');
-  const [editNotes, setEditNotes] = useState('');
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
-
-  const [uploadCaseId, setUploadCaseId] = useState<string | null>(null);
-  const [uploadLabel, setUploadLabel] = useState('');
-  const upload = useFileUpload<LegalDocument>(UPLOAD_RULES);
-
-  const load = useCallback(async () => {
-    setError(null);
-    setForbidden(false);
-    try {
-      setCases(await fetchLegalCases(sectionTab));
-    } catch (err: any) {
-      if (err?.response?.status === 403) {
-        setForbidden(true);
-        setCases([]);
-      } else {
-        setError(getErrorMessage(err, 'Could not load legal cases.'));
-        setCases([]);
-      }
-    }
-  }, [sectionTab]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [detailCase, setDetailCase] = useState<LegalCase | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const wide = width >= WIDE_MIN;
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+  const notify = useCallback((type: 'success' | 'error', msg: string) => setToast({ type, msg }), []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const r = await fetchLegalCases(section);
+      setCases(Array.isArray(r) ? r : []);
+    } catch (err: unknown) {
+      if ((err as { response?: { status?: number } })?.response?.status === 403) setForbidden(true);
+      else setLoadError('Failed to load cases');
+    } finally {
+      setLoading(false);
+    }
+  }, [section]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / section change
+    if (hasLegalAccess) load();
+  }, [hasLegalAccess, load]);
 
   const onRefresh = async () => {
-    setIsRefreshing(true);
+    setRefreshing(true);
     await load();
-    setIsRefreshing(false);
+    setRefreshing(false);
   };
 
-  const toggleExpand = async (id: string) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-      return;
-    }
-    setExpandedId(id);
-    if (!docs[id]) {
-      try {
-        const result = await fetchLegalCaseDocuments(id);
-        setDocs((prev) => ({ ...prev, [id]: result }));
-      } catch (err: any) {
-        setDocsError((prev) => ({ ...prev, [id]: getErrorMessage(err, 'Could not load documents.') }));
-      }
-    }
-  };
+  const shell = (children: ReactNode) => (
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: 'Legal Documents' }} />
+      {children}
+    </ThemedView>
+  );
 
-  const onCreateCase = async () => {
-    if (!newTitle.trim() || !newStatus.trim()) {
-      setError('Title and status are required.');
-      return;
-    }
-    setIsCreating(true);
-    setError(null);
-    try {
-      await createLegalCase({
-        section: newSection,
-        title: newTitle.trim(),
-        status: newStatus.trim(),
-        nextHearingDate: newHearingDate.trim() || undefined,
-        notes: newNotes.trim() || undefined,
-      });
-      setNewTitle(''); setNewStatus(''); setNewHearingDate(''); setNewNotes('');
-      setShowNewCase(false);
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not create this case.'));
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  const openEdit = (c: LegalCase) => {
-    setEditingId(c.id);
-    setEditTitle(c.title);
-    setEditStatus(c.status);
-    setEditHearingDate(c.nextHearingDate ? c.nextHearingDate.slice(0, 10) : '');
-    setEditNotes(c.notes ?? '');
-  };
-
-  const onSaveEdit = async () => {
-    if (!editingId) return;
-    if (!editTitle.trim() || !editStatus.trim()) {
-      setError('Title and status are required.');
-      return;
-    }
-    setIsSavingEdit(true);
-    setError(null);
-    try {
-      await updateLegalCase(editingId, {
-        title: editTitle.trim(),
-        status: editStatus.trim(),
-        nextHearingDate: editHearingDate.trim() || undefined,
-        notes: editNotes.trim() || undefined,
-      });
-      setEditingId(null);
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not save these changes.'));
-    } finally {
-      setIsSavingEdit(false);
-    }
-  };
-
-  const openUpload = (caseId: string) => {
-    setUploadCaseId(caseId);
-    setUploadLabel('');
-    upload.reset();
-  };
-
-  const onPickCamera = async () => { const file = await pickFromCamera(); upload.pick(file); };
-  const onPickGallery = async () => { const file = await pickFromGallery(); upload.pick(file); };
-
-  const doUpload = () => {
-    if (!uploadCaseId || !uploadLabel.trim()) {
-      setError('A document label is required.');
-      return;
-    }
-    return upload.upload((file, ctrl) => uploadLegalDocument(uploadCaseId, file, uploadLabel.trim(), ctrl)).then((result) => {
-      if (result) {
-        setUploadCaseId(null);
-        setUploadLabel('');
-        upload.reset();
-        setDocs((prev) => ({ ...prev, [uploadCaseId]: [result, ...(prev[uploadCaseId] ?? [])] }));
-      }
-    });
-  };
-
-  if (showNewCase) {
-    return (
-      <KeyboardAvoidingView style={styles.flex1} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top}>
-        <Stack.Screen options={{ title: 'New Case' }} />
-        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}>
-          <Pressable onPress={() => setShowNewCase(false)}><ThemedText type="small">← Cancel</ThemedText></Pressable>
-          <View style={styles.chipRow}>
-            {CASE_SECTIONS.map((s) => (
-              <Pressable key={s} onPress={() => setNewSection(s)} style={[styles.chip, { backgroundColor: newSection === s ? theme.primary : theme.backgroundElement }]}>
-                <ThemedText type="small" style={newSection === s ? styles.chipLabelActive : undefined}>{s}</ThemedText>
-              </Pressable>
-            ))}
-          </View>
-          <TextInput value={newTitle} onChangeText={setNewTitle} placeholder="Title *" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-          <TextInput value={newStatus} onChangeText={setNewStatus} placeholder="Status *" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-          <TextInput value={newHearingDate} onChangeText={setNewHearingDate} placeholder="Next hearing date (YYYY-MM-DD, optional)" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-          <TextInput value={newNotes} onChangeText={setNewNotes} placeholder="Notes (optional)" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-          {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-          <Pressable onPress={onCreateCase} disabled={isCreating} style={styles.button}>
-            {isCreating ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.buttonLabel}>Create case</ThemedText>}
-          </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
+  if (permStatus !== 'ready') {
+    return shell(<View style={[styles.page, { padding: 16 }]}><Skeleton height={64} /></View>);
+  }
+  if (!hasLegalAccess || forbidden) {
+    return shell(
+      <View style={[styles.page, { padding: wide ? 24 : 16 }]}>
+        <ThemedText themeColor="textMuted" style={styles.body}>Access restricted.</ThemedText>
+      </View>,
     );
   }
 
-  return (
+  const header = (
+    <View style={styles.headerWrap}>
+      <View style={[styles.headRow, wide && styles.headRowWide]}>
+        <View style={styles.flex1}>
+          <ThemedText style={styles.h1}>Legal Documents</ThemedText>
+          <ThemedText themeColor="textMuted" style={styles.subtitle}>Private case tracker &amp; document vault</ThemedText>
+        </View>
+        <Button onPress={() => setShowNew(true)}>+ New Case</Button>
+      </View>
+
+      {toast ? (toast.type === 'success' ? <SuccessBanner message={toast.msg} /> : <ErrorBanner message={toast.msg} />) : null}
+      {loadError ? <ErrorBanner message={loadError} onRetry={load} /> : null}
+
+      <View style={styles.tabs}>
+        {(['PERSONAL', 'PROFESSIONAL'] as Section[]).map((s) => (
+          <Pressable
+            key={s}
+            onPress={() => setSection(s)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: section === s }}
+            style={[styles.tab, { backgroundColor: section === s ? theme.primary : theme.backgroundElement }]}>
+            <ThemedText style={[styles.tabText, { color: section === s ? '#ffffff' : theme.text }]}>{s === 'PERSONAL' ? 'Personal' : 'Professional'}</ThemedText>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+
+  const empty = loading ? (
+    <View style={styles.gap}>{[0, 1, 2].map((i) => <Skeleton key={i} height={64} />)}</View>
+  ) : loadError ? null : (
+    <ThemedText themeColor="textMuted" style={styles.emptyText}>No cases yet</ThemedText>
+  );
+
+  return shell(
     <>
-      <Stack.Screen options={{ title: 'Legal' }} />
-      {forbidden ? (
-        <ThemedView style={styles.center}>
-          <ThemedText themeColor="textSecondary">
-            You don&apos;t have access to Legal. This is granted per-person, not by role — ask the owner if you
-            believe you should have access.
-          </ThemedText>
-        </ThemedView>
-      ) : (
-        <>
-          <View style={styles.sectionTabRow}>
-            {CASE_SECTIONS.map((s) => (
-              <Pressable
-                key={s}
-                onPress={() => setSectionTab(s)}
-                style={[styles.sectionTab, { backgroundColor: sectionTab === s ? theme.primary : theme.backgroundElement }]}>
-                <ThemedText type="small" style={sectionTab === s ? styles.buttonLabel : undefined}>{s}</ThemedText>
-              </Pressable>
-            ))}
-          </View>
-          {!forbidden && (
-            <Pressable onPress={() => { setNewSection(sectionTab); setShowNewCase(true); }} style={styles.newButtonOuter}>
-              <ThemedText style={styles.buttonLabel}>+ New Case</ThemedText>
-            </Pressable>
-          )}
-          {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-          {cases === null ? (
-            <ActivityIndicator style={styles.spinner} />
-          ) : (
-            <ScrollView
-              contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-              refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-            >
-              {cases.length === 0 ? (
-                <ThemedText type="small" themeColor="textSecondary">No cases.</ThemedText>
-              ) : (
-                cases.map((c) => (
-                  <ThemedView key={c.id} type="backgroundElement" style={styles.row}>
-                    <TouchableOpacity onPress={() => toggleExpand(c.id)} activeOpacity={0.8}>
-                      <ThemedText type="smallBold">{c.title}</ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {c.section} · {c.status}
-                        {c.nextHearingDate ? ` · Next hearing ${new Date(c.nextHearingDate).toLocaleDateString()}` : ''}
-                      </ThemedText>
-                    </TouchableOpacity>
-
-                    {editingId === c.id ? (
-                      <View style={styles.editBlock}>
-                        <TextInput value={editTitle} onChangeText={setEditTitle} placeholder="Title" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.background }]} />
-                        <TextInput value={editStatus} onChangeText={setEditStatus} placeholder="Status" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.background }]} />
-                        <TextInput value={editHearingDate} onChangeText={setEditHearingDate} placeholder="Next hearing date (YYYY-MM-DD)" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.background }]} />
-                        <TextInput value={editNotes} onChangeText={setEditNotes} placeholder="Notes" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.background }]} />
-                        <View style={styles.actionsRow}>
-                          <Pressable onPress={onSaveEdit} disabled={isSavingEdit} style={styles.smallButton}>
-                            {isSavingEdit ? <ActivityIndicator color="#ffffff" size="small" /> : <ThemedText style={styles.buttonLabel}>Save</ThemedText>}
-                          </Pressable>
-                          <Pressable onPress={() => setEditingId(null)} style={[styles.smallButton, styles.cancelButton]}>
-                            <ThemedText type="small">Cancel</ThemedText>
-                          </Pressable>
-                        </View>
-                      </View>
-                    ) : (
-                      <View style={styles.actionsRow}>
-                        <Pressable onPress={() => openEdit(c)}><ThemedText type="link">Edit</ThemedText></Pressable>
-                        <Pressable onPress={() => openUpload(c.id)}><ThemedText type="link">Upload document</ThemedText></Pressable>
-                      </View>
-                    )}
-
-                    {uploadCaseId === c.id && (
-                      <View style={styles.editBlock}>
-                        <TextInput
-                          value={uploadLabel}
-                          onChangeText={setUploadLabel}
-                          placeholder="Document label *"
-                          placeholderTextColor={theme.textSecondary}
-                          style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
-                        />
-                        {upload.file ? (
-                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{upload.file.name}</ThemedText>
-                        ) : (
-                          <View style={styles.actionsRow}>
-                            <Pressable onPress={onPickCamera} style={styles.smallButton}><ThemedText style={styles.buttonLabel}>Camera</ThemedText></Pressable>
-                            <Pressable onPress={onPickGallery} style={styles.smallButton}><ThemedText style={styles.buttonLabel}>Gallery</ThemedText></Pressable>
-                          </View>
-                        )}
-                        {upload.status === 'uploading' && <ActivityIndicator />}
-                        {upload.error && <ThemedText style={styles.error}>{upload.error}</ThemedText>}
-                        <View style={styles.actionsRow}>
-                          <Pressable onPress={doUpload} disabled={!upload.file || upload.status === 'uploading'} style={styles.smallButton}>
-                            <ThemedText style={styles.buttonLabel}>Upload</ThemedText>
-                          </Pressable>
-                          <Pressable onPress={() => { setUploadCaseId(null); upload.reset(); }} style={[styles.smallButton, styles.cancelButton]}>
-                            <ThemedText type="small">Cancel</ThemedText>
-                          </Pressable>
-                        </View>
-                      </View>
-                    )}
-
-                    {expandedId === c.id && (
-                      <ThemedView style={styles.docsWrap}>
-                        {docsError[c.id] ? (
-                          <ThemedText type="small" style={styles.error}>{docsError[c.id]}</ThemedText>
-                        ) : !docs[c.id] ? (
-                          <ActivityIndicator />
-                        ) : docs[c.id].length === 0 ? (
-                          <ThemedText type="small" themeColor="textSecondary">No documents.</ThemedText>
-                        ) : (
-                          docs[c.id].map((d) => (
-                            <ThemedText key={d.id} type="small" themeColor="textSecondary">
-                              {d.label} — {d.filename}
-                            </ThemedText>
-                          ))
-                        )}
-                      </ThemedView>
-                    )}
-                  </ThemedView>
-                ))
-              )}
-            </ScrollView>
-          )}
-        </>
-      )}
-    </>
+      <FlatList
+        data={loading ? [] : cases}
+        keyExtractor={(c) => c.id}
+        renderItem={({ item: c }) => (
+          <Card onPress={() => setDetailCase(c)}>
+            <View style={styles.caseRow}>
+              <View style={styles.flex1}>
+                <ThemedText numberOfLines={1} style={styles.caseTitle}>{c.title}</ThemedText>
+                <ThemedText themeColor="textMuted" style={styles.caseSub}>
+                  {c.nextHearingDate ? `Next hearing: ${fmtDate(c.nextHearingDate)}` : `Updated ${fmtDate(c.updatedAt)}`}
+                </ThemedText>
+              </View>
+              <Badge variant="secondary">{c.status}</Badge>
+            </View>
+          </Card>
+        )}
+        ListHeaderComponent={header}
+        ListEmptyComponent={empty}
+        ItemSeparatorComponent={Sep}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        contentContainerStyle={[styles.page, { padding: wide ? 24 : 16, paddingBottom: insets.bottom + 40 }]}
+      />
+      {showNew ? (
+        <NewCaseSheet
+          section={section}
+          onClose={() => setShowNew(false)}
+          onError={(m) => notify('error', m)}
+          onCreated={() => { setShowNew(false); notify('success', 'Case created'); load(); }}
+        />
+      ) : null}
+      {detailCase ? (
+        <CaseDetailSheet
+          legalCase={detailCase}
+          wide={wide}
+          notify={notify}
+          onClose={() => setDetailCase(null)}
+          onUpdated={() => { setDetailCase(null); load(); }}
+        />
+      ) : null}
+    </>,
   );
 }
 
+function Sep() {
+  return <View style={{ height: 12 }} />;
+}
+
 const styles = StyleSheet.create({
-  flex1: { flex: 1 },
-  content: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.three },
-  error: { color: '#B83030', marginHorizontal: Spacing.three, marginTop: Spacing.two },
-  spinner: { marginTop: Spacing.three },
-  row: { borderRadius: Spacing.three, padding: Spacing.three, minHeight: Layout.minTouchTarget, gap: Spacing.half },
-  docsWrap: { marginTop: Spacing.two, gap: Spacing.half },
-  newButtonOuter: { margin: Spacing.three, marginBottom: 0, height: 44, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  sectionTabRow: { flexDirection: 'row', gap: Spacing.two, marginHorizontal: Spacing.three, marginTop: Spacing.three },
-  sectionTab: { flex: 1, height: 40, borderRadius: Spacing.two, alignItems: 'center', justifyContent: 'center' },
-  button: { marginTop: Spacing.two, height: 46, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  smallButton: { height: 40, paddingHorizontal: Spacing.three, borderRadius: Spacing.two, backgroundColor: '#7A1C2E', alignItems: 'center', justifyContent: 'center' },
-  cancelButton: { backgroundColor: '#8A8A8E' },
-  buttonLabel: { color: '#ffffff', fontWeight: '600' },
-  input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15, marginTop: Spacing.two },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one, marginTop: Spacing.two },
-  chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.half, borderRadius: 999 },
-  chipLabelActive: { color: '#ffffff', fontWeight: '600' },
-  editBlock: { gap: Spacing.one, marginTop: Spacing.two },
-  actionsRow: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.one, alignItems: 'center' },
+  flex1: { flex: 1, minWidth: 0 },
+  page: { width: '100%', maxWidth: 900, alignSelf: 'center' },
+  body: { fontSize: 14, lineHeight: 20 },
+  headerWrap: { gap: 20, marginBottom: 20 },
+  headRow: { gap: 12 },
+  headRowWide: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  h1: { fontSize: 20, lineHeight: 28, fontFamily: FontWeights.bold },
+  subtitle: { fontSize: 14, lineHeight: 20 },
+  tabs: { flexDirection: 'row', gap: 8 },
+  tab: { minHeight: 40, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  tabText: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  gap: { gap: 12 },
+  emptyText: { fontSize: 14, lineHeight: 20, textAlign: 'center', paddingVertical: 40 },
+  caseRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  caseTitle: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  caseSub: { fontSize: 12, lineHeight: 16, marginTop: 2 },
 });

@@ -1,14 +1,19 @@
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { FlatList, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { GlassCard } from '@/components/home/glass-card';
+import { DateField } from '@/components/call-tracker/date-field';
+import {
+  CHART_COLORS, Chip, EmptyText, HBarChart, HistBadge, KPICard, MONTH_NAMES, OutlineBtn, RevenueChart,
+  SectionHeader, SkeletonRows, StatusBadge, TableCard, axisK, fmtDate, getPreset, inr, isoDate,
+} from '@/components/erp-finance/parts';
+import { shareCsv, csvCell } from '@/components/inventory/csv';
+import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Select, Skeleton } from '@/components/ui';
+import { FontWeights, Fonts, withAlpha } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
   fetchErpFinanceCustomers, fetchErpFinanceDaily, fetchErpFinanceMonthlyBreakdown, fetchErpFinanceOrders,
@@ -16,637 +21,808 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import type {
-  ErpFinanceCustomers, ErpFinanceDailyPoint, ErpFinanceEmployeePerformance, ErpFinanceMonthlyBreakdown,
-  ErpFinanceOrder, ErpFinanceOverview, ErpFinanceServices,
+  ErpFinanceCustomer, ErpFinanceDailyPoint, ErpFinanceEmployeePerformance, ErpFinanceMonthlyBreakdown,
+  ErpFinanceOrder, ErpFinanceOverview, ErpFinanceService,
 } from '@/types/api';
 
-// canAccess=requireRoles('OWNER','STORE_MANAGER','ACCOUNTING') — a static
-// role gate applied to every route in this file via a shared `canAccess`
-// const near the top (backend/src/routes/erp-finance.ts, re-verified
-// 2026-09-28 against origin/main — unchanged), unlike the dynamic per-user
-// gates on CRM/Invoices/Legal. The dashboard's OWN page adds a narrower
-// client-side redirect (OWNER/STORE_MANAGER only, ACCOUNTING gets bounced
-// even though the backend allows it) — mobile intentionally follows the
-// backend's real gate here, same precedent as every other screen in this
-// project, not the dashboard's stricter client-only check.
-const VIEW_ROLES = ['OWNER', 'STORE_MANAGER', 'ACCOUNTING'];
-const PAGE_SIZE = 20;
+const WIDE_MIN = 560;
+const TWO_COL_MIN = 900;
+const ORDERS_LIMIT = 50;
+// The dashboard page itself bounces everyone except OWNER / STORE_MANAGER to /dashboard.
+const ALLOWED_ROLES = ['OWNER', 'STORE_MANAGER'];
 
-const DATE_PRESETS = ['month', 'quarter', 'year', 'pick', 'custom'] as const;
-const DATE_PRESET_LABELS: Record<string, string> = {
-  month: 'This Month', quarter: 'This Quarter', year: 'This Year', pick: 'By Month', custom: 'Custom',
-};
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+type Preset = 'month' | 'quarter' | 'year' | 'pick' | 'custom';
+const PRESETS: Preset[] = ['month', 'quarter', 'year', 'pick', 'custom'];
+const PRESET_LABEL: Record<Preset, string> = { month: 'This Month', quarter: 'This Quarter', year: 'This Year', pick: 'By Month', custom: 'Custom' };
 
-const STATUS_COLORS: Record<string, string> = {
-  PAID: '#22c55e', COMPLETED: '#22c55e', PARTIAL: '#e8a828', PENDING: '#8A8A8E', CANCELLED: '#e06868',
-};
+const ORDER_COLS: { h: string; w: number }[] = [
+  { h: 'Date', w: 100 }, { h: 'Order Id', w: 130 }, { h: 'Customer', w: 150 }, { h: 'Car Model', w: 120 },
+  { h: 'Item', w: 190 }, { h: 'Qty', w: 50 }, { h: 'Unit Price', w: 100 }, { h: 'Order Value', w: 110 },
+  { h: 'Profit', w: 100 }, { h: 'Margin', w: 70 }, { h: 'Status', w: 100 }, { h: 'Sold By', w: 110 }, { h: 'Remarks', w: 150 },
+];
 
-function formatCurrency(n: number) {
-  return `₹${Math.round(n).toLocaleString('en-IN')}`;
-}
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-function isoDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function presetToDateRange(preset: string, pickMonth: number, pickYear: number, customFrom: string, customTo: string): { from: string; to: string } {
-  const now = new Date();
-  if (preset === 'custom') return { from: customFrom, to: customTo };
-  if (preset === 'pick') {
-    const from = new Date(pickYear, pickMonth - 1, 1);
-    const to = new Date(pickYear, pickMonth, 0);
-    return { from: isoDate(from), to: isoDate(to) };
-  }
-  if (preset === 'quarter') {
-    const q = Math.floor(now.getMonth() / 3);
-    return { from: isoDate(new Date(now.getFullYear(), q * 3, 1)), to: isoDate(now) };
-  }
-  if (preset === 'year') return { from: isoDate(new Date(now.getFullYear(), 0, 1)), to: isoDate(now) };
-  return { from: isoDate(new Date(now.getFullYear(), now.getMonth(), 1)), to: isoDate(now) };
-}
-
-function csvCell(value: string | number): string {
-  const s = String(value);
-  // Guard against CSV/formula injection: text beginning with = + - @ (or a
-  // leading tab/CR) is executed as a formula by Excel/Sheets. Only string
-  // values can carry this, so prefix them with ' to keep them plain text;
-  // numeric values (including negatives) are left untouched.
-  const safe = typeof value === 'string' && /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
-  return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-}
-async function shareCsv(filename: string, rows: (string | number)[][]) {
-  const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
-  const uri = `${FileSystem.cacheDirectory}${filename}`;
-  await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
-  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'text/csv' });
-}
-
-// Exact dashboard CSV headers/filename (Source = Historical/Live, one more
-// column than the on-screen table drops — Margin — since that's a derived
-// display-only figure the dashboard's own export also omits).
-async function exportOrdersCsv(orders: ErpFinanceOrder[], from: string, to: string) {
+// Dashboard exportCSV: same headers, values and filename.
+async function exportCSV(orders: ErpFinanceOrder[], from: string, to: string) {
   const headers = ['Date', 'Order Id', 'Customer', 'Car Model', 'Item', 'Qty', 'Unit Price', 'Order Value', 'Profit', 'Status', 'Sold By', 'Remarks', 'Source'];
   const rows = orders.map((o) => [
-    formatDate(o.date), o.orderNumber ?? o.id, o.customerName ?? '', o.vehicleModel ?? '',
-    o.lineItems.join('; '), o.qty ?? '', o.unitPrice ?? '', o.amount ?? '', o.profit ?? '',
-    o.status ?? '', o.soldBy ?? '', o.remarks ?? '', o.isHistorical ? 'Historical' : 'Live',
+    fmtDate(o.date), o.orderNumber ?? '', o.customerName ?? '', o.vehicleModel ?? '', (o.lineItems ?? []).join('; '),
+    o.qty != null ? o.qty : '', o.unitPrice != null ? o.unitPrice.toFixed(2) : '', (o.amount ?? 0).toFixed(2),
+    o.profit != null ? o.profit.toFixed(2) : '', o.status ?? '', o.soldBy ?? '', o.remarks ?? '', o.isHistorical ? 'Historical' : 'Live',
   ]);
-  await shareCsv(`orders_${from}_${to}.csv`, [headers, ...rows]);
+  await shareCsv(`orders_${from}_${to}.csv`, [headers, ...rows].map((r) => r.map(csvCell).join(',')));
 }
 
 export default function ErpFinanceScreen() {
-  const insets = useSafeAreaInsets();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
-  const now = new Date();
+  const allowed = ALLOWED_ROLES.includes(user?.role ?? '');
 
-  const [preset, setPreset] = useState<typeof DATE_PRESETS[number]>('month');
-  const [pickMonth, setPickMonth] = useState(now.getMonth() + 1);
-  const [pickYear, setPickYear] = useState(now.getFullYear());
-  const [customFrom, setCustomFrom] = useState(isoDate(new Date(now.getFullYear(), now.getMonth(), 1)));
-  const [customTo, setCustomTo] = useState(isoDate(now));
-  const { from: dateFrom, to: dateTo } = presetToDateRange(preset, pickMonth, pickYear, customFrom, customTo);
+  const [width, setWidth] = useState(0);
+  const wide = width >= WIDE_MIN;
+  const twoCol = width >= TWO_COL_MIN;
 
-  const [overview, setOverview] = useState<ErpFinanceOverview | null>(null);
-  const [orders, setOrders] = useState<ErpFinanceOrder[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [error, setError] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [groupByOrder, setGroupByOrder] = useState(true);
-  const [search, setSearch] = useState('');
-  const [searchInput, setSearchInput] = useState('');
-  const [isExporting, setIsExporting] = useState(false);
-  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [initial] = useState(() => getPreset('month'));
+  const [preset, setPreset] = useState<Preset>('month');
+  const [dateFrom, setDateFrom] = useState(initial.from);
+  const [dateTo, setDateTo] = useState(initial.to);
+  const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
+  const [pickerMonth, setPickerMonth] = useState(() => new Date().getMonth());
+  const [thisYear] = useState(() => new Date().getFullYear());
+  const [thisMonth] = useState(() => new Date().getMonth());
 
-  // Sales Performance / Services / Top Customers — fetched alongside
-  // overview/orders on every load/filter change, same as the dashboard's
-  // page-level useEffect (no separate lazy tab-load on this page).
-  const [salesPerformance, setSalesPerformance] = useState<ErpFinanceEmployeePerformance[] | null>(null);
-  const [services, setServices] = useState<ErpFinanceServices | null>(null);
-  const [servicesTab, setServicesTab] = useState<'byRevenue' | 'byVolume'>('byRevenue');
-  const [customersData, setCustomersData] = useState<ErpFinanceCustomers | null>(null);
+  const [kpis, setKpis] = useState<ErpFinanceOverview['kpis'] | null>(null);
+  const [chart, setChart] = useState<ErpFinanceOverview['chart']>([]);
+  const [kpisLoading, setKpisLoading] = useState(true);
 
-  // Daily drill-down — tap a month in the monthly revenue/profit list to
-  // expand a per-day breakdown, matching the dashboard's chart-click
-  // handleBarClick/GET /erp/finance/daily behavior (list tap substitutes for
-  // a chart click, same underlying data).
+  const [orders, setOrders] = useState<ErpFinanceOrder[]>([]);
+  const [ordersTotal, setOrdersTotal] = useState(0);
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [ordersSearch, setOrdersSearch] = useState('');
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [orderGrouping, setOrderGrouping] = useState<'lineItem' | 'order'>('order');
+
+  const [employees, setEmployees] = useState<ErpFinanceEmployeePerformance[]>([]);
+  const [empLoading, setEmpLoading] = useState(true);
+  const [showMonthly, setShowMonthly] = useState(false);
+  const [monthly, setMonthly] = useState<ErpFinanceMonthlyBreakdown>({ employees: [], months: [] });
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+
+  const [byRevenue, setByRevenue] = useState<ErpFinanceService[]>([]);
+  const [byVolume, setByVolume] = useState<ErpFinanceService[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(true);
+  const [servicesTab, setServicesTab] = useState<'revenue' | 'volume'>('revenue');
+
+  const [customers, setCustomers] = useState<ErpFinanceCustomer[]>([]);
+  const [walkInCount, setWalkInCount] = useState(0);
+  const [customersLoading, setCustomersLoading] = useState(true);
+
   const [drillMonth, setDrillMonth] = useState<string | null>(null);
-  const [drillDays, setDrillDays] = useState<ErpFinanceDailyPoint[] | null>(null);
+  const [drillDays, setDrillDays] = useState<ErpFinanceDailyPoint[]>([]);
   const [drillLoading, setDrillLoading] = useState(false);
 
-  // Monthly View — lazy-loaded only when the toggle is opened, matching the
-  // dashboard's own showMonthlyBreakdown/loadMonthlyBreakdown pattern (not
-  // fetched alongside the rest of the page on every filter change).
-  const [showMonthlyBreakdown, setShowMonthlyBreakdown] = useState(false);
-  const [monthlyBreakdown, setMonthlyBreakdown] = useState<ErpFinanceMonthlyBreakdown | null>(null);
-  const [monthlyBreakdownLoading, setMonthlyBreakdownLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRef = useRef('');
+  const reqId = useRef(0);
 
-  const load = useCallback(async () => {
-    if (!isAuthorized) return;
-    setError(null);
-    try {
-      const [ov, ordersResp, sales, svc, custs] = await Promise.all([
-        fetchErpFinanceOverview(dateFrom, dateTo),
-        fetchErpFinanceOrders({ from: dateFrom, to: dateTo, page: 1, limit: PAGE_SIZE, search: search.trim() || undefined }),
-        fetchErpFinanceSalesPerformance(dateFrom, dateTo),
-        fetchErpFinanceServices(dateFrom, dateTo),
-        fetchErpFinanceCustomers(dateFrom, dateTo),
-      ]);
-      setOverview(ov);
-      setOrders(ordersResp.orders);
-      setTotal(ordersResp.total);
-      setPage(1);
-      setSalesPerformance(sales);
-      setServices(svc);
-      setCustomersData(custs);
-      setDrillMonth(null);
-      setDrillDays(null);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load ERP Finance.'));
-    }
-  }, [isAuthorized, dateFrom, dateTo, search]);
+  useEffect(() => () => { if (searchTimer.current) clearTimeout(searchTimer.current); }, []);
 
-  const onToggleDrillMonth = async (yearMonth: string) => {
-    if (drillMonth === yearMonth) { setDrillMonth(null); return; }
-    setDrillMonth(yearMonth);
-    setDrillLoading(true);
+  const loadOverview = useCallback(async () => {
+    setKpisLoading(true);
     try {
-      const [y, m] = yearMonth.split('-');
-      const lastDay = new Date(Number(y), Number(m), 0).getDate();
-      const from = `${y}-${m}-01`;
-      const to = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
-      setDrillDays(await fetchErpFinanceDaily(from, to));
+      const r = await fetchErpFinanceOverview(dateFrom, dateTo);
+      setKpis(r.kpis);
+      setChart(r.chart ?? []);
+    } catch { setKpis(null); } finally { setKpisLoading(false); }
+  }, [dateFrom, dateTo]);
+
+  const loadOrders = useCallback(async (page = 1, search = '') => {
+    const id = ++reqId.current;
+    setOrdersLoading(true);
+    try {
+      const r = await fetchErpFinanceOrders({ from: dateFrom, to: dateTo, page, limit: ORDERS_LIMIT, search });
+      if (id !== reqId.current) return;
+      setOrders(r.orders ?? []);
+      setOrdersTotal(r.total ?? 0);
     } catch {
-      setDrillDays([]);
+      if (id === reqId.current) { setOrders([]); setError('Failed to load orders'); }
     } finally {
-      setDrillLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount / filter change
-    load();
-  }, [load]);
-
-  const loadMonthlyBreakdown = useCallback(async () => {
-    setMonthlyBreakdownLoading(true);
-    try {
-      const data = await fetchErpFinanceMonthlyBreakdown(dateFrom, dateTo);
-      setMonthlyBreakdown(data);
-    } catch {
-      setMonthlyBreakdown({ employees: [], months: [] });
-    } finally {
-      setMonthlyBreakdownLoading(false);
+      if (id === reqId.current) setOrdersLoading(false);
     }
   }, [dateFrom, dateTo]);
 
-  useEffect(() => {
-    if (showMonthlyBreakdown) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on toggle-open / filter change
-      loadMonthlyBreakdown();
-    }
-  }, [showMonthlyBreakdown, loadMonthlyBreakdown]);
+  const loadEmployees = useCallback(async () => {
+    setEmpLoading(true);
+    try { setEmployees((await fetchErpFinanceSalesPerformance(dateFrom, dateTo)) ?? []); } catch { setEmployees([]); } finally { setEmpLoading(false); }
+  }, [dateFrom, dateTo]);
 
-  // 400ms debounce, matching dashboard's search box exactly.
-  const onChangeSearchInput = (t: string) => {
-    setSearchInput(t);
-    if (searchDebounce.current) clearTimeout(searchDebounce.current);
-    searchDebounce.current = setTimeout(() => setSearch(t), 400);
-  };
+  const loadServices = useCallback(async () => {
+    setServicesLoading(true);
+    try {
+      const r = await fetchErpFinanceServices(dateFrom, dateTo);
+      setByRevenue(r.byRevenue ?? []);
+      setByVolume(r.byVolume ?? []);
+    } catch { setByRevenue([]); setByVolume([]); } finally { setServicesLoading(false); }
+  }, [dateFrom, dateTo]);
+
+  const loadCustomers = useCallback(async () => {
+    setCustomersLoading(true);
+    try {
+      const r = await fetchErpFinanceCustomers(dateFrom, dateTo);
+      setCustomers(r.customers ?? []);
+      setWalkInCount(r.walkInCount ?? 0);
+    } catch { setCustomers([]); } finally { setCustomersLoading(false); }
+  }, [dateFrom, dateTo]);
+
+  const loadMonthly = useCallback(async () => {
+    setMonthlyLoading(true);
+    try { setMonthly((await fetchErpFinanceMonthlyBreakdown(dateFrom, dateTo)) ?? { employees: [], months: [] }); }
+    catch { setMonthly({ employees: [], months: [] }); } finally { setMonthlyLoading(false); }
+  }, [dateFrom, dateTo]);
+
+  const loadAll = useCallback(() => {
+    setError('');
+    loadOverview();
+    loadOrders(1, searchRef.current);
+    loadEmployees();
+    loadServices();
+    loadCustomers();
+  }, [loadOverview, loadOrders, loadEmployees, loadServices, loadCustomers]);
+
+  useEffect(() => {
+    if (!allowed) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- reset paging and fetch on mount / date range change */
+    setOrdersPage(1);
+    setDrillMonth(null);
+    loadAll();
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [allowed, loadAll]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch when Monthly View opens
+    if (allowed && showMonthly) loadMonthly();
+  }, [allowed, showMonthly, loadMonthly]);
 
   const onRefresh = async () => {
-    setIsRefreshing(true);
-    await load();
-    setIsRefreshing(false);
+    setRefreshing(true);
+    loadAll();
+    if (showMonthly) loadMonthly();
+    await new Promise((r) => setTimeout(r, 600));
+    setRefreshing(false);
   };
 
-  const onLoadMore = async () => {
-    if (isLoadingMore || !orders || orders.length >= total) return;
-    setIsLoadingMore(true);
-    try {
-      const nextPage = page + 1;
-      const resp = await fetchErpFinanceOrders({ from: dateFrom, to: dateTo, page: nextPage, limit: PAGE_SIZE, search: search.trim() || undefined });
-      setOrders((prev) => [...(prev ?? []), ...resp.orders]);
-      setPage(nextPage);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load more orders.'));
-    } finally {
-      setIsLoadingMore(false);
+  const onSearch = (val: string) => {
+    setOrdersSearch(val);
+    searchRef.current = val;
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => { setOrdersPage(1); loadOrders(1, val); }, 400);
+  };
+
+  const selectPreset = (p: Preset) => {
+    setPreset(p);
+    if (p === 'pick') {
+      const d = new Date();
+      setPickerYear(d.getFullYear());
+      setPickerMonth(d.getMonth());
+      setDateFrom(isoDate(new Date(d.getFullYear(), d.getMonth(), 1)));
+      setDateTo(isoDate(new Date(d.getFullYear(), d.getMonth() + 1, 0)));
+    } else if (p !== 'custom') {
+      const r = getPreset(p);
+      setDateFrom(r.from);
+      setDateTo(r.to);
     }
   };
 
-  // "By Order" groups line items by orderNumber (falling back to id) —
-  // client-side dedup, matching dashboard's exact grouping logic.
-  const displayedOrders = (() => {
-    if (!orders) return orders;
-    if (!groupByOrder) return orders;
+  const applyMonth = (y: number, m: number) => {
+    setPickerYear(y);
+    setPickerMonth(m);
+    setDateFrom(isoDate(new Date(y, m, 1)));
+    setDateTo(isoDate(new Date(y, m + 1, 0)));
+  };
+
+  const onBarPress = async (ym: string) => {
+    if (drillMonth === ym) { setDrillMonth(null); return; }
+    setDrillMonth(ym);
+    setDrillLoading(true);
+    try {
+      const [y, m] = ym.split('-');
+      const mPad = m.padStart(2, '0');
+      const lastDay = new Date(Number(y), Number(m), 0).getDate();
+      setDrillDays((await fetchErpFinanceDaily(`${y}-${mPad}-01`, `${y}-${mPad}-${String(lastDay).padStart(2, '0')}`)) ?? []);
+    } catch { setDrillDays([]); } finally { setDrillLoading(false); }
+  };
+
+  const exportPage = async () => {
+    setExporting(true);
+    try { await exportCSV(orders, dateFrom, dateTo); } catch (e) { setError(getErrorMessage(e, 'Export failed')); } finally { setExporting(false); }
+  };
+  const exportAll = async () => {
+    setExporting(true);
+    try {
+      const r = await fetchErpFinanceOrders({ from: dateFrom, to: dateTo, page: 1, limit: 2000 });
+      await exportCSV(r.orders ?? [], dateFrom, dateTo);
+    } catch { setError('Export failed — try a shorter date range'); } finally { setExporting(false); }
+  };
+
+  // Dashboard displayOrders: "By Order" merges line items of the same order.
+  const displayOrders = useMemo(() => {
+    if (orderGrouping === 'lineItem') return orders;
+    const keyOf = (o: ErpFinanceOrder) => (o.isHistorical ? (o.orderNumber?.trim() || `_uid_${o.id}`) : o.id);
     const seen = new Set<string>();
-    return orders.filter((o) => {
-      const key = o.orderNumber || o.id;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  })();
-
-  const onExportPage = async () => {
-    if (!displayedOrders || displayedOrders.length === 0) return;
-    setIsExporting(true);
-    try {
-      await exportOrdersCsv(displayedOrders, dateFrom, dateTo);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Export failed.'));
-    } finally {
-      setIsExporting(false);
+    const result: ErpFinanceOrder[] = [];
+    const liMap: Record<string, string[]> = {};
+    for (const o of orders) {
+      const k = keyOf(o);
+      if (!liMap[k]) liMap[k] = [];
+      liMap[k].push(...(o.lineItems ?? []));
+      if (!seen.has(k)) { seen.add(k); result.push(o); }
     }
-  };
+    return result.map((o) => ({ ...o, lineItems: Array.from(new Set(liMap[keyOf(o)])) }));
+  }, [orders, orderGrouping]);
 
-  const onExportAll = async () => {
-    setIsExporting(true);
-    setError(null);
-    try {
-      const resp = await fetchErpFinanceOrders({ from: dateFrom, to: dateTo, page: 1, limit: 2000, search: search.trim() || undefined });
-      await exportOrdersCsv(resp.orders, dateFrom, dateTo);
-    } catch {
-      setError('Export failed — try a shorter date range');
-    } finally {
-      setIsExporting(false);
-    }
-  };
+  const shell = (children: ReactNode) => (
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Stack.Screen options={{ title: 'ERP Finance' }} />
+      {children}
+    </ThemedView>
+  );
 
-  if (!isAuthorized) {
-    return (
-      <ThemedView style={styles.center}>
-        <ThemedText themeColor="textSecondary">
-          ERP Finance is only available to Owner, Store Manager, or Accounting accounts.
+  if (!allowed) {
+    return shell(
+      <View style={styles.denied}>
+        <ThemedText themeColor="textMuted" style={styles.body}>
+          You don&apos;t have access to ERP Finance. It is available to Owner and Store Manager accounts only.
         </ThemedText>
-      </ThemedView>
+      </View>,
     );
   }
 
-  return (
-    <>
-      <Stack.Screen options={{ title: 'ERP Finance' }} />
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-        onScroll={({ nativeEvent }) => {
-          const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
-          if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 200) onLoadMore();
-        }}
-        scrollEventThrottle={200}>
-        <ThemedText type="smallBold">Date Range</ThemedText>
-        <View style={styles.chipRow}>
-          {DATE_PRESETS.map((p) => (
-            <Pressable key={p} onPress={() => setPreset(p)} style={[styles.chip, { backgroundColor: preset === p ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={preset === p ? styles.chipLabelActive : undefined}>{DATE_PRESET_LABELS[p]}</ThemedText>
-            </Pressable>
-          ))}
+  const pad = wide ? 24 : 16;
+  const inner = Math.max(0, width - pad * 2);
+  const kCols = width >= TWO_COL_MIN ? 6 : wide ? 3 : 2;
+  const kGap = 12;
+  const kW = Math.floor((inner - kGap * (kCols - 1)) / kCols);
+  const momUp = (kpis?.momGrowth ?? 0) >= 0;
+  const noOrders = (kpis?.totalOrders ?? 0) === 0;
+  const totalPages = Math.max(1, Math.ceil(ordersTotal / ORDERS_LIMIT));
+  const hFrom = dateFrom.slice(0, 7);
+  const hTo = dateTo.slice(0, 7);
+  const services = servicesTab === 'revenue' ? byRevenue : byVolume;
+  const yearOptions = Array.from({ length: thisYear - 2025 + 1 }, (_, i) => String(2025 + i));
+  const monthOptions = MONTH_NAMES.map((n, i) => ({ value: String(i), label: n }))
+    .filter((o) => !(pickerYear === thisYear && Number(o.value) > thisMonth));
+
+  const th = (text: string, style?: object) => (
+    <ThemedText themeColor="textMuted" style={[styles.th, style]}>{text.toUpperCase()}</ThemedText>
+  );
+  const headRow = { backgroundColor: theme.surface, borderBottomColor: theme.border };
+  const rowLine = { borderBottomColor: theme.border };
+
+  const header = (
+    <View style={styles.sections}>
+      <View>
+        <ThemedText style={styles.h1}>Finance Records</ThemedText>
+        <ThemedText themeColor="textMuted" style={styles.subtitle}>Cash collected · Jan 2025 → present · live + historical Excel data</ThemedText>
+      </View>
+
+      {/* Date range */}
+      <View style={[styles.card, styles.filterCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+        <View style={styles.chips}>
+          {PRESETS.map((p) => <Chip key={p} label={PRESET_LABEL[p]} active={preset === p} onPress={() => selectPreset(p)} />)}
         </View>
-        {preset === 'pick' && (
+        {preset === 'pick' ? (
           <View style={styles.pickRow}>
-            <View style={styles.chipRow}>
-              {MONTH_NAMES.map((m, i) => (
-                (pickYear < now.getFullYear() || i <= now.getMonth()) && (
-                  <Pressable key={m} onPress={() => setPickMonth(i + 1)} style={[styles.chip, { backgroundColor: pickMonth === i + 1 ? theme.primary : theme.backgroundElement }]}>
-                    <ThemedText type="small" style={pickMonth === i + 1 ? styles.chipLabelActive : undefined}>{m.slice(0, 3)}</ThemedText>
-                  </Pressable>
-                )
-              ))}
+            <View style={styles.flex1}>
+              <Select options={monthOptions} value={String(pickerMonth)} onChange={(v) => applyMonth(pickerYear, Number(v))} />
             </View>
-            <View style={styles.chipRow}>
-              {Array.from({ length: now.getFullYear() - 2025 + 1 }, (_, i) => 2025 + i).map((y) => (
-                <Pressable key={y} onPress={() => setPickYear(y)} style={[styles.chip, { backgroundColor: pickYear === y ? theme.primary : theme.backgroundElement }]}>
-                  <ThemedText type="small" style={pickYear === y ? styles.chipLabelActive : undefined}>{y}</ThemedText>
-                </Pressable>
-              ))}
+            <View style={styles.flex1}>
+              <Select
+                options={yearOptions.map((y) => ({ value: y, label: y }))}
+                value={String(pickerYear)}
+                onChange={(v) => {
+                  const y = Number(v);
+                  applyMonth(y, y === thisYear ? Math.min(pickerMonth, thisMonth) : pickerMonth);
+                }}
+              />
             </View>
           </View>
-        )}
-        {preset === 'custom' && (
+        ) : null}
+        {preset === 'custom' ? (
           <View style={styles.pickRow}>
-            <TextInput value={customFrom} onChangeText={setCustomFrom} placeholder="From YYYY-MM-DD" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-            <TextInput value={customTo} onChangeText={setCustomTo} placeholder="To YYYY-MM-DD" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
+            <View style={styles.flex1}><DateField label="From" value={dateFrom} onChange={(v) => v && setDateFrom(v)} compact /></View>
+            <ThemedText themeColor="textMuted" style={styles.small}>to</ThemedText>
+            <View style={styles.flex1}><DateField label="To" value={dateTo} onChange={(v) => v && setDateTo(v)} compact /></View>
           </View>
-        )}
-        <ThemedText type="small" themeColor="textSecondary" style={styles.rangeLabel}>{dateFrom} → {dateTo}</ThemedText>
+        ) : null}
+        <ThemedText themeColor="textMuted" style={[styles.small, !wide && { textAlign: 'left' }, wide && { textAlign: 'right' }]}>{dateFrom} → {dateTo}</ThemedText>
+      </View>
 
-        {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+      {error ? <ErrorBanner message={error} onRetry={() => { loadAll(); }} /> : null}
 
-        {overview === null ? (
-          <ActivityIndicator style={styles.spinner} />
+      {/* Overview */}
+      <View>
+        <SectionHeader title="Overview" sub="Order Value for selected period" />
+        {kpisLoading ? (
+          <View style={styles.kpiGrid}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <View key={i} style={[styles.kpiSkel, { width: kW, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}><Skeleton height={64} /></View>
+            ))}
+          </View>
+        ) : kpis ? (
+          <View style={styles.kpiGrid}>
+            <View style={{ width: kW }}><KPICard label="Revenue Collected" value={inr(kpis.totalRevenue)} color={theme.primary} /></View>
+            <View style={{ width: kW }}><KPICard label="Total Profit" value={inr(kpis.totalProfit)} color={theme.success} /></View>
+            <View style={{ width: kW }}><KPICard label="Av. Order Value" value={noOrders ? 'N/A' : inr(kpis.avgOrderValue)} mono={!noOrders} /></View>
+            <View style={{ width: kW }}><KPICard label="Profit per Order" value={noOrders ? 'N/A' : inr(kpis.profitPerOrder)} mono={!noOrders} color={theme.success} /></View>
+            <View style={{ width: kW }}><KPICard label="Total No of Orders" value={String(kpis.totalOrders)} mono={false} /></View>
+            <View style={{ width: kW }}>
+              <KPICard
+                label="Month on Month Growth" mono={false}
+                value={`${momUp ? '+' : ''}${kpis.momGrowth.toFixed(1)}%`}
+                color={momUp ? theme.success : theme.danger} sub="vs previous period" />
+            </View>
+          </View>
         ) : (
-          <>
-            <View style={styles.kpiGrid}>
-              <GlassCard style={styles.kpiCard}>
-                <ThemedText type="small" themeColor="textSecondary">Revenue Collected</ThemedText>
-                <ThemedText type="subtitle">{formatCurrency(overview.kpis.totalRevenue)}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.kpiCard}>
-                <ThemedText type="small" themeColor="textSecondary">Total Profit</ThemedText>
-                <ThemedText type="subtitle">{formatCurrency(overview.kpis.totalProfit)}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.kpiCard}>
-                <ThemedText type="small" themeColor="textSecondary">Av. Order Value</ThemedText>
-                <ThemedText type="subtitle">{overview.kpis.totalOrders === 0 ? 'N/A' : formatCurrency(overview.kpis.avgOrderValue)}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.kpiCard}>
-                <ThemedText type="small" themeColor="textSecondary">Profit per Order</ThemedText>
-                <ThemedText type="subtitle">{overview.kpis.totalOrders === 0 ? 'N/A' : formatCurrency(overview.kpis.profitPerOrder)}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.kpiCard}>
-                <ThemedText type="small" themeColor="textSecondary">Total No of Orders</ThemedText>
-                <ThemedText type="subtitle">{overview.kpis.totalOrders}</ThemedText>
-              </GlassCard>
-              <GlassCard style={styles.kpiCard}>
-                <ThemedText type="small" themeColor="textSecondary">Month on Month Growth</ThemedText>
-                <ThemedText type="subtitle" style={{ color: overview.kpis.momGrowth >= 0 ? '#167A48' : '#B83030' }}>
-                  {overview.kpis.momGrowth >= 0 ? '+' : ''}
-                  {overview.kpis.momGrowth.toFixed(1)}%
-                </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">vs previous period</ThemedText>
-              </GlassCard>
-            </View>
+          <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <EmptyText text="Failed to load overview data." />
+          </View>
+        )}
 
-            {overview.chart.length > 0 && (
-              <>
-                <ThemedText type="smallBold" style={styles.sectionTitle}>Monthly revenue & profit</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">Tap a month for the day-by-day breakdown</ThemedText>
-                {overview.chart.map((point) => (
-                  <View key={point.yearMonth}>
-                    <Pressable onPress={() => onToggleDrillMonth(point.yearMonth)}>
-                      <ThemedView type="backgroundElement" style={styles.chartRow}>
-                        <ThemedText type="small">{point.month}</ThemedText>
-                        <View style={styles.chartValues}>
-                          <ThemedText type="small" themeColor="textSecondary">Rev {formatCurrency(point.revenue)}</ThemedText>
-                          <ThemedText type="small" themeColor="textSecondary">Profit {formatCurrency(point.profit)}</ThemedText>
-                        </View>
-                      </ThemedView>
-                    </Pressable>
-                    {drillMonth === point.yearMonth && (
-                      <View style={[styles.monthlyCard, { borderColor: theme.border }]}>
-                        {drillLoading ? (
-                          <ActivityIndicator style={styles.spinner} />
-                        ) : !drillDays || drillDays.length === 0 ? (
-                          <ThemedText type="small" themeColor="textSecondary">No daily data for this month.</ThemedText>
-                        ) : (
-                          drillDays.map((d) => (
-                            <View key={d.date} style={styles.tableRow}>
-                              <ThemedText type="small" style={styles.flex1}>{formatDate(d.date)}</ThemedText>
-                              <ThemedText type="small" style={styles.tabularNums}>{formatCurrency(d.revenue)}</ThemedText>
-                              <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>{formatCurrency(d.profit)}</ThemedText>
-                              <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>{d.orders} orders</ThemedText>
-                            </View>
-                          ))
-                        )}
-                      </View>
-                    )}
+        <View style={[styles.card, styles.chartCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+          <ThemedText style={styles.chartTitle}>
+            Revenue Collected — Jan 2025 to Present · <ThemedText themeColor="textMuted" style={styles.chartHint}>Tap a bar for daily breakdown</ThemedText>
+          </ThemedText>
+          <View style={styles.legend}>
+            <View style={styles.legendItem}><View style={[styles.swatch, { backgroundColor: CHART_COLORS[0] }]} /><ThemedText themeColor="textMuted" style={styles.small}>Order Value</ThemedText></View>
+            <View style={styles.legendItem}><View style={[styles.swatchLine, { backgroundColor: CHART_COLORS[1] }]} /><ThemedText themeColor="textMuted" style={styles.small}>Profit</ThemedText></View>
+          </View>
+          {kpisLoading ? <Skeleton height={192} /> : chart.length === 0 ? (
+            <View style={styles.noData}><ThemedText themeColor="textMuted" style={styles.body}>No data</ThemedText></View>
+          ) : (
+            <RevenueChart data={chart} selected={drillMonth} onSelect={onBarPress} hFrom={hFrom} hTo={hTo} />
+          )}
+        </View>
+
+        {drillMonth ? (
+          <View style={[styles.card, styles.drillCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <View style={styles.drillHead}>
+              <ThemedText style={styles.chartTitle}>
+                Daily breakdown — {MONTH_NAMES[Number(drillMonth.split('-')[1]) - 1]} {drillMonth.split('-')[0]}
+              </ThemedText>
+              <OutlineBtn label="✕ Close" onPress={() => setDrillMonth(null)} />
+            </View>
+            {drillLoading ? (
+              <EmptyText text="Loading..." />
+            ) : drillDays.length === 0 ? (
+              <EmptyText text="No daily summary data for this month" />
+            ) : (
+              <View>
+                <View style={[styles.trow, headRow]}>
+                  {th('Date', styles.cDate)}{th('Order Value', styles.cNum)}{th('Profit', styles.cNum)}{th('Orders', styles.cSm)}{th('Enquiries', styles.cSm)}
+                </View>
+                {drillDays.map((d, i) => (
+                  <View key={i} style={[styles.trow, rowLine]}>
+                    <ThemedText themeColor="textMuted" style={[styles.td, styles.cDate]}>{fmtDate(d.date)}</ThemedText>
+                    <ThemedText style={[styles.td, styles.cNum, styles.mono, styles.strong]}>{inr(d.revenue)}</ThemedText>
+                    <ThemedText style={[styles.td, styles.cNum, styles.mono, { color: theme.success }]}>{d.profit > 0 ? inr(d.profit) : '—'}</ThemedText>
+                    <ThemedText style={[styles.td, styles.cSm]}>{d.orders || '—'}</ThemedText>
+                    <ThemedText themeColor="textMuted" style={[styles.td, styles.cSm]}>{d.entries || '—'}</ThemedText>
                   </View>
                 ))}
-              </>
+              </View>
             )}
-          </>
-        )}
+          </View>
+        ) : null}
+      </View>
 
-        <View style={styles.ordersHeaderRow}>
-          <ThemedText type="smallBold">Orders {total > 0 ? `(${total})` : ''}</ThemedText>
-          <View style={styles.chipRow}>
-            <Pressable onPress={() => setGroupByOrder(true)} style={[styles.chip, { backgroundColor: groupByOrder ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={groupByOrder ? styles.chipLabelActive : undefined}>By Order</ThemedText>
-            </Pressable>
-            <Pressable onPress={() => setGroupByOrder(false)} style={[styles.chip, { backgroundColor: !groupByOrder ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={!groupByOrder ? styles.chipLabelActive : undefined}>By Line Item</ThemedText>
-            </Pressable>
+      {/* Orders heading + controls */}
+      <View>
+        <SectionHeader
+          title="Orders"
+          sub={`${ordersTotal.toLocaleString()} line items imported · ${kpis?.totalOrders?.toLocaleString() ?? '—'} total orders in period`} />
+        <View style={styles.controls}>
+          <View style={styles.chips}>
+            <Chip small label="By Order" active={orderGrouping === 'order'} onPress={() => setOrderGrouping('order')} />
+            <Chip small label="By Line Item" active={orderGrouping === 'lineItem'} onPress={() => setOrderGrouping('lineItem')} />
+          </View>
+          <View style={styles.chips}>
+            <OutlineBtn label="Export Page" onPress={exportPage} disabled={orders.length === 0 || exporting} />
+            <OutlineBtn label="Export All" onPress={exportAll} disabled={exporting} solid />
           </View>
         </View>
-        <TextInput
-          value={searchInput}
-          onChangeText={onChangeSearchInput}
-          placeholder="Search customer or order #"
-          placeholderTextColor={theme.textSecondary}
-          style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-        />
-        <View style={styles.exportRow}>
-          <Pressable onPress={onExportPage} disabled={isExporting || !displayedOrders || displayedOrders.length === 0} style={[styles.exportButton, { borderColor: theme.border }]}>
-            <ThemedText type="small">Export Page</ThemedText>
-          </Pressable>
-          <Pressable onPress={onExportAll} disabled={isExporting} style={[styles.exportButton, { borderColor: theme.border }]}>
-            {isExporting ? <ActivityIndicator size="small" /> : <ThemedText type="small">Export All</ThemedText>}
-          </Pressable>
+        <View style={styles.searchWrap}>
+          <SearchBox value={ordersSearch} onChange={onSearch} />
         </View>
 
-        {displayedOrders === null ? (
-          <ActivityIndicator style={styles.spinner} />
-        ) : displayedOrders.length === 0 ? (
-          <ThemedText type="small" themeColor="textSecondary">No orders found for this period.</ThemedText>
-        ) : (
-          displayedOrders.map((o) => {
-            const margin = o.amount ? ((o.profit ?? 0) / o.amount) * 100 : null;
-            const marginColor = margin == null ? theme.textSecondary : margin > 40 ? '#22c55e' : margin > 20 ? '#e8a828' : '#e06868';
-            const statusColor = o.status ? (STATUS_COLORS[o.status.toUpperCase()] ?? theme.textSecondary) : theme.textSecondary;
-            const unitPriceWarning = o.unitPrice != null && o.amount != null && o.unitPrice > o.amount;
-            return (
-              <ThemedView key={o.id} type="backgroundElement" style={styles.orderRow}>
-                <View style={styles.orderTop}>
-                  <View style={styles.badgeRow}>
-                    <ThemedText type="smallBold" numberOfLines={1} style={styles.orderCustomer}>{o.customerName ?? ''}</ThemedText>
-                    {o.isHistorical && (
-                      <View style={styles.histBadge}><ThemedText type="small" style={styles.histBadgeLabel}>hist</ThemedText></View>
-                    )}
-                  </View>
-                  <ThemedText type="small" themeColor="textSecondary">{formatDate(o.date)}</ThemedText>
+        {wide ? (
+          <TableCard>
+            <ScrollView horizontal showsHorizontalScrollIndicator>
+              <View>
+                <View style={[styles.trow, headRow]}>
+                  {ORDER_COLS.map((c) => <ThemedText key={c.h} themeColor="textMuted" style={[styles.th, { width: c.w }]}>{c.h.toUpperCase()}</ThemedText>)}
                 </View>
-                <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                  {o.orderNumber ?? o.id} · {o.vehicleModel ?? ''} {o.lineItems.length > 0 ? `· ${o.lineItems.join(', ')}` : ''}
-                </ThemedText>
-                <View style={styles.orderStatsRow}>
-                  <ThemedText type="small" themeColor="textSecondary">Qty {o.qty ?? '—'}</ThemedText>
-                  <ThemedText type="small" style={unitPriceWarning ? styles.error : undefined} themeColor={unitPriceWarning ? undefined : 'textSecondary'}>
-                    Unit {o.unitPrice != null ? formatCurrency(o.unitPrice) : '—'}{unitPriceWarning ? ' ⚠' : ''}
-                  </ThemedText>
-                  <ThemedText type="small">{o.amount != null ? formatCurrency(o.amount) : '—'}</ThemedText>
-                  {margin != null && <ThemedText type="small" style={{ color: marginColor }}>{margin.toFixed(1)}%</ThemedText>}
-                </View>
-                <View style={styles.orderBottom}>
-                  <ThemedText type="small" style={{ color: statusColor }}>{o.status ?? '—'}</ThemedText>
-                  {o.soldBy && <ThemedText type="small" themeColor="textSecondary">Sold by {o.soldBy}</ThemedText>}
-                </View>
-                {o.remarks && <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>{o.remarks}</ThemedText>}
-              </ThemedView>
-            );
-          })
-        )}
-        {isLoadingMore && <ActivityIndicator style={styles.spinner} />}
-
-        <View style={styles.ordersHeaderRow}>
-          <ThemedText type="smallBold" style={styles.sectionTitle}>Sales Performance</ThemedText>
-          <Pressable onPress={() => setShowMonthlyBreakdown((v) => !v)} style={[styles.chip, { backgroundColor: showMonthlyBreakdown ? theme.primary : theme.backgroundElement }]}>
-            <ThemedText type="small" style={showMonthlyBreakdown ? styles.chipLabelActive : undefined}>Monthly View</ThemedText>
-          </Pressable>
-        </View>
-        <ThemedText type="small" themeColor="textSecondary">Order Value and Profit by employee</ThemedText>
-        {salesPerformance === null ? (
-          <ActivityIndicator style={styles.spinner} />
-        ) : salesPerformance.length === 0 ? (
-          <ThemedText type="small" themeColor="textSecondary">No data</ThemedText>
-        ) : (
-          [...salesPerformance].sort((a, b) => b.revenue - a.revenue).slice(0, 8).map((e) => (
-            <View key={e.name} style={styles.tableRow}>
-              <View style={styles.flex1}>
-                <ThemedText type="small" numberOfLines={1}>{e.name}</ThemedText>
-                {e.designation && <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{e.designation}</ThemedText>}
+                {ordersLoading ? (
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <View key={i} style={[styles.trow, rowLine]}>
+                      {ORDER_COLS.map((c) => <View key={c.h} style={{ width: c.w, paddingRight: 12 }}><Skeleton height={14} /></View>)}
+                    </View>
+                  ))
+                ) : orders.length === 0 ? (
+                  <View style={{ width: ORDER_COLS.reduce((s, c) => s + c.w, 0) }}><EmptyText text="No orders found for this period." /></View>
+                ) : displayOrders.map((o) => <OrderTableRow key={o.id} o={o} line={rowLine} />)}
               </View>
-              <ThemedText type="small" style={styles.tabularNums}>{formatCurrency(e.revenue)}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>{formatCurrency(e.profit)}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>{e.orderCount}</ThemedText>
-            </View>
-          ))
-        )}
+            </ScrollView>
+            <Pager page={ordersPage} pages={totalPages} total={ordersTotal} onPage={(p) => { setOrdersPage(p); loadOrders(p, ordersSearch); }} />
+          </TableCard>
+        ) : ordersLoading ? (
+          <View style={styles.cardsGap}>{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} height={110} />)}</View>
+        ) : orders.length === 0 ? (
+          <TableCard><EmptyText text="No orders found for this period." /></TableCard>
+        ) : null}
+      </View>
+    </View>
+  );
 
-        {showMonthlyBreakdown && (
-          <View style={[styles.monthlyCard, { borderColor: theme.border }]}>
-            <ThemedText type="smallBold" style={styles.sectionTitle}>Monthly Revenue by Employee</ThemedText>
-            {monthlyBreakdownLoading ? (
-              <ActivityIndicator style={styles.spinner} />
-            ) : !monthlyBreakdown || monthlyBreakdown.employees.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">No data for selected period</ThemedText>
+  const footer = (
+    <View style={styles.sections}>
+      {!wide && !ordersLoading && orders.length > 0 ? (
+        <TableCard><Pager page={ordersPage} pages={totalPages} total={ordersTotal} onPage={(p) => { setOrdersPage(p); loadOrders(p, ordersSearch); }} /></TableCard>
+      ) : null}
+
+      {/* Sales performance */}
+      <View>
+        <SectionHeader
+          title="Sales Performance"
+          sub="Order Value and Profit by employee"
+          right={<OutlineBtn label="Monthly View" onPress={() => setShowMonthly((v) => !v)} solid={showMonthly} />} />
+        <View style={[styles.cols, twoCol && styles.colsRow]}>
+          <View style={[styles.card, styles.chartCard, twoCol && styles.flex1, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <ThemedText style={styles.chartTitle}>Order Value by Employee</ThemedText>
+            {empLoading ? <Skeleton height={192} /> : employees.length === 0 ? (
+              <View style={styles.noData}><ThemedText themeColor="textMuted" style={styles.body}>No data</ThemedText></View>
             ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View>
-                  <View style={styles.monthlyRow}>
-                    <ThemedText type="small" themeColor="textSecondary" style={styles.monthlyEmployeeCell}>Employee</ThemedText>
-                    {monthlyBreakdown.months.map((m) => (
-                      <ThemedText key={m} type="small" themeColor="textSecondary" style={styles.monthlyCell}>
-                        {MONTH_NAMES[Number(m.split('-')[1]) - 1].slice(0, 3)} &apos;{m.split('-')[0].slice(2)}
-                      </ThemedText>
-                    ))}
-                    <ThemedText type="small" themeColor="textSecondary" style={styles.monthlyCell}>Total</ThemedText>
+              <HBarChart rows={employees.slice(0, 8).map((e) => ({ label: e.name, value: e.revenue }))} color={CHART_COLORS[0]} format={axisK} />
+            )}
+          </View>
+          <View style={twoCol ? styles.flex1 : undefined}>
+            <TableCard>
+              <View style={[styles.trow, headRow]}>
+                {th('Employee', styles.cName)}{th('Order Value', styles.cNum)}{th('Profit', styles.cNum)}{th('Orders', styles.cSm)}
+              </View>
+              {empLoading ? <SkeletonRows n={5} /> : employees.length === 0 ? <EmptyText text="No data" /> : employees.map((e, i) => (
+                <View key={i} style={[styles.trow, rowLine]}>
+                  <View style={styles.cName}>
+                    <ThemedText numberOfLines={1} style={[styles.td, styles.medium]}>{e.name}</ThemedText>
+                    {e.designation ? <ThemedText themeColor="textMuted" numberOfLines={1} style={styles.tiny}>{e.designation}</ThemedText> : null}
                   </View>
-                  {monthlyBreakdown.employees.map((emp, i) => (
-                    <View key={i} style={styles.monthlyRow}>
-                      <ThemedText type="small" numberOfLines={1} style={styles.monthlyEmployeeCell}>{emp.name}</ThemedText>
-                      {emp.monthly.map((m, j) => (
-                        <ThemedText key={j} type="small" themeColor={m.revenue > 0 ? undefined : 'textSecondary'} style={[styles.tabularNums, styles.monthlyCell]}>
-                          {m.revenue > 0 ? `₹${Math.round(m.revenue / 1000)}k` : '—'}
+                  <ThemedText style={[styles.td, styles.cNum, styles.mono, styles.strong]}>{inr(e.revenue)}</ThemedText>
+                  <ThemedText style={[styles.td, styles.cNum, styles.mono, { color: theme.success }]}>{e.profit > 0 ? inr(e.profit) : '—'}</ThemedText>
+                  <ThemedText style={[styles.td, styles.cSm, styles.medium]}>{e.orderCount}</ThemedText>
+                </View>
+              ))}
+            </TableCard>
+          </View>
+        </View>
+
+        {showMonthly ? (
+          <View style={styles.monthlyWrap}>
+            <TableCard>
+              <View style={[styles.monthlyHead, rowLine]}><ThemedText style={styles.chartTitle}>Monthly Revenue by Employee</ThemedText></View>
+              {monthlyLoading ? <EmptyText text="Loading..." /> : monthly.employees.length === 0 ? <EmptyText text="No data for selected period" /> : (
+                <ScrollView horizontal showsHorizontalScrollIndicator>
+                  <View>
+                    <View style={[styles.trow, headRow]}>
+                      <ThemedText themeColor="textMuted" style={[styles.th, styles.mEmp]}>EMPLOYEE</ThemedText>
+                      {monthly.months.map((m) => (
+                        <ThemedText key={m} themeColor="textMuted" style={[styles.th, styles.mCell]}>
+                          {`${MONTH_NAMES[Number(m.split('-')[1]) - 1]} '${m.split('-')[0].slice(2)}`.toUpperCase()}
                         </ThemedText>
                       ))}
-                      <ThemedText type="small" style={[styles.tabularNums, styles.monthlyCell, { color: theme.primary, fontWeight: '700' }]}>
-                        ₹{(emp.total / 100000).toFixed(1)}L
-                      </ThemedText>
+                      <ThemedText themeColor="textMuted" style={[styles.th, styles.mCell]}>TOTAL</ThemedText>
                     </View>
-                  ))}
-                </View>
-              </ScrollView>
+                    {monthly.employees.map((emp, i) => (
+                      <View key={i} style={[styles.trow, rowLine]}>
+                        <ThemedText numberOfLines={1} style={[styles.td, styles.mEmp, styles.medium]}>{emp.name}</ThemedText>
+                        {emp.monthly.map((m, j) => (
+                          <ThemedText key={j} style={[styles.td, styles.mCell, styles.mono, m.revenue <= 0 && { color: theme.textMuted }]}>
+                            {m.revenue > 0 ? `₹${Math.round(m.revenue / 1000)}k` : '—'}
+                          </ThemedText>
+                        ))}
+                        <ThemedText style={[styles.td, styles.mCell, styles.mono, styles.strong, { color: theme.primary }]}>₹{(emp.total / 100000).toFixed(1)}L</ThemedText>
+                      </View>
+                    ))}
+                  </View>
+                </ScrollView>
+              )}
+            </TableCard>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Services */}
+      <View>
+        <SectionHeader
+          title="Services"
+          right={
+            <View style={styles.chips}>
+              <Chip small label="By Order Value" active={servicesTab === 'revenue'} onPress={() => setServicesTab('revenue')} />
+              <Chip small label="By Volume" active={servicesTab === 'volume'} onPress={() => setServicesTab('volume')} />
+            </View>
+          } />
+        <View style={[styles.cols, twoCol && styles.colsRow]}>
+          <View style={[styles.card, styles.chartCard, twoCol && styles.flex1, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            {servicesLoading ? <Skeleton height={224} /> : services.length === 0 ? (
+              <View style={styles.noData}><ThemedText themeColor="textMuted" style={styles.body}>No data</ThemedText></View>
+            ) : (
+              <HBarChart
+                rows={services.map((s) => ({ label: s.service, value: servicesTab === 'revenue' ? s.revenue : (s.volume ?? 0) }))}
+                color={CHART_COLORS[2]}
+                format={servicesTab === 'revenue' ? axisK : (v) => String(Math.round(v))} />
             )}
           </View>
-        )}
-
-        <View style={styles.ordersHeaderRow}>
-          <ThemedText type="smallBold">Services</ThemedText>
-          <View style={styles.chipRow}>
-            <Pressable onPress={() => setServicesTab('byRevenue')} style={[styles.chip, { backgroundColor: servicesTab === 'byRevenue' ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={servicesTab === 'byRevenue' ? styles.chipLabelActive : undefined}>By Order Value</ThemedText>
-            </Pressable>
-            <Pressable onPress={() => setServicesTab('byVolume')} style={[styles.chip, { backgroundColor: servicesTab === 'byVolume' ? theme.primary : theme.backgroundElement }]}>
-              <ThemedText type="small" style={servicesTab === 'byVolume' ? styles.chipLabelActive : undefined}>By Volume</ThemedText>
-            </Pressable>
+          <View style={twoCol ? styles.flex1 : undefined}>
+            <TableCard>
+              <View style={[styles.trow, headRow]}>
+                {th('Service', styles.cName)}{th('Order Value', [styles.cNum, styles.right])}{th(servicesTab === 'revenue' ? 'Orders' : 'Units', [styles.cSm, styles.right])}
+              </View>
+              {servicesLoading ? <SkeletonRows n={6} /> : services.length === 0 ? <EmptyText text="No data" /> : services.map((s, i) => (
+                <View key={i} style={[styles.trow, rowLine]}>
+                  <ThemedText style={[styles.td, styles.cName, styles.medium]}>{s.service}</ThemedText>
+                  <ThemedText style={[styles.td, styles.cNum, styles.mono, styles.right]}>{inr(s.revenue)}</ThemedText>
+                  <ThemedText themeColor="textMuted" style={[styles.td, styles.cSm, styles.right]}>
+                    {servicesTab === 'revenue' ? (s.orderCount ?? 0) : Math.round(s.volume ?? 0)}
+                  </ThemedText>
+                </View>
+              ))}
+            </TableCard>
           </View>
         </View>
-        {services === null ? (
-          <ActivityIndicator style={styles.spinner} />
-        ) : (services[servicesTab]?.length ?? 0) === 0 ? (
-          <ThemedText type="small" themeColor="textSecondary">No data</ThemedText>
-        ) : (
-          services[servicesTab].map((s) => (
-            <View key={s.service} style={styles.tableRow}>
-              <ThemedText type="small" style={styles.flex1} numberOfLines={1}>{s.service}</ThemedText>
-              <ThemedText type="small" style={styles.tabularNums}>{formatCurrency(s.revenue)}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>
-                {servicesTab === 'byRevenue' ? `${s.orderCount ?? 0} orders` : `${s.volume ?? 0} units`}
-              </ThemedText>
-            </View>
-          ))
-        )}
+      </View>
 
-        <ThemedText type="smallBold" style={styles.sectionTitle}>Top Customers</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">Ranked by total spend in selected period</ThemedText>
-        {customersData === null ? (
-          <ActivityIndicator style={styles.spinner} />
-        ) : customersData.customers.length === 0 ? (
-          <ThemedText type="small" themeColor="textSecondary">No customer data for this period.</ThemedText>
-        ) : (
-          <>
-            {customersData.customers.map((c, i) => (
-              <View key={`${c.name}-${i}`} style={styles.tableRow}>
-                <ThemedText type="small" style={i < 3 ? { color: theme.primary, fontWeight: '700' } : undefined}>{i + 1}</ThemedText>
-                <View style={styles.flex1}>
-                  <ThemedText type="small" numberOfLines={1}>{c.name}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{c.phone ?? '—'}</ThemedText>
+      {/* Top customers */}
+      <View>
+        <SectionHeader title="Top Customers" sub="Ranked by total spend in selected period" />
+        <TableCard>
+          {wide ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fillW}>
+              <View style={styles.flex1}>
+                <View style={[styles.trow, headRow]}>
+                  {th('#', styles.cRank)}{th('Customer', styles.cName)}{th('Phone', styles.cPhone)}{th('Total Order Value', styles.cNum)}{th('Orders', styles.cSm)}{th('Last Visit', styles.cDate)}
                 </View>
-                <ThemedText type="small" style={styles.tabularNums}>{formatCurrency(c.totalSpend)}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>{c.orderCount}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.tabularNums}>{formatDate(c.lastVisit)}</ThemedText>
+                {customersLoading ? <SkeletonRows n={8} /> : customers.length === 0 ? <EmptyText text="No customer data for this period." /> : customers.map((c, i) => (
+                  <View key={i} style={[styles.trow, rowLine]}>
+                    <ThemedText style={[styles.td, styles.cRank, styles.bold, { color: i < 3 ? theme.primary : theme.textMuted }]}>{i + 1}</ThemedText>
+                    <ThemedText numberOfLines={1} style={[styles.td, styles.cName, styles.medium]}>{c.name}</ThemedText>
+                    <ThemedText themeColor="textMuted" style={[styles.td, styles.cPhone]}>{c.phone ?? '—'}</ThemedText>
+                    <ThemedText style={[styles.td, styles.cNum, styles.mono, styles.strong]}>{inr(c.totalSpend)}</ThemedText>
+                    <ThemedText style={[styles.td, styles.cSm, styles.medium]}>{c.orderCount}</ThemedText>
+                    <ThemedText themeColor="textMuted" style={[styles.td, styles.cDate]}>{fmtDate(c.lastVisit)}</ThemedText>
+                  </View>
+                ))}
               </View>
-            ))}
-            {customersData.walkInCount > 0 && (
-              <ThemedText type="small" themeColor="textSecondary" style={styles.walkInNote}>
-                ℹ {customersData.walkInCount} Walk-in line items excluded from Top Customers list.
-              </ThemedText>
-            )}
-          </>
-        )}
+            </ScrollView>
+          ) : customersLoading ? <SkeletonRows n={6} /> : customers.length === 0 ? <EmptyText text="No customer data for this period." /> : customers.map((c, i) => (
+            <View key={i} style={[styles.custRow, rowLine]}>
+              <ThemedText style={[styles.bold, styles.custRank, { color: i < 3 ? theme.primary : theme.textMuted }]}>{i + 1}</ThemedText>
+              <View style={styles.flex1}>
+                <ThemedText numberOfLines={1} style={styles.medium}>{c.name}</ThemedText>
+                <ThemedText themeColor="textMuted" style={styles.tiny}>{c.phone ?? '—'} · Last visit {fmtDate(c.lastVisit)}</ThemedText>
+              </View>
+              <View style={styles.right}>
+                <ThemedText style={[styles.mono, styles.strong]}>{inr(c.totalSpend)}</ThemedText>
+                <ThemedText themeColor="textMuted" style={styles.tiny}>{c.orderCount} orders</ThemedText>
+              </View>
+            </View>
+          ))}
+        </TableCard>
+        {walkInCount > 0 ? (
+          <ThemedText themeColor="textMuted" style={[styles.small, styles.walkIn]}>ℹ {walkInCount.toLocaleString()} Walk-in line items excluded from Top Customers list.</ThemedText>
+        ) : null}
+      </View>
 
-        <ThemedText type="small" themeColor="textSecondary" style={styles.historicalNotice}>
-          13,530 historical line items (Jan 2025 – Jul 2026) imported from Excel records and merged across all sections. Historical rows are tagged [hist] in the Orders table. Profit data available for ~32% of line items (stored per service row).
+      {/* Historical notice */}
+      <View style={[styles.notice, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
+        <View style={[styles.dot, { backgroundColor: theme.success }]} />
+        <ThemedText themeColor="textMuted" style={[styles.small, styles.flex1]}>
+          <ThemedText style={[styles.small, styles.bold]}>13,530 historical line items (Jan 2025 – Jul 2026)</ThemedText>
+          {' imported from Excel records and merged across all sections. Historical rows are tagged '}
+          <ThemedText style={[styles.small, styles.bold, { color: theme.warning, backgroundColor: withAlpha(theme.warning, 0.13) }]}> HIST </ThemedText>
+          {' in the Orders table. Profit data available for ~32% of line items (stored per service row).'}
         </ThemedText>
-      </ScrollView>
-    </>
+      </View>
+    </View>
+  );
+
+  return shell(
+    <FlatList
+      data={!wide && !ordersLoading ? displayOrders : []}
+      keyExtractor={(o) => o.id}
+      renderItem={({ item }) => <OrderCard o={item} />}
+      ListHeaderComponent={header}
+      ListFooterComponent={footer}
+      ItemSeparatorComponent={Gap}
+      contentContainerStyle={[styles.page, { padding: pad, paddingBottom: insets.bottom + 40 }]}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      keyboardShouldPersistTaps="handled"
+      initialNumToRender={10}
+      windowSize={7}
+    />,
+  );
+}
+
+function Gap() { return <View style={{ height: 12 }} />; }
+
+function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.search, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder="Search customer or order #"
+        placeholderTextColor={theme.textMuted}
+        autoCorrect={false}
+        accessibilityLabel="Search orders"
+        style={[styles.searchInput, { color: theme.text }]}
+      />
+    </View>
+  );
+}
+
+function Pager({ page, pages, total, onPage }: { page: number; pages: number; total: number; onPage: (p: number) => void }) {
+  const theme = useTheme();
+  if (pages <= 1) return null;
+  return (
+    <View style={[styles.pager, { borderTopColor: theme.border }]}>
+      <ThemedText themeColor="textMuted" style={styles.small}>Page {page} of {pages} · {total} total</ThemedText>
+      <View style={styles.chips}>
+        <OutlineBtn label="← Prev" onPress={() => onPage(Math.max(1, page - 1))} disabled={page === 1} />
+        <OutlineBtn label="Next →" onPress={() => onPage(Math.min(pages, page + 1))} disabled={page === pages} />
+      </View>
+    </View>
+  );
+}
+
+function marginOf(o: ErpFinanceOrder) {
+  return o.profit != null && (o.amount ?? 0) > 0 ? (o.profit / (o.amount as number)) * 100 : null;
+}
+
+function OrderTableRow({ o, line }: { o: ErpFinanceOrder; line: object }) {
+  const theme = useTheme();
+  const margin = marginOf(o);
+  const mc = margin == null ? theme.textMuted : margin > 40 ? theme.success : margin > 20 ? theme.warning : theme.danger;
+  const items = (o.lineItems ?? []).join(', ');
+  const W = (i: number) => ({ width: ORDER_COLS[i].w, paddingRight: 12 });
+  return (
+    <View style={[styles.trow, line, { opacity: o.isHistorical ? 0.85 : 1 }]}>
+      <ThemedText themeColor="textMuted" style={[styles.td, W(0)]}>{fmtDate(o.date)}</ThemedText>
+      <View style={[W(1), styles.idCell]}>
+        <ThemedText numberOfLines={1} style={[styles.td, styles.mono, { color: theme.primary, flexShrink: 1 }]}>{o.orderNumber || '—'}</ThemedText>
+        {o.isHistorical ? <HistBadge /> : null}
+      </View>
+      <ThemedText numberOfLines={1} style={[styles.td, styles.medium, W(2)]}>{o.customerName}</ThemedText>
+      <ThemedText themeColor="textMuted" numberOfLines={1} style={[styles.td, W(3)]}>{o.vehicleModel || '—'}</ThemedText>
+      <ThemedText themeColor="textMuted" numberOfLines={1} style={[styles.td, W(4)]}>{items || '—'}</ThemedText>
+      <ThemedText themeColor="textMuted" style={[styles.td, W(5)]}>{o.qty != null ? o.qty : '—'}</ThemedText>
+      <View style={[W(6), styles.idCell]}>
+        <ThemedText themeColor="textMuted" style={[styles.td, styles.mono]}>{o.unitPrice != null ? inr(o.unitPrice) : '—'}</ThemedText>
+        {o.unitPrice != null && (o.amount ?? 0) > 0 && o.unitPrice > (o.amount as number) ? (
+          <ThemedText accessibilityLabel="Unit price exceeds order value — possible data entry error" style={{ color: theme.warning, fontSize: 12 }}>⚠</ThemedText>
+        ) : null}
+      </View>
+      <ThemedText style={[styles.td, styles.mono, styles.strong, W(7)]}>{inr(o.amount ?? 0)}</ThemedText>
+      <ThemedText style={[styles.td, styles.mono, { color: theme.success }, W(8)]}>{o.profit != null ? inr(o.profit) : '—'}</ThemedText>
+      <ThemedText style={[styles.td, styles.bold, W(9), margin != null && { color: mc }]}>{margin != null ? `${margin.toFixed(1)}%` : '—'}</ThemedText>
+      <View style={W(10)}><StatusBadge status={o.status} /></View>
+      <ThemedText themeColor="textMuted" numberOfLines={1} style={[styles.td, W(11)]}>{o.soldBy || '—'}</ThemedText>
+      <ThemedText themeColor="textMuted" numberOfLines={1} style={[styles.td, W(12)]}>{o.remarks || '—'}</ThemedText>
+    </View>
+  );
+}
+
+function OrderCard({ o }: { o: ErpFinanceOrder }) {
+  const theme = useTheme();
+  const margin = marginOf(o);
+  const mc = margin == null ? theme.textMuted : margin > 40 ? theme.success : margin > 20 ? theme.warning : theme.danger;
+  const items = (o.lineItems ?? []).join(', ');
+  return (
+    <View style={[styles.card, styles.orderCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border, opacity: o.isHistorical ? 0.85 : 1 }]}>
+      <View style={styles.ocTop}>
+        <View style={styles.flex1}>
+          <ThemedText numberOfLines={1} style={styles.medium}>{o.customerName}</ThemedText>
+          <View style={styles.idCell}>
+            <ThemedText numberOfLines={1} style={[styles.small, styles.mono, { color: theme.primary, flexShrink: 1 }]}>{o.orderNumber || '—'}</ThemedText>
+            {o.isHistorical ? <HistBadge /> : null}
+          </View>
+        </View>
+        <View style={styles.right}>
+          <ThemedText style={[styles.mono, styles.strong]}>{inr(o.amount ?? 0)}</ThemedText>
+          <ThemedText themeColor="textMuted" style={styles.tiny}>{fmtDate(o.date)}</ThemedText>
+        </View>
+      </View>
+      <ThemedText themeColor="textMuted" style={styles.small}>{[o.vehicleModel, items].filter(Boolean).join(' · ') || '—'}</ThemedText>
+      <View style={styles.ocStats}>
+        <ThemedText themeColor="textMuted" style={styles.small}>Qty {o.qty != null ? o.qty : '—'}</ThemedText>
+        <ThemedText themeColor="textMuted" style={[styles.small, styles.mono]}>
+          Unit {o.unitPrice != null ? inr(o.unitPrice) : '—'}
+          {o.unitPrice != null && (o.amount ?? 0) > 0 && o.unitPrice > (o.amount as number) ? <ThemedText style={{ color: theme.warning }}> ⚠</ThemedText> : null}
+        </ThemedText>
+        <ThemedText style={[styles.small, styles.mono, { color: theme.success }]}>Profit {o.profit != null ? inr(o.profit) : '—'}</ThemedText>
+        <ThemedText style={[styles.small, styles.bold, margin != null && { color: mc }]}>{margin != null ? `${margin.toFixed(1)}%` : '—'}</ThemedText>
+      </View>
+      <View style={styles.ocBottom}>
+        <StatusBadge status={o.status} />
+        <ThemedText themeColor="textMuted" style={styles.tiny}>{o.soldBy ? `Sold by ${o.soldBy}` : '—'}</ThemedText>
+      </View>
+      {o.remarks ? <ThemedText themeColor="textMuted" numberOfLines={2} style={styles.small}>{o.remarks}</ThemedText> : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.three },
-  error: { color: '#B83030' },
-  spinner: { marginTop: Spacing.three },
-  kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
-  kpiCard: { width: '47%' },
-  sectionTitle: { marginTop: Spacing.two },
-  chartRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderRadius: Spacing.three, padding: Spacing.three },
-  chartValues: { flexDirection: 'row', gap: Spacing.two },
-  orderRow: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.half },
-  orderTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
-  orderCustomer: { flex: 1 },
-  orderBottom: { flexDirection: 'row', gap: Spacing.two, alignItems: 'center' },
-  historicalTag: { fontStyle: 'italic' },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
-  chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.half, borderRadius: 999 },
-  chipLabelActive: { color: '#ffffff', fontWeight: '600' },
-  pickRow: { gap: Spacing.two, marginTop: Spacing.one },
-  input: { height: 44, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
-  rangeLabel: { marginTop: Spacing.half },
-  ordersHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
-  exportRow: { flexDirection: 'row', gap: Spacing.two },
-  exportButton: { flex: 1, height: 40, borderRadius: Spacing.two, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, flex: 1 },
-  histBadge: { backgroundColor: 'rgba(232,168,40,0.15)', borderRadius: 4, paddingHorizontal: Spacing.one, paddingVertical: 1 },
-  histBadgeLabel: { color: '#e8a828', fontSize: 10, fontWeight: '700' },
-  orderStatsRow: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap' },
-  historicalNotice: { marginTop: Spacing.three, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(127,127,127,0.3)', borderRadius: Spacing.two, padding: Spacing.two },
-  flex1: { flex: 1 },
-  tabularNums: { fontVariant: ['tabular-nums'] },
-  tableRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.one, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(127,127,127,0.2)' },
-  walkInNote: { marginTop: Spacing.one },
-  monthlyCard: { borderWidth: 1, borderRadius: Spacing.two, padding: Spacing.two },
-  monthlyRow: { flexDirection: 'row', paddingVertical: Spacing.one, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(127,127,127,0.2)' },
-  monthlyEmployeeCell: { width: 110 },
-  monthlyCell: { width: 80, textAlign: 'right' },
+  flex1: { flex: 1, minWidth: 0 },
+  page: { width: '100%', maxWidth: 1400, alignSelf: 'center' },
+  sections: { gap: 32 },
+  denied: { alignItems: 'center', justifyContent: 'center', paddingVertical: 120, paddingHorizontal: 24 },
+  body: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  h1: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold },
+  subtitle: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  card: { borderWidth: 1, borderRadius: 12 },
+  filterCard: { padding: 16, gap: 12 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, alignItems: 'center' },
+  pickRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  small: { fontSize: 12, lineHeight: 16 },
+  tiny: { fontSize: 11, lineHeight: 15 },
+  kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
+  kpiSkel: { borderWidth: 1, borderRadius: 12, padding: 20 },
+  chartCard: { padding: 20, gap: 12 },
+  chartTitle: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  chartHint: { fontSize: 11, lineHeight: 16, fontFamily: FontWeights.regular },
+  legend: { flexDirection: 'row', gap: 16 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  swatch: { width: 12, height: 12, borderRadius: 2 },
+  swatchLine: { width: 16, height: 2 },
+  noData: { height: 192, alignItems: 'center', justifyContent: 'center' },
+  drillCard: { padding: 16, marginTop: 16, gap: 12 },
+  drillHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  controls: { gap: 8, marginBottom: 8 },
+  searchWrap: { marginBottom: 12 },
+  search: { borderWidth: 1, borderRadius: 8, minHeight: 40, paddingHorizontal: 12, justifyContent: 'center' },
+  searchInput: { fontSize: 14, paddingVertical: 8 },
+  cardsGap: { gap: 12 },
+  orderCard: { padding: 14, gap: 6 },
+  ocTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  ocStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  ocBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  right: { alignItems: 'flex-end', textAlign: 'right' },
+  idCell: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  trow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
+  th: { fontSize: 11, lineHeight: 16, fontFamily: FontWeights.semiBold, letterSpacing: 0.5, paddingRight: 12 },
+  td: { fontSize: 13, lineHeight: 18 },
+  mono: { fontFamily: Fonts?.mono },
+  strong: { fontFamily: FontWeights.semiBold },
+  medium: { fontFamily: FontWeights.medium },
+  bold: { fontFamily: FontWeights.bold },
+  cDate: { width: 96 },
+  cName: { flex: 1, minWidth: 80, paddingRight: 8 },
+  cNum: { width: 92, paddingRight: 8 },
+  cSm: { width: 56, paddingRight: 8 },
+  cRank: { width: 32 },
+  cPhone: { width: 120 },
+  pager: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, padding: 16, borderTopWidth: 1 },
+  cols: { gap: 24 },
+  colsRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  monthlyWrap: { marginTop: 24 },
+  monthlyHead: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
+  mEmp: { width: 130, paddingRight: 8 },
+  mCell: { width: 90, textAlign: 'right', paddingRight: 12 },
+  fillW: { flexGrow: 1 },
+  custRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderBottomWidth: 1 },
+  custRank: { width: 20, fontSize: 12 },
+  walkIn: { marginTop: 8, paddingHorizontal: 4 },
+  notice: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderWidth: 1, borderStyle: 'dashed', borderRadius: 12 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
 });

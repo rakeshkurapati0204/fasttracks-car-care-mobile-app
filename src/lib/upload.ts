@@ -103,6 +103,20 @@ export async function pickFromGallery(opts?: { quality?: number }): Promise<Pick
   return toPickedFile(result.assets[0]);
 }
 
+/** Photo library picker with multi-select (Team Chat sends up to `limit` at once). Returns [] if denied or cancelled. */
+export async function pickManyFromGallery(limit = 10, opts?: { quality?: number }): Promise<PickedFile[]> {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) return [];
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ['images'],
+    allowsMultipleSelection: true,
+    selectionLimit: limit,
+    quality: opts?.quality ?? 0.8,
+  });
+  if (result.canceled || !result.assets?.length) return [];
+  return result.assets.map(toPickedFile);
+}
+
 export interface UploadValidation {
   allowedMimeTypes: string[];
   maxSizeBytes: number;

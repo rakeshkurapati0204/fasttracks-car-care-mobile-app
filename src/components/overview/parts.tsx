@@ -1,17 +1,42 @@
-import { Children, type ReactNode } from 'react';
-import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Children, createContext, useContext, useState, type ReactNode } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Badge, Card, Skeleton } from '@/components/ui';
 import { Fonts, FontWeights, Radii, Spacing, withAlpha } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useContentWidth } from '@/lib/drawer-context';
 import { statusLook } from '@/lib/overview-format';
 
 // Tailwind "sm" breakpoint, used wherever the dashboard has an sm: class.
 export const SM_BREAKPOINT = 640;
 
+// The Overview decides its columns from the width of its own container (the
+// area beside the fixed sidebar), not from the window.
+export const OVERVIEW_WIDE_MIN = 560;
+
+const WideContext = createContext<boolean | null>(null);
+
+export function OverviewFrame({ children }: { children: ReactNode }) {
+  const contentWidth = useContentWidth();
+  const [width, setWidth] = useState(contentWidth);
+  return (
+    <View
+      style={styles.frame}
+      onLayout={(e) => {
+        console.log('[overview] container width', Math.round(e.nativeEvent.layout.width), 'window-based', Math.round(contentWidth)); // TEMP
+        setWidth(e.nativeEvent.layout.width);
+      }}>
+      <WideContext.Provider value={width >= OVERVIEW_WIDE_MIN}>{children}</WideContext.Provider>
+    </View>
+  );
+}
+
+// True when the Overview container is wide (2 columns, 4 stat cards per row).
 export function useIsTablet() {
-  return useWindowDimensions().width >= SM_BREAKPOINT;
+  const measured = useContext(WideContext);
+  const contentWidth = useContentWidth();
+  return measured ?? contentWidth >= OVERVIEW_WIDE_MIN;
 }
 
 // Stat cards: 2 per row on a phone, 4 per row at sm+ (override with
@@ -77,6 +102,7 @@ export function LinkText({ children, onPress }: { children: string; onPress: () 
 }
 
 const styles = StyleSheet.create({
+  frame: { flex: 1 },
   grid: { gap: 12 },
   gridRow: { flexDirection: 'row', gap: 12 },
   gridCell: { flex: 1 },
@@ -87,19 +113,19 @@ const styles = StyleSheet.create({
 
 // The dashboard Overview page's own local StatCard (not KPICard): a padded
 // Card with a 12px muted label, 24px bold mono value, and a 12px muted sub line.
-export function OverviewStat({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
+export function OverviewStat({ label, value, sub, color, compact }: { label: string; value: string | number; sub?: string; color?: string; compact?: boolean }) {
   const theme = useTheme();
   return (
-    <Card padding="md">
-      <ThemedText themeColor="textMuted" style={statStyles.label} numberOfLines={1}>{label}</ThemedText>
+    <Card padding={compact ? 'sm' : 'md'} style={statStyles.card}>
+      <ThemedText themeColor="textMuted" style={compact ? statStyles.labelCompact : statStyles.label} numberOfLines={1}>{label}</ThemedText>
       <ThemedText
         numberOfLines={1}
         adjustsFontSizeToFit
         minimumFontScale={0.7}
-        style={[statStyles.value, { color: color ?? theme.text }]}>
+        style={[compact ? statStyles.valueCompact : statStyles.value, { color: color ?? theme.text }]}>
         {value}
       </ThemedText>
-      {sub ? <ThemedText themeColor="textMuted" style={statStyles.sub} numberOfLines={2}>{sub}</ThemedText> : null}
+      {sub ? <ThemedText themeColor="textMuted" style={compact ? statStyles.subCompact : statStyles.sub} numberOfLines={2}>{sub}</ThemedText> : null}
     </Card>
   );
 }
@@ -107,7 +133,7 @@ export function OverviewStat({ label, value, sub, color }: { label: string; valu
 // Dashboard SkeletonCard: p-4 card with two bars.
 export function OverviewStatSkeleton() {
   return (
-    <Card padding="sm" style={statStyles.skeleton}>
+    <Card padding="sm" style={[statStyles.card, statStyles.skeleton]}>
       <Skeleton width={80} height={12} />
       <Skeleton width={112} height={28} />
     </Card>
@@ -115,6 +141,10 @@ export function OverviewStatSkeleton() {
 }
 
 const statStyles = StyleSheet.create({
+  card: { flexGrow: 1 },
+  labelCompact: { fontSize: 11, lineHeight: 14, fontFamily: FontWeights.medium },
+  valueCompact: { fontSize: 15, lineHeight: 20, marginTop: 2, fontFamily: Fonts?.mono, fontWeight: '700' },
+  subCompact: { fontSize: 10, lineHeight: 13, marginTop: 2 },
   label: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.medium },
   value: { fontSize: 24, lineHeight: 30, marginTop: 4, fontFamily: Fonts?.mono, fontWeight: '700' },
   sub: { fontSize: 12, lineHeight: 16, marginTop: 4 },

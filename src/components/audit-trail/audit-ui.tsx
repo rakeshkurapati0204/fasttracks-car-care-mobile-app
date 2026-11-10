@@ -1,15 +1,13 @@
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { useState } from 'react';
-import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Children, type ReactNode } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { Card } from '@/components/ui';
+import { FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import type { ActionLogEntry, DocumentAccessEntry } from '@/types/api';
 
 // The dashboard's ACTION_LABELS (Document Access Log) and ACTION_LOG_LABELS
-// (Action Log) — the latter's keys are exactly the backend's ACTION_TYPES.
+// (Action Log); the latter's keys are exactly the backend's ACTION_TYPES.
 export const ACCESS_ACTION_LABELS: Record<string, string> = {
   VIEW_FILE: 'Viewed File',
   REVEAL_VALUE: 'Revealed Value',
@@ -31,102 +29,105 @@ export const ACTION_LOG_LABELS: Record<string, string> = {
 };
 
 // IST, like the dashboard.
-const fmtWhen = (iso: string) =>
+export const fmtWhen = (iso: string) =>
   new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
 
-// Built from local date parts (toISOString would shift the day east of UTC);
-// the server reads the string as an IST calendar day.
-function toYmd(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-function fromYmd(s: string) {
-  const [y, m, d] = s.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
-
-// A From / To filter: blank until set (like the dashboard's empty date input),
-// with a × to clear it.
-export function DateFilter({ label, value, onChange }: { label: string; value: string; onChange: (ymd: string) => void }) {
+// A filter card: fields wrap onto new lines on narrow screens, plus the
+// dashboard's "Clear filters" link when any filter is set.
+export function FilterCard({ children, showClear, onClear }: { children: ReactNode; showClear: boolean; onClear: () => void }) {
   const theme = useTheme();
-  const [open, setOpen] = useState(false);
   return (
-    <View style={styles.flex1}>
-      <ThemedText type="small" themeColor="textSecondary" style={styles.filterLabel}>{label}</ThemedText>
-      <View style={[styles.dateBox, { backgroundColor: theme.backgroundElement }]}>
-        <Pressable onPress={() => setOpen(true)} style={styles.flex1}>
-          <ThemedText type="small" themeColor={value ? undefined : 'textSecondary'}>
-            {value ? fromYmd(value).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Any date'}
-          </ThemedText>
-        </Pressable>
-        {value ? (
-          <Pressable onPress={() => onChange('')} hitSlop={10} accessibilityLabel={`Clear ${label}`}>
-            <ThemedText type="small" themeColor="textSecondary">×</ThemedText>
+    <Card padding="md">
+      <View style={styles.filters}>
+        {Children.toArray(children).map((c, i) => <View key={i} style={styles.filter}>{c}</View>)}
+        {showClear ? (
+          <Pressable onPress={onClear} hitSlop={8} accessibilityRole="button" style={styles.clear}>
+            <ThemedText style={[styles.clearText, { color: theme.textMuted }]}>Clear filters</ThemedText>
           </Pressable>
         ) : null}
       </View>
-      {open && (
-        <DateTimePicker
-          value={value ? fromYmd(value) : new Date()}
-          mode="date"
-          display={Platform.OS === 'ios' ? 'inline' : 'default'}
-          onChange={(_e, selected) => {
-            setOpen(Platform.OS === 'ios');
-            if (selected) onChange(toYmd(selected));
-          }}
-        />
-      )}
-      {open && Platform.OS === 'ios' && (
-        <Pressable onPress={() => setOpen(false)} style={styles.done}>
-          <ThemedText type="small">Done</ThemedText>
-        </Pressable>
-      )}
+    </Card>
+  );
+}
+
+export type Column = { title: string; flex: number };
+
+// One table cell / card field: a primary line and an optional muted sub line.
+export function CellText({ primary, sub, muted }: { primary: string; sub?: string | null; muted?: boolean }) {
+  return (
+    <View>
+      <ThemedText themeColor={muted ? 'textMuted' : 'text'} style={styles.cell}>{primary}</ThemedText>
+      {sub ? <ThemedText themeColor="textMuted" style={styles.sub}>{sub}</ThemedText> : null}
     </View>
   );
 }
 
-function Field({ label, children, sub }: { label: string; children: string; sub?: string | null }) {
+// Table header row (muted 12px semibold), the dashboard's <thead>.
+export function TableHeader({ columns }: { columns: Column[] }) {
+  const theme = useTheme();
   return (
-    <View style={styles.field}>
-      <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>{label.toUpperCase()}</ThemedText>
-      <ThemedText type="small">{children}</ThemedText>
-      {sub ? <ThemedText type="small" themeColor="textSecondary">{sub}</ThemedText> : null}
+    <View style={[styles.box, styles.boxTop, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+      <View style={[styles.tr, { borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
+        {columns.map((c) => (
+          <ThemedText key={c.title} themeColor="textMuted" style={[styles.th, { flex: c.flex }]}>{c.title}</ThemedText>
+        ))}
+      </View>
     </View>
   );
 }
 
-// One Document Access Log row — the dashboard's Employee / Document / Action /
-// Viewed By / When columns.
-export function AccessCard({ row }: { row: DocumentAccessEntry }) {
+// One table row: side borders + a divider, so a FlatList of rows reads as one
+// bordered card (rows are virtualised, so no wrapping card is possible).
+export function TableRow({ columns, cells, last }: { columns: Column[]; cells: ReactNode[]; last: boolean }) {
+  const theme = useTheme();
   return (
-    <ThemedView type="backgroundElement" style={styles.card}>
-      <Field label="Employee" sub={row.document.user.employeeId}>{row.document.user.name}</Field>
-      <Field label="Document">{row.document.label || row.document.type.replace(/_/g, ' ')}</Field>
-      <Field label="Action">{ACCESS_ACTION_LABELS[row.action] ?? row.action}</Field>
-      <Field label="Viewed By">{row.viewedBy.name}</Field>
-      <ThemedText type="small" themeColor="textSecondary">{fmtWhen(row.createdAt)}</ThemedText>
-    </ThemedView>
+    <View style={[styles.box, last && styles.boxBottom, { borderColor: theme.border, backgroundColor: theme.surface, borderTopWidth: 0, borderBottomWidth: 1 }]}>
+      <View style={styles.tr}>
+        {cells.map((cell, i) => <View key={columns[i].title} style={{ flex: columns[i].flex, paddingRight: 8 }}>{cell}</View>)}
+      </View>
+    </View>
   );
 }
 
-// One Action Log row — Action / Subject / Detail / Actor / When.
-export function ActionCard({ row }: { row: ActionLogEntry }) {
+// The body states inside the table frame.
+export function TableMessage({ children, last = true }: { children: ReactNode; last?: boolean }) {
+  const theme = useTheme();
   return (
-    <ThemedView type="backgroundElement" style={styles.card}>
-      <Field label="Action">{ACTION_LOG_LABELS[row.actionType] ?? row.actionType}</Field>
-      <Field label="Subject" sub={row.subjectEmployeeId}>{row.subjectName ?? '—'}</Field>
-      <Field label="Detail">{row.detail}</Field>
-      <Field label="Actor">{row.actorName}</Field>
-      <ThemedText type="small" themeColor="textSecondary">{fmtWhen(row.timestamp)}</ThemedText>
-    </ThemedView>
+    <View style={[styles.box, last && styles.boxBottom, { borderColor: theme.border, backgroundColor: theme.surface, borderTopWidth: 0, borderBottomWidth: 1 }]}>
+      <View style={styles.message}>{children}</View>
+    </View>
+  );
+}
+
+// Phone card for one log entry: the same five fields, stacked.
+export function LogCard({ fields }: { fields: { label: string; primary: string; sub?: string | null; muted?: boolean }[] }) {
+  return (
+    <Card padding="md">
+      <View style={styles.fields}>
+        {fields.map((f) => (
+          <View key={f.label}>
+            <ThemedText themeColor="textMuted" style={styles.fieldLabel}>{f.label}</ThemedText>
+            <CellText primary={f.primary} sub={f.sub} muted={f.muted} />
+          </View>
+        ))}
+      </View>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  flex1: { flex: 1 },
-  filterLabel: { marginBottom: Spacing.half },
-  dateBox: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, minHeight: 44, borderRadius: Spacing.two, paddingHorizontal: Spacing.three },
-  done: { alignSelf: 'flex-end', paddingVertical: Spacing.one },
-  card: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.two },
-  field: { gap: 1 },
-  fieldLabel: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.8 },
+  filters: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 },
+  filter: { flexGrow: 1, flexBasis: 150, minWidth: 140 },
+  clear: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 10 },
+  clearText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.medium },
+  cell: { fontSize: 14, lineHeight: 20 },
+  sub: { fontSize: 12, lineHeight: 16 },
+  box: { borderLeftWidth: 1, borderRightWidth: 1, overflow: 'hidden' },
+  boxTop: { borderTopWidth: 1, borderTopLeftRadius: Radii.md, borderTopRightRadius: Radii.md },
+  boxBottom: { borderBottomLeftRadius: Radii.md, borderBottomRightRadius: Radii.md },
+  tr: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16, paddingVertical: 10 },
+  th: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold, paddingRight: 8 },
+  message: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 },
+  fields: { gap: 10 },
+  fieldLabel: { fontSize: 11, lineHeight: 14, fontFamily: FontWeights.semiBold, marginBottom: 1 },
 });

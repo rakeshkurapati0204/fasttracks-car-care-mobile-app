@@ -1,375 +1,441 @@
-import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { InvStatusBadge, VisitStatusBadge } from '@/components/customers/badges';
+import { CopyButton } from '@/components/customers/copy-button';
+import { ErrorBanner, SectionLabel } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Badge, Button, Skeleton } from '@/components/ui';
+import { FontWeights, Radii, Spacing, withAlpha } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
+  addCustomerRemarkFor,
   fetchCallCapabilities,
-  fetchCustomerJobs,
+  fetchCrmCustomerDetail,
   fetchCustomerProfile,
-  fetchEmployees,
+  fetchCustomerRemarksFor,
   getErrorMessage,
   initiateCall,
-  markJobCardWalkout,
-  reassignJobCard,
-  updateJobCardStatus,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { usePermissions } from '@/lib/permissions-context';
-import type { CustomerProfile, EmployeeListItem, JobCard, JobCardStatus } from '@/types/api';
+import { fmtDate, fmtINR, fmtMonthYear, quoteLabel } from '@/lib/customers-format';
+import type { CrmInteraction, CrmVisitJobCard, CustomerProfile, CustomerProfileInvoice, CustomerRemark } from '@/types/api';
 
-// Status/walkout/reassign actions added 2026-09-24 (full-parity pass) —
-// job cards were previously view-only here. Gated by getCJMode's
-// view_only/sales_mode/full_access modes (backend/src/routes/
-// job_cards.ts), mirrored via usePermissions().tabMode('customers_jobs'),
-// same dynamic-permission pattern already used for invoices/CRM. Reassign
-// is additionally OWNER/STORE_MANAGER-only server-side. RELEASED requires
-// an already-fully-paid invoice and READY requires a job-card list already
-// printed — both enforced server-side; a failure surfaces via
-// getErrorMessage rather than being predicted client-side.
-const WALKOUT_REASONS: { value: string; label: string }[] = [
-  { value: 'PRICE_TOO_HIGH', label: 'Price Too High' },
-  { value: 'THINKING_IT_OVER', label: 'Thinking It Over' },
-  { value: 'WENT_ELSEWHERE', label: 'Went Elsewhere' },
-  { value: 'SERVICE_NOT_OFFERED', label: 'Service Not Offered' },
-  { value: 'WAIT_TOO_LONG', label: 'Wait Too Long' },
-  { value: 'OTHER', label: 'Other' },
-];
+type VisitEntry = { kind: 'jc'; date: string; jc: CrmVisitJobCard } | { kind: 'inv'; date: string; inv: CustomerProfileInvoice };
 
-const JOB_STATUS_COLOR: Record<JobCardStatus, string> = {
-  IN_PROGRESS: '#3278B0',
-  READY: '#167A48',
-  RELEASED: '#5A5A6A',
-  WALKED_OUT: '#B83030',
-};
+const VISITS_PREVIEW = 5;
 
-function formatCurrency(n: number) {
-  return `₹${n.toLocaleString('en-IN')}`;
-}
-
-function formatDate(iso: string | null) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-export default function CustomerDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+// Dashboard CRMPanel as a screen: profile header, quick stats, vehicle filter,
+// interactions, verification remarks, unified visit history, invoice actions.
+export default function CustomerPanelScreen() {
+  const { id, name: nameParam } = useLocalSearchParams<{ id: string; name?: string }>();
   const insets = useSafeAreaInsets();
   const theme = useTheme();
+  const router = useRouter();
   const { user } = useAuth();
-  const { tabMode } = usePermissions();
-  const cjMode = tabMode('customers_jobs');
-  const canWrite = cjMode !== null && cjMode !== 'view_only';
-  const canReassign = ['OWNER', 'STORE_MANAGER'].includes(user?.role ?? '');
+  // Mirrors the backend gate for OWNER/STORE_MANAGER. The dashboard also honours a
+  // per-employee grant; the app has no such flag to read, and the server decides anyway.
+  const canSeeRemarks = user?.role === 'OWNER' || user?.role === 'STORE_MANAGER';
 
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
-  const [jobs, setJobs] = useState<JobCard[] | null>(null);
+  const [jobCards, setJobCards] = useState<CrmVisitJobCard[]>([]);
+  const [interactions, setInteractions] = useState<CrmInteraction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [vehicleFilter, setVehicleFilter] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [remarks, setRemarks] = useState<CustomerRemark[]>([]);
+  const [remarksLoading, setRemarksLoading] = useState(false);
+  const [newRemark, setNewRemark] = useState('');
+  const [addingRemark, setAddingRemark] = useState(false);
   const [canCall, setCanCall] = useState(false);
-  const [isCalling, setIsCalling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [busyJobId, setBusyJobId] = useState<string | null>(null);
-  const [walkoutJobId, setWalkoutJobId] = useState<string | null>(null);
-  const [walkoutReason, setWalkoutReason] = useState('');
-  const [walkoutNote, setWalkoutNote] = useState('');
-  const [reassignJobId, setReassignJobId] = useState<string | null>(null);
-  const [employees, setEmployees] = useState<EmployeeListItem[] | null>(null);
+  const [calling, setCalling] = useState(false);
 
   const load = useCallback(async () => {
-    setError(null);
-    try {
-      const [profileResult, jobsResult] = await Promise.all([fetchCustomerProfile(id), fetchCustomerJobs(id)]);
-      setProfile(profileResult);
-      setJobs(jobsResult);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load this customer.'));
+    setError('');
+    // The two calls are independent (the detail route has an extra sales-mode
+    // ownership check), so one failing must not hide what the other returned.
+    const [p, detail] = await Promise.allSettled([fetchCustomerProfile(id), fetchCrmCustomerDetail(id)]);
+    const failures: string[] = [];
+    if (p.status === 'fulfilled') setProfile(p.value);
+    else { setProfile(null); failures.push(getErrorMessage(p.reason, 'Could not load the customer profile.')); }
+    if (detail.status === 'fulfilled') {
+      setJobCards(detail.value.jobCards);
+      setInteractions(detail.value.interactions);
+    } else {
+      setJobCards([]);
+      setInteractions([]);
+      failures.push(getErrorMessage(detail.reason, 'Could not load visit history.'));
     }
-    fetchCallCapabilities()
-      .then((caps) => setCanCall(caps.canInitiate))
-      .catch(() => setCanCall(false));
+    setError(failures.join(' '));
+    setLoading(false);
   }, [id]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount, not a render loop
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
     load();
+    fetchCallCapabilities().then((c) => setCanCall(c.canInitiate)).catch(() => setCanCall(false));
   }, [load]);
 
+  useEffect(() => {
+    if (!canSeeRemarks) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
+    setRemarksLoading(true);
+    fetchCustomerRemarksFor(id).then(setRemarks).catch(() => setRemarks([])).finally(() => setRemarksLoading(false));
+  }, [id, canSeeRemarks]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
+
+  const addRemark = async () => {
+    if (!newRemark.trim()) return;
+    setAddingRemark(true);
+    try {
+      const created = await addCustomerRemarkFor(id, newRemark.trim());
+      setRemarks((prev) => [created, ...prev]);
+      setNewRemark('');
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Could not add the remark.'));
+    } finally {
+      setAddingRemark(false);
+    }
+  };
+
   const onCall = async () => {
-    setIsCalling(true);
-    setError(null);
+    setCalling(true);
     try {
       await initiateCall(id);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not start that call.'));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Could not start that call.'));
     } finally {
-      setIsCalling(false);
+      setCalling(false);
     }
   };
 
-  const onSetStatus = (jobId: string, status: JobCardStatus) => {
-    Alert.alert(
-      status === 'READY' ? 'Mark ready?' : 'Release car?',
-      status === 'READY' ? 'The customer will be notified this vehicle is ready.' : 'This releases the vehicle to the customer.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: status === 'READY' ? 'Mark ready' : 'Release',
-          onPress: async () => {
-            setBusyJobId(jobId);
-            setError(null);
-            try {
-              await updateJobCardStatus(jobId, status);
-              await load();
-            } catch (err: any) {
-              setError(getErrorMessage(err, 'Could not update this job.'));
-            } finally {
-              setBusyJobId(null);
-            }
-          },
-        },
-      ]
-    );
-  };
+  // Unified visits: job cards plus invoices not linked to one, newest first.
+  const filteredVisits = useMemo(() => {
+    const linked = new Set(jobCards.map((jc) => jc.invoiceId).filter(Boolean));
+    const standalone = (profile?.invoices ?? []).filter((inv) => !linked.has(inv.id));
+    const all: VisitEntry[] = [
+      ...jobCards.map((jc) => ({ kind: 'jc' as const, date: jc.createdAt, jc })),
+      ...standalone.map((inv) => ({ kind: 'inv' as const, date: inv.createdAt, inv })),
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return vehicleFilter ? all.filter((e) => (e.kind === 'jc' ? e.jc.vehicleNumber : e.inv.vehicleNumber) === vehicleFilter) : all;
+  }, [jobCards, profile, vehicleFilter]);
+  const displayed = showAll ? filteredVisits : filteredVisits.slice(0, VISITS_PREVIEW);
 
-  const onConfirmWalkout = async (jobId: string) => {
-    if (!walkoutReason) return;
-    setBusyJobId(jobId);
-    setError(null);
-    try {
-      await markJobCardWalkout(jobId, walkoutReason, walkoutNote.trim() || undefined);
-      setWalkoutJobId(null);
-      setWalkoutReason('');
-      setWalkoutNote('');
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not mark this job walked out.'));
-    } finally {
-      setBusyJobId(null);
-    }
-  };
+  const goInvoices = () => router.push('/more/invoices' as never);
+  const card = { backgroundColor: theme.backgroundElement, borderColor: theme.border };
 
-  const openReassign = async (jobId: string) => {
-    setReassignJobId(jobId);
-    if (!employees) {
-      try { setEmployees(await fetchEmployees()); } catch (err: any) { setError(getErrorMessage(err, 'Could not load the employee list.')); }
-    }
-  };
-
-  const onReassign = async (jobId: string, handledById: string) => {
-    setBusyJobId(jobId);
-    setError(null);
-    try {
-      await reassignJobCard(jobId, handledById);
-      setReassignJobId(null);
-      await load();
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not reassign this job.'));
-    } finally {
-      setBusyJobId(null);
-    }
-  };
-
-  if (!profile) {
-    return (
-      <ThemedView style={styles.center}>
-        {error ? <ThemedText>{error}</ThemedText> : <ActivityIndicator />}
-      </ThemedView>
-    );
-  }
-
-  const { customer, stats, vehicles } = profile;
+  const customer = profile?.customer;
 
   return (
-    <>
-      <Stack.Screen options={{ title: customer.name }} />
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.three }]}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerText}>
-            <ThemedText type="title" style={styles.title}>
-              {customer.name}
-            </ThemedText>
-            <ThemedText themeColor="textSecondary">
-              {customer.phone}
-              {customer.email ? ` · ${customer.email}` : ''}
-            </ThemedText>
-          </View>
-          {canCall && (
-            <Pressable onPress={onCall} disabled={isCalling} style={styles.callButton}>
-              {isCalling ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.callLabel}>Call</ThemedText>}
-            </Pressable>
-          )}
-        </View>
+    <ThemedView style={styles.flex1}>
+      <Stack.Screen options={{ title: customer?.name ?? nameParam ?? '' }} />
+      <ScrollView
+        style={{ backgroundColor: theme.background }}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        {error ? <ErrorBanner message={error} onRetry={onRefresh} /> : null}
 
-        <ThemedView type="backgroundElement" style={styles.statsCard}>
-          <View style={styles.statRow}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Total spent
-            </ThemedText>
-            <ThemedText type="smallBold">{formatCurrency(stats.totalSpent)}</ThemedText>
+        {loading ? (
+          <View style={styles.gap}>
+            <Skeleton height={24} width={200} />
+            <Skeleton height={16} width={140} />
+            <Skeleton height={80} style={styles.skel} />
+            <Skeleton height={160} style={styles.skel} />
           </View>
-          <View style={styles.statRow}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Visits
-            </ThemedText>
-            <ThemedText type="smallBold">{stats.visitCount}</ThemedText>
+        ) : !profile && jobCards.length === 0 && interactions.length === 0 ? (
+          <View style={styles.center}>
+            <ThemedText themeColor="textMuted">Failed to load profile</ThemedText>
+            <Button variant="secondary" onPress={onRefresh}>Retry</Button>
           </View>
-          <View style={styles.statRow}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Outstanding
-            </ThemedText>
-            <ThemedText type="smallBold">{formatCurrency(stats.outstandingAmount)}</ThemedText>
-          </View>
-          <View style={styles.statRow}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Customer since
-            </ThemedText>
-            <ThemedText type="smallBold">{formatDate(stats.customerSince)}</ThemedText>
-          </View>
-        </ThemedView>
-
-        {vehicles.length > 0 && (
-          <View style={styles.section}>
-            <ThemedText type="smallBold">Vehicles</ThemedText>
-            {vehicles.map((v) => (
-              <ThemedText key={v.registration} themeColor="textSecondary">
-                {v.registration} — {[v.make, v.model].filter(Boolean).join(' ') || 'Unknown model'}
-              </ThemedText>
-            ))}
-          </View>
-        )}
-
-        <View style={styles.section}>
-          <ThemedText type="smallBold">Jobs</ThemedText>
-          {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-          {jobs?.length === 0 && (
-            <ThemedText themeColor="textSecondary">No job cards for this customer yet.</ThemedText>
-          )}
-          {jobs?.map((job) => (
-            <ThemedView key={job.id} type="backgroundElement" style={styles.jobRow}>
-              <Pressable onPress={() => router.push(`/customers/job/${job.id}`)}>
-                <View style={styles.jobTop}>
-                  <ThemedText type="smallBold" numberOfLines={1} style={styles.jobTitle}>
-                    {job.reasonForVisit}
-                  </ThemedText>
-                  <View style={[styles.statusPill, { backgroundColor: JOB_STATUS_COLOR[job.status] }]}>
-                    <ThemedText type="small" style={styles.statusText}>
-                      {job.status.replace('_', ' ')}
-                    </ThemedText>
-                  </View>
+        ) : (
+          <>
+            {profile && customer ? (
+              <>
+            {/* Header */}
+            <View style={styles.headerRow}>
+              <View style={styles.flex1}>
+                <View style={styles.wrapRow}>
+                  <ThemedText style={styles.name}>{customer.name}</ThemedText>
+                  {customer.isRegular ? <Badge size="sm" variant="success">Regular</Badge> : null}
                 </View>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {job.jobNumber} · {job.vehicle?.vehicleNumber ?? 'No vehicle'} · {formatDate(job.createdAt)}
-                </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">Handled by {job.handledBy.name}</ThemedText>
-                <ThemedText type="link">View details ›</ThemedText>
-              </Pressable>
-
-              {canWrite && job.status !== 'RELEASED' && job.status !== 'WALKED_OUT' && (
-                walkoutJobId === job.id ? (
-                  <View style={styles.actionBlock}>
-                    <ThemedText type="small" themeColor="textSecondary">Why did the customer walk out?</ThemedText>
-                    <View style={styles.chipRow}>
-                      {WALKOUT_REASONS.map((r) => (
-                        <Pressable
-                          key={r.value}
-                          onPress={() => setWalkoutReason(r.value)}
-                          disabled={busyJobId === job.id}
-                          style={[styles.chip, { backgroundColor: walkoutReason === r.value ? theme.primary : undefined }]}
-                        >
-                          <ThemedText type="small" style={walkoutReason === r.value ? styles.chipLabelActive : undefined}>{r.label}</ThemedText>
-                        </Pressable>
-                      ))}
-                    </View>
-                    <TextInput
-                      value={walkoutNote}
-                      onChangeText={setWalkoutNote}
-                      placeholder="Optional note..."
-                      placeholderTextColor={theme.textSecondary}
-                      style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
-                    />
-                    <View style={styles.jobActions}>
-                      <Pressable onPress={() => onConfirmWalkout(job.id)} disabled={busyJobId === job.id || !walkoutReason}>
-                        <ThemedText type="link">{busyJobId === job.id ? '…' : 'Confirm Walked Out'}</ThemedText>
-                      </Pressable>
-                      <Pressable onPress={() => { setWalkoutJobId(null); setWalkoutReason(''); setWalkoutNote(''); }}><ThemedText type="small" themeColor="textSecondary">Cancel</ThemedText></Pressable>
-                    </View>
+                <View style={styles.inline}>
+                  <Pressable onPress={() => Linking.openURL(`tel:${customer.phone}`)} hitSlop={8} accessibilityRole="link" accessibilityLabel={`Call ${customer.phone}`}>
+                    <ThemedText themeColor="textMuted" style={styles.sub}>{customer.phone}</ThemedText>
+                  </Pressable>
+                  <CopyButton value={customer.phone} label="Copy phone" />
+                  <ThemedText themeColor="textMuted" style={styles.sub}>· {profile.stats.visitCount} paid visit{profile.stats.visitCount !== 1 ? 's' : ''}</ThemedText>
+                </View>
+                {customer.email ? (
+                  <View style={styles.inline}>
+                    <ThemedText themeColor="textMuted" style={styles.sub}>{customer.email}</ThemedText>
+                    <CopyButton value={customer.email} label="Copy email" />
                   </View>
-                ) : reassignJobId === job.id ? (
-                  <View style={styles.actionBlock}>
-                    <ThemedText type="small" themeColor="textSecondary">Reassign to</ThemedText>
-                    {employees === null ? (
-                      <ActivityIndicator />
-                    ) : (
-                      <View style={styles.chipRow}>
-                        {employees.map((e) => (
-                          <Pressable key={e.id} onPress={() => onReassign(job.id, e.id)} disabled={busyJobId === job.id} style={styles.chip}>
-                            <ThemedText type="small">{e.name}</ThemedText>
-                          </Pressable>
+                ) : null}
+                {customer.createdAt ? <ThemedText themeColor="textMuted" style={styles.tiny}>Customer since: {fmtMonthYear(customer.createdAt)}</ThemedText> : null}
+              </View>
+              {canCall ? <Button size="sm" icon="call" loading={calling} onPress={onCall}>Call</Button> : null}
+            </View>
+
+            {/* Quick Stats */}
+            <View style={[styles.box, card]}>
+              <SectionLabel>Quick Stats</SectionLabel>
+              <View style={styles.stats}>
+                <View style={styles.flex1}>
+                  <ThemedText themeColor="textMuted" style={styles.tiny}>Total Spent</ThemedText>
+                  <ThemedText style={styles.statValue}>{fmtINR(profile.stats.totalSpent)}</ThemedText>
+                </View>
+                <View style={styles.flex1}>
+                  <ThemedText themeColor="textMuted" style={styles.tiny}>Avg / Visit</ThemedText>
+                  <ThemedText style={styles.statValue}>{fmtINR(profile.stats.avgPerVisit)}</ThemedText>
+                </View>
+                <View style={styles.flex1}>
+                  <ThemedText themeColor="textMuted" style={styles.tiny}>Since</ThemedText>
+                  <ThemedText style={styles.statValue}>{fmtMonthYear(profile.stats.customerSince ?? customer.createdAt)}</ThemedText>
+                </View>
+              </View>
+              {profile.stats.outstandingAmount > 0 ? (
+                <ThemedText themeColor="danger" style={styles.outstanding}>Outstanding: {fmtINR(profile.stats.outstandingAmount)}</ThemedText>
+              ) : null}
+            </View>
+
+            {/* Vehicles */}
+            {profile.vehicles.length > 0 && (
+              <View style={styles.section}>
+                <SectionLabel>Vehicles</SectionLabel>
+                <View style={styles.wrapRow}>
+                  {profile.vehicles.map((v) => {
+                    const active = vehicleFilter === v.registration;
+                    return (
+                      <Pressable
+                        key={v.registration}
+                        onPress={() => setVehicleFilter(active ? null : v.registration)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                        style={({ pressed }) => [styles.vehicleChip, { backgroundColor: active ? theme.primary : theme.backgroundElement, borderColor: active ? theme.primary : theme.border }, pressed && { opacity: 0.7 }]}>
+                        <ThemedText style={[styles.chipText, { color: active ? '#fff' : theme.text }]}>
+                          {v.registration}
+                          {v.make || v.model ? ` · ${[v.make, v.model].filter(Boolean).join(' ')}` : ''}
+                          {v.year ? ` · ${v.year}` : ''}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+              </>
+            ) : (
+              <ThemedText style={styles.name}>{nameParam ?? ''}</ThemedText>
+            )}
+
+            {/* Interactions */}
+            {interactions.length > 0 && (
+              <View style={styles.section}>
+                <SectionLabel>{`Interactions (${interactions.length})`}</SectionLabel>
+                {interactions.map((it) => (
+                  <View key={it.id} style={[styles.item, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                    <View style={styles.between}>
+                      <ThemedText style={[styles.body, styles.flex1]}>{it.description}</ThemedText>
+                      <ThemedText themeColor="textMuted" style={styles.tiny}>{fmtDate(it.createdAt)}</ThemedText>
+                    </View>
+                    <ThemedText themeColor="textMuted" style={styles.tiny}>
+                      Logged by {it.createdBy.name}
+                      {it.jobCard ? ` · Job #${it.jobCard.jobNumber} (${it.jobCard.vehicleNumber})` : ''}
+                    </ThemedText>
+                    {it.quotes.length > 0 && (
+                      <View style={styles.wrapRow}>
+                        {it.quotes.map((q, i) => (
+                          <View key={i} style={[styles.quote, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+                            <ThemedText style={styles.tiny}>{quoteLabel(i, it.quotes.length)}: <ThemedText style={[styles.tiny, styles.bold]}>₹{parseFloat(q.amount).toLocaleString('en-IN')}</ThemedText></ThemedText>
+                          </View>
                         ))}
                       </View>
                     )}
-                    <Pressable onPress={() => setReassignJobId(null)}><ThemedText type="small" themeColor="textSecondary">Cancel</ThemedText></Pressable>
                   </View>
+                ))}
+              </View>
+            )}
+
+            {/* Verification Remarks */}
+            {canSeeRemarks && (
+              <View style={[styles.box, { backgroundColor: withAlpha(theme.danger, 0.04), borderColor: withAlpha(theme.danger, 0.25) }]}>
+                <ThemedText themeColor="danger" style={styles.dangerLabel}>{`VERIFICATION REMARKS (${remarks.length})`}</ThemedText>
+                <View style={styles.remarkInput}>
+                  <TextInput
+                    value={newRemark}
+                    onChangeText={setNewRemark}
+                    onSubmitEditing={addRemark}
+                    placeholder="Log a verification note…"
+                    placeholderTextColor={theme.textMuted}
+                    returnKeyType="done"
+                    style={[styles.input, { backgroundColor: theme.backgroundElement, borderColor: theme.border, color: theme.text }]}
+                  />
+                  <Button variant="danger" size="sm" disabled={addingRemark || !newRemark.trim()} loading={addingRemark} onPress={addRemark}>{addingRemark ? 'Adding…' : 'Add'}</Button>
+                </View>
+                {remarksLoading ? (
+                  <ThemedText themeColor="textMuted" style={styles.tiny}>Loading…</ThemedText>
+                ) : remarks.length === 0 ? (
+                  <ThemedText themeColor="textMuted" style={styles.tiny}>No verification remarks yet</ThemedText>
                 ) : (
-                  <View style={styles.jobActions}>
-                    {busyJobId === job.id ? (
-                      <ActivityIndicator size="small" />
-                    ) : (
-                      <>
-                        {job.status === 'IN_PROGRESS' && (
-                          <Pressable onPress={() => onSetStatus(job.id, 'READY')}><ThemedText type="link">Mark Ready for Pickup</ThemedText></Pressable>
-                        )}
-                        {job.status === 'READY' && (
-                          <Pressable onPress={() => onSetStatus(job.id, 'RELEASED')}><ThemedText type="link">Release Car</ThemedText></Pressable>
-                        )}
-                        <Pressable onPress={() => setWalkoutJobId(job.id)}><ThemedText type="link">Walked Out?</ThemedText></Pressable>
-                        {canReassign && (
-                          <Pressable onPress={() => openReassign(job.id)}><ThemedText type="link">Reassign</ThemedText></Pressable>
-                        )}
-                      </>
-                    )}
-                  </View>
-                )
+                  remarks.map((r) => (
+                    <View key={r.id} style={[styles.item, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                      <ThemedText style={styles.body}>{r.note}</ThemedText>
+                      <ThemedText themeColor="textMuted" style={styles.tiny}>{r.author.name} · {fmtDate(r.createdAt)}</ThemedText>
+                    </View>
+                  ))
+                )}
+              </View>
+            )}
+
+            {/* Visit History */}
+            <View style={styles.section}>
+              <SectionLabel>{`Visit History (${filteredVisits.length})`}</SectionLabel>
+              {filteredVisits.length === 0 ? (
+                <ThemedText themeColor="textMuted" style={styles.body}>No visit records found</ThemedText>
+              ) : (
+                displayed.map((entry) => {
+                  if (entry.kind === 'jc') {
+                    const jc = entry.jc;
+                    return (
+                      <Pressable
+                        key={jc.id}
+                        onPress={() => router.push(`/customers/job/${jc.id}` as never)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open job ${jc.jobNumber}`}
+                        style={({ pressed }) => [styles.visit, card, { opacity: jc.status === 'WALKED_OUT' ? 0.65 : pressed ? 0.8 : 1 }]}>
+                        <View style={styles.between}>
+                          <View style={styles.inline}>
+                            <ThemedText themeColor="primary" style={styles.mono}>{jc.jobNumber}</ThemedText>
+                            <ThemedText themeColor="textMuted" style={styles.tiny}>{fmtDate(jc.createdAt)}</ThemedText>
+                          </View>
+                          <VisitStatusBadge status={jc.status} />
+                        </View>
+                        <ThemedText style={styles.reason}>{jc.reasonForVisit}</ThemedText>
+                        <ThemedText themeColor="textMuted" style={styles.tiny}>
+                          <ThemedText style={[styles.tiny, styles.bold]}>{jc.vehicleNumber}</ThemedText>
+                          {jc.vehicle && (jc.vehicle.make || jc.vehicle.model) ? ` · ${[jc.vehicle.make, jc.vehicle.model].filter(Boolean).join(' ')}` : ''}
+                        </ThemedText>
+                        {jc.handledBy ? (
+                          <ThemedText themeColor="textMuted" style={styles.tiny}>
+                            By <ThemedText style={styles.tiny}>{jc.handledBy.name}</ThemedText>
+                            {jc.handledBy.designation ? ` · ${jc.handledBy.designation}` : ''}
+                          </ThemedText>
+                        ) : null}
+                        {jc.status === 'WALKED_OUT' && jc.walkoutReason ? (
+                          <ThemedText themeColor="textMuted" style={[styles.tiny, styles.walkout, { backgroundColor: withAlpha(theme.textMuted, 0.1) }]}>
+                            {jc.walkoutReason.replace(/_/g, ' ')}
+                            {jc.walkoutNote ? ` — ${jc.walkoutNote}` : ''}
+                          </ThemedText>
+                        ) : null}
+                        <View style={[styles.invoiceLine, { borderTopColor: theme.border }]}>
+                          {jc.invoice ? (
+                            <ThemedText themeColor="textMuted" style={styles.tiny}>
+                              <ThemedText themeColor="primary" style={[styles.tiny, styles.mono]}>{jc.invoice.invoiceNumber}</ThemedText>
+                              {' · '}
+                              <ThemedText style={[styles.tiny, styles.bold]}>{fmtINR(jc.invoice.grandTotal || 0)}</ThemedText>
+                              {' · '}
+                              <ThemedText style={[styles.tiny, { color: jc.invoice.status === 'PAID' ? theme.success : jc.invoice.status === 'DRAFT' ? theme.textMuted : theme.warning }]}>{jc.invoice.status}</ThemedText>
+                              {jc.invoice.status !== 'PAID' && jc.invoice.balanceDue > 0 ? <ThemedText themeColor="danger" style={styles.tiny}>{` · Due ${fmtINR(jc.invoice.balanceDue)}`}</ThemedText> : null}
+                            </ThemedText>
+                          ) : (
+                            <ThemedText themeColor="textMuted" style={styles.tiny}>
+                              No invoice yet{jc.estimatedTotal ? ` · Est. ${fmtINR(jc.estimatedTotal)}` : ''}
+                            </ThemedText>
+                          )}
+                        </View>
+                      </Pressable>
+                    );
+                  }
+
+                  const inv = entry.inv;
+                  const unpaid = inv.status !== 'PAID' && inv.status !== 'CANCELLED' && inv.status !== 'DRAFT';
+                  return (
+                    <Pressable
+                      key={inv.id}
+                      onPress={goInvoices}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open invoice ${inv.invoiceNumber}`}
+                      style={({ pressed }) => [
+                        styles.visit,
+                        { backgroundColor: unpaid ? withAlpha(theme.danger, 0.06) : theme.backgroundElement, borderColor: unpaid ? withAlpha(theme.danger, 0.3) : theme.border },
+                        pressed && { opacity: 0.8 },
+                      ]}>
+                      <View style={styles.between}>
+                        <ThemedText themeColor="primary" style={styles.mono}>{inv.invoiceNumber}</ThemedText>
+                        <InvStatusBadge status={inv.status} />
+                      </View>
+                      <ThemedText themeColor="textMuted" style={styles.tiny}>{fmtDate(inv.createdAt)}{inv.vehicleNumber ? ` · ${inv.vehicleNumber}` : ''}</ThemedText>
+                      <View style={styles.between}>
+                        <ThemedText style={styles.tiny}>
+                          <ThemedText style={[styles.tiny, styles.bold]}>{fmtINR(inv.grandTotal || 0)}</ThemedText>
+                          {inv.balanceDue > 0 ? <ThemedText themeColor="danger" style={styles.tiny}>{`  Due: ${fmtINR(inv.balanceDue)}`}</ThemedText> : null}
+                        </ThemedText>
+                        {inv.status !== 'PAID' && inv.status !== 'CANCELLED' ? <Button size="sm" variant="danger" onPress={goInvoices}>Collect →</Button> : null}
+                      </View>
+                    </Pressable>
+                  );
+                })
               )}
-            </ThemedView>
-          ))}
-        </View>
+              {!showAll && filteredVisits.length > VISITS_PREVIEW ? (
+                <Button variant="ghost" fullWidth onPress={() => setShowAll(true)}>{`View all ${filteredVisits.length} visits →`}</Button>
+              ) : null}
+            </View>
+
+            {/* Actions */}
+            <View style={styles.actions}>
+              <Button style={styles.flex1} onPress={() => Alert.alert('Not available yet', "Creating invoices isn't available in the app yet. Use the dashboard.")}>+ New Invoice</Button>
+              <Button style={styles.flex1} variant="secondary" onPress={goInvoices}>View All Invoices</Button>
+            </View>
+          </>
+        )}
       </ScrollView>
-    </>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  content: { padding: Spacing.four, gap: Spacing.three, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: Spacing.two },
-  headerText: { flex: 1 },
-  callButton: {
-    paddingHorizontal: Spacing.three,
-    height: 40,
-    borderRadius: Spacing.two,
-    backgroundColor: '#167A48',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  callLabel: { color: '#ffffff', fontWeight: '600' },
-  title: { fontSize: 28, lineHeight: 34 },
-  statsCard: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.one },
-  statRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  section: { gap: Spacing.one },
-  jobRow: { borderRadius: Spacing.three, padding: Spacing.three, minHeight: Layout.minTouchTarget, gap: Spacing.half },
-  jobTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
-  jobTitle: { flex: 1 },
-  statusPill: { paddingHorizontal: Spacing.two, paddingVertical: 2, borderRadius: 999, alignSelf: 'flex-start' },
-  statusText: { color: '#ffffff' },
-  error: { color: '#B83030' },
-  jobActions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.three, marginTop: Spacing.one },
-  actionBlock: { marginTop: Spacing.one, gap: Spacing.one },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one },
-  chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.half, borderRadius: 999, backgroundColor: 'rgba(127,127,127,0.2)' },
-  chipLabelActive: { color: '#ffffff', fontWeight: '600' },
-  input: { height: 40, borderRadius: Spacing.two, paddingHorizontal: Spacing.two, fontSize: 15 },
+  flex1: { flex: 1, minWidth: 0 },
+  content: { padding: Spacing.three, gap: Spacing.three, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  gap: { gap: Spacing.two },
+  skel: { borderRadius: Radii.md },
+  center: { alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.six },
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
+  wrapRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  inline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 },
+  between: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  name: { fontSize: 18, lineHeight: 24, fontFamily: FontWeights.bold },
+  sub: { fontSize: 14, lineHeight: 20 },
+  tiny: { fontSize: 12, lineHeight: 18 },
+  body: { fontSize: 14, lineHeight: 20 },
+  bold: { fontFamily: FontWeights.semiBold },
+  mono: { fontSize: 12, lineHeight: 18, fontFamily: FontWeights.bold },
+  box: { padding: Spacing.three, borderRadius: Radii.md, borderWidth: 1, gap: 8 },
+  stats: { flexDirection: 'row', gap: 12 },
+  statValue: { fontSize: 16, lineHeight: 22, fontFamily: FontWeights.bold },
+  outstanding: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  section: { gap: 8 },
+  vehicleChip: { paddingHorizontal: 10, minHeight: 32, borderRadius: Radii.pill, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  chipText: { fontSize: 12, lineHeight: 18 },
+  item: { padding: 12, borderRadius: Radii.md, borderWidth: 1, gap: 4 },
+  quote: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: Radii.pill, borderWidth: 1 },
+  dangerLabel: { fontSize: 12, lineHeight: 18, fontFamily: FontWeights.semiBold, letterSpacing: 0.6 },
+  remarkInput: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  input: { flex: 1, minHeight: 40, borderWidth: 1, borderRadius: Radii.sm, paddingHorizontal: 12, fontSize: 14 },
+  visit: { padding: 12, borderRadius: Radii.md, borderWidth: 1, gap: 4 },
+  reason: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
+  walkout: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  invoiceLine: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 6, marginTop: 2 },
+  actions: { flexDirection: 'row', gap: 8 },
 });

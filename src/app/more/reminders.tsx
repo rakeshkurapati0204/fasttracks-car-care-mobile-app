@@ -1,38 +1,84 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DateField } from '@/components/call-tracker/date-field';
+import { Sheet } from '@/components/customers/sheet';
+import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
+import { Button, Input, Select, Skeleton } from '@/components/ui';
+import { FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
   ackReminder, createReminderDefinition, deleteReminderDefinition, doneReminder, fetchEmployees,
   fetchMyReminders, fetchReminderDefinitions, getErrorMessage, snoozeReminder, updateReminderDefinition,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import type { EmployeeListItem, ReminderDefinition, ReminderOccurrence, ReminderOccurrenceStatus, ReminderRecurrenceType } from '@/types/api';
+import type { EmployeeListItem, ReminderDefinition, ReminderOccurrence, ReminderRecurrenceType } from '@/types/api';
 
-// Definition management (create/edit/delete WHO gets reminded about WHAT)
-// — OWNER-only (requireOwner, backend/src/routes/reminders.ts), distinct
-// from the ack/snooze/done occurrence actions below which any authenticated
-// user has for their own reminders. CORRECTED 2026-09-28 (re-verification
-// sweep): edit was previously deferred with a comment framing it as a minor
-// "scope cut" — it isn't; the dashboard has a full working Edit button per
-// definition (CreateReminderModal in edit mode, PATCH /definitions/:id).
-// Added here the same way, reusing the create form with an editingDef state.
-const RECURRENCE_TYPES: ReminderRecurrenceType[] = ['ONE_OFF', 'DAILY', 'WEEKLY', 'MONTHLY'];
+// Mirrors the dashboard's Reminders page (reminders/page.tsx). OWNER sees "My reminders" plus "Manage all reminders"
+// (create / edit / delete definitions, requireOwner on the backend); every other role sees only their own
+// reminders grouped Overdue / Due soon / Upcoming. Everyone can acknowledge / snooze 4h / mark done their own.
+const RECURRENCE_LABELS: Record<ReminderRecurrenceType, string> = { ONE_OFF: 'One-off', DAILY: 'Daily', WEEKLY: 'Weekly', MONTHLY: 'Monthly' };
+const RECURRENCE_OPTIONS = (Object.keys(RECURRENCE_LABELS) as ReminderRecurrenceType[]).map((r) => ({ value: r, label: RECURRENCE_LABELS[r] }));
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-const STATUS_COLOR: Record<ReminderOccurrenceStatus, string> = {
-  PENDING: '#A86018',
-  SNOOZED: '#3278B0',
-  ACKNOWLEDGED: '#167A48',
-  DONE: '#5A5A6A',
-};
+const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+type Action = 'ack' | 'snooze' | 'done';
+
+function dueBucket(occ: ReminderOccurrence, now: number): 'overdue' | 'soon' | 'upcoming' {
+  const due = new Date(occ.dueDate).getTime();
+  const leadStart = due - occ.definition.leadDays * DAY_MS;
+  if (now >= due) return 'overdue';
+  if (now >= leadStart) return 'soon';
+  return 'upcoming';
+}
+
+const isActive = (o: ReminderOccurrence) => o.status === 'PENDING' || o.status === 'SNOOZED';
+
+// Type-to-search, multi-select picker (dashboard TargetPickerModal).
+function TargetPicker({ employees, initialSelected, onClose, onConfirm }: {
+  employees: EmployeeListItem[]; initialSelected: string[]; onClose: () => void; onConfirm: (ids: string[]) => void;
+}) {
+  const theme = useTheme();
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<string[]>(initialSelected);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? employees.filter((e) => e.name.toLowerCase().includes(q)) : employees;
+  }, [employees, query]);
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  return (
+    <Sheet visible onClose={onClose} title="Notify…" footer={
+      <View style={styles.flex1}><Button fullWidth disabled={selected.length === 0} onPress={() => onConfirm(selected)}>{`Confirm (${selected.length})`}</Button></View>
+    }>
+      <View style={[styles.search, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+        <Ionicons name="search" size={16} color={theme.textMuted} />
+        <TextInput value={query} onChangeText={setQuery} placeholder="Type a name…" placeholderTextColor={theme.textMuted} autoCorrect={false} style={[styles.searchInput, { color: theme.text }]} />
+      </View>
+      <View>
+        {filtered.map((e) => {
+          const on = selected.includes(e.id);
+          return (
+            <Pressable key={e.id} onPress={() => toggle(e.id)} accessibilityRole="checkbox" accessibilityState={{ checked: on }} style={[styles.pickRow, on && { backgroundColor: theme.backgroundElement }]}>
+              <View style={styles.pickLeft}>
+                <View style={[styles.checkbox, { borderColor: theme.border, backgroundColor: on ? theme.primary : 'transparent' }]}>
+                  {on ? <Ionicons name="checkmark" size={12} color="#ffffff" /> : null}
+                </View>
+                <ThemedText style={[styles.p, styles.flex1]} numberOfLines={1}>{e.name}</ThemedText>
+              </View>
+              <ThemedText themeColor="textMuted" style={styles.small}>{e.role?.replace(/_/g, ' ')}</ThemedText>
+            </Pressable>
+          );
+        })}
+      </View>
+    </Sheet>
+  );
 }
 
 export default function RemindersScreen() {
@@ -41,320 +87,292 @@ export default function RemindersScreen() {
   const { user } = useAuth();
   const isOwner = user?.role === 'OWNER';
 
-  const [occurrences, setOccurrences] = useState<ReminderOccurrence[] | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [width, setWidth] = useState(0);
+  const wide = width >= 560;
 
-  const [showManage, setShowManage] = useState(false);
-  const [definitions, setDefinitions] = useState<ReminderDefinition[] | null>(null);
-  const [defError, setDefError] = useState<string | null>(null);
-  const [employees, setEmployees] = useState<EmployeeListItem[] | null>(null);
+  const [definitions, setDefinitions] = useState<ReminderDefinition[]>([]);
+  const [mine, setMine] = useState<ReminderOccurrence[]>([]);
+  const [employees, setEmployees] = useState<EmployeeListItem[]>([]);
+  const [now, setNow] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [actingId, setActingId] = useState<string | null>(null);
 
-  const [showNewDef, setShowNewDef] = useState(false);
-  const [editingDef, setEditingDef] = useState<ReminderDefinition | null>(null);
-  const [defTitle, setDefTitle] = useState('');
-  const [defDescription, setDefDescription] = useState('');
-  const [defRecurrence, setDefRecurrence] = useState<ReminderRecurrenceType>('MONTHLY');
-  const [defAnchorDate, setDefAnchorDate] = useState('');
-  const [defLeadDays, setDefLeadDays] = useState('0');
-  const [defTargets, setDefTargets] = useState<string[]>([]);
-  const [isSavingDef, setIsSavingDef] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<ReminderDefinition | null>(null);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [recurrenceType, setRecurrenceType] = useState<ReminderRecurrenceType>('MONTHLY');
+  const [anchorDate, setAnchorDate] = useState('');
+  const [leadDays, setLeadDays] = useState('0');
+  const [targetIds, setTargetIds] = useState<string[]>([]);
+  const [showPicker, setShowPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const load = useCallback(async () => {
-    setError(null);
+    setError('');
     try {
-      setOccurrences(await fetchMyReminders());
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not load reminders.'));
+      if (isOwner) {
+        const [defs, occ] = await Promise.all([fetchReminderDefinitions(), fetchMyReminders()]);
+        setDefinitions(defs ?? []);
+        setMine(occ ?? []);
+      } else {
+        setMine((await fetchMyReminders()) ?? []);
+      }
+      setNow(Date.now());
+    } catch (e) {
+      setError(getErrorMessage(e, 'Failed to load reminders.'));
+    } finally {
+      setLoading(false);
     }
-  }, []);
-
-  const loadDefinitions = useCallback(async () => {
-    setDefError(null);
-    try {
-      const [defs, emps] = await Promise.all([fetchReminderDefinitions(), employees ? Promise.resolve(employees) : fetchEmployees()]);
-      setDefinitions(defs);
-      setEmployees(emps);
-    } catch (err: any) {
-      setDefError(getErrorMessage(err, 'Could not load reminder definitions.'));
-    }
-  }, [employees]);
+  }, [isOwner]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount, not a render loop
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
     load();
   }, [load]);
 
-  const onRefresh = async () => {
-    setIsRefreshing(true);
-    if (showManage) await loadDefinitions();
-    else await load();
-    setIsRefreshing(false);
+  useEffect(() => {
+    if (!isOwner) return;
+    fetchEmployees().then((res) => setEmployees((res ?? []).filter((e) => e.isActive))).catch(() => {});
+  }, [isOwner]);
+
+  const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  const act = async (id: string, action: Action) => {
+    setActingId(id);
+    try {
+      await (action === 'ack' ? ackReminder(id) : action === 'snooze' ? snoozeReminder(id) : doneReminder(id));
+      await load();
+    } catch (e) {
+      setError(getErrorMessage(e, action === 'ack' ? 'Failed to acknowledge reminder.' : action === 'snooze' ? 'Failed to snooze reminder.' : 'Failed to mark reminder done.'));
+    } finally { setActingId(null); }
   };
 
-  const openManage = async () => {
-    setShowManage(true);
-    await loadDefinitions();
+  const openForm = (def: ReminderDefinition | null) => {
+    setEditing(def);
+    setTitle(def?.title ?? '');
+    setDescription(def?.description ?? '');
+    setRecurrenceType(def?.recurrenceType ?? 'MONTHLY');
+    setAnchorDate(def ? def.anchorDate.slice(0, 10) : '');
+    setLeadDays(String(def?.leadDays ?? 0));
+    setTargetIds(def?.targets.map((t) => t.user.id) ?? []);
+    setFormError('');
+    setFormOpen(true);
   };
+  const closeForm = () => { setFormOpen(false); setEditing(null); setShowPicker(false); };
 
-  const resetDefForm = () => {
-    setEditingDef(null);
-    setDefTitle('');
-    setDefDescription('');
-    setDefRecurrence('MONTHLY');
-    setDefAnchorDate('');
-    setDefLeadDays('0');
-    setDefTargets([]);
-  };
+  const targetNames = useMemo(() => {
+    // Names come from the active-employee list, as on the dashboard.
+    return employees.filter((e) => targetIds.includes(e.id)).map((e) => e.name);
+  }, [employees, targetIds]);
 
-  const startEditDefinition = (def: ReminderDefinition) => {
-    setEditingDef(def);
-    setDefTitle(def.title);
-    setDefDescription(def.description ?? '');
-    setDefRecurrence(def.recurrenceType);
-    setDefAnchorDate(def.anchorDate.slice(0, 10));
-    setDefLeadDays(String(def.leadDays));
-    setDefTargets(def.targets.map((t) => t.user.id));
-    setShowNewDef(true);
-  };
-
-  const toggleTarget = (id: string) => {
-    setDefTargets((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]));
-  };
-
-  const onSaveDefinition = async () => {
-    if (!defTitle.trim() || !defAnchorDate.trim() || defTargets.length === 0) {
-      setDefError('Title, anchor date (YYYY-MM-DD), and at least one target person are required.');
+  const save = async () => {
+    if (!title.trim() || !anchorDate || targetIds.length === 0) {
+      setFormError('Title, due date, and at least one person to notify are required.');
       return;
     }
-    setIsSavingDef(true);
-    setDefError(null);
+    setSaving(true);
+    setFormError('');
     try {
-      const payload = {
-        title: defTitle.trim(),
-        description: defDescription.trim() || undefined,
-        recurrenceType: defRecurrence,
-        anchorDate: defAnchorDate.trim(),
-        leadDays: Number(defLeadDays) || 0,
-        targetUserIds: defTargets,
-      };
-      if (editingDef) await updateReminderDefinition(editingDef.id, payload);
+      const payload = { title: title.trim(), description: description.trim() || undefined, recurrenceType, anchorDate, leadDays: Number(leadDays) || 0, targetUserIds: targetIds };
+      if (editing) await updateReminderDefinition(editing.id, payload);
       else await createReminderDefinition(payload);
-      resetDefForm();
-      setShowNewDef(false);
-      await loadDefinitions();
-    } catch (err: any) {
-      setDefError(getErrorMessage(err, editingDef ? 'Could not save this reminder.' : 'Could not create this reminder.'));
-    } finally {
-      setIsSavingDef(false);
-    }
+      closeForm();
+      load();
+    } catch (e) {
+      setFormError(getErrorMessage(e, 'Failed to save reminder.'));
+    } finally { setSaving(false); }
   };
 
-  const onDeleteDefinition = (def: ReminderDefinition) => {
-    Alert.alert('Delete reminder', `Delete "${def.title}"? This stops future occurrences for everyone on it.`, [
+  const confirmDelete = (def: ReminderDefinition) => {
+    Alert.alert('Delete this reminder?', def.title, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        try { await deleteReminderDefinition(def.id); await loadDefinitions(); } catch (err: any) { setDefError(getErrorMessage(err, 'Could not delete this reminder.')); }
-      } },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteReminderDefinition(def.id);
+            setDefinitions((ds) => ds.filter((d) => d.id !== def.id));
+          } catch (e) { setError(getErrorMessage(e, 'Failed to delete reminder.')); }
+        },
+      },
     ]);
   };
 
-  const act = async (id: string, action: 'ack' | 'snooze' | 'done') => {
-    setBusyId(id);
-    try {
-      const updated =
-        action === 'ack' ? await ackReminder(id) : action === 'snooze' ? await snoozeReminder(id) : await doneReminder(id);
-      setOccurrences((prev) => prev?.map((o) => (o.id === id ? updated : o)) ?? prev);
-    } catch (err: any) {
-      setError(getErrorMessage(err, 'Could not update that reminder.'));
-    } finally {
-      setBusyId(null);
-    }
+  const active = mine.filter(isActive);
+
+  const iconBtn = (name: keyof typeof Ionicons.glyphMap, label: string, color: string, onPress: () => void, disabled?: boolean) => (
+    <Pressable onPress={onPress} disabled={disabled} hitSlop={8} accessibilityRole="button" accessibilityLabel={label} style={[styles.iconBtn, disabled && styles.dim]}>
+      <Ionicons name={name} size={20} color={color} />
+    </Pressable>
+  );
+
+  const ownerOccurrence = (occ: ReminderOccurrence) => (
+    <View key={occ.id} style={[styles.card, styles.between, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <View style={styles.flex1}>
+        <ThemedText style={[styles.p, styles.semi]}>{occ.definition.title}</ThemedText>
+        <ThemedText themeColor="textMuted" style={styles.small}>{fmtDate(occ.dueDate)}</ThemedText>
+      </View>
+      <View style={styles.row}>
+        {iconBtn('checkmark', 'Acknowledge', theme.textMuted, () => act(occ.id, 'ack'), actingId === occ.id)}
+        {iconBtn('time-outline', 'Snooze 4h', theme.textMuted, () => act(occ.id, 'snooze'), actingId === occ.id)}
+        {iconBtn('checkmark-circle-outline', 'Mark done', theme.primary, () => act(occ.id, 'done'), actingId === occ.id)}
+      </View>
+    </View>
+  );
+
+  const pill = (text: string) => (
+    <View style={[styles.pill, { backgroundColor: theme.backgroundElement }]}><ThemedText themeColor="textMuted" style={styles.small}>{text}</ThemedText></View>
+  );
+
+  const definitionCard = (def: ReminderDefinition) => (
+    <View key={def.id} style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <View style={styles.between}>
+        <View style={styles.flex1}>
+          <View style={styles.wrapRow}>
+            <ThemedText style={[styles.p, styles.semi]}>{def.title}</ThemedText>
+            {pill(RECURRENCE_LABELS[def.recurrenceType])}
+            {pill(`Lead ${def.leadDays}d`)}
+          </View>
+          {def.description ? <ThemedText themeColor="textMuted" style={[styles.small, styles.mt4]}>{def.description}</ThemedText> : null}
+          <ThemedText themeColor="textMuted" style={[styles.small, styles.mt4]}>
+            Due {fmtDate(def.anchorDate)} · Notifies {def.targets.map((t) => t.user.name).join(', ')}
+          </ThemedText>
+        </View>
+        <View style={styles.row}>
+          {iconBtn('create-outline', 'Edit', theme.textMuted, () => openForm(def))}
+          {iconBtn('trash-outline', 'Delete', '#b91c1c', () => confirmDelete(def))}
+        </View>
+      </View>
+    </View>
+  );
+
+  const employeeCard = (occ: ReminderOccurrence) => {
+    const busy = actingId === occ.id;
+    return (
+      <View key={occ.id} style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <ThemedText style={[styles.p, styles.semi]}>{occ.definition.title}</ThemedText>
+        {occ.definition.description ? <ThemedText themeColor="textMuted" style={styles.small}>{occ.definition.description}</ThemedText> : null}
+        <ThemedText themeColor="textMuted" style={styles.small}>{fmtDate(occ.dueDate)}</ThemedText>
+        <View style={styles.wrapRow}>
+          <Button variant="secondary" size="sm" icon="checkmark" disabled={busy} onPress={() => act(occ.id, 'ack')}>Acknowledge</Button>
+          <Button variant="secondary" size="sm" icon="time-outline" disabled={busy} onPress={() => act(occ.id, 'snooze')}>Snooze 4h</Button>
+          <Button size="sm" icon="checkmark-circle-outline" disabled={busy} onPress={() => act(occ.id, 'done')}>Mark done</Button>
+        </View>
+      </View>
+    );
   };
 
-  if (showNewDef) {
-    return (
-      <KeyboardAvoidingView style={styles.flex1} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top}>
-        <Stack.Screen options={{ title: editingDef ? 'Edit Reminder' : 'New Reminder' }} />
-        <ScrollView contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + Spacing.three }]}>
-          <Pressable onPress={() => { setShowNewDef(false); resetDefForm(); }}><ThemedText type="small">← Cancel</ThemedText></Pressable>
-          <TextInput value={defTitle} onChangeText={setDefTitle} placeholder="Title *" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-          <TextInput value={defDescription} onChangeText={setDefDescription} placeholder="Description (optional)" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-          <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Recurrence</ThemedText>
-          <View style={styles.chipRow}>
-            {RECURRENCE_TYPES.map((r) => (
-              <Pressable key={r} onPress={() => setDefRecurrence(r)} style={[styles.chip, { backgroundColor: defRecurrence === r ? theme.primary : theme.backgroundElement }]}>
-                <ThemedText type="small" style={defRecurrence === r ? styles.actionLabel : undefined}>{r}</ThemedText>
-              </Pressable>
-            ))}
-          </View>
-          <TextInput value={defAnchorDate} onChangeText={setDefAnchorDate} placeholder="Anchor date (YYYY-MM-DD) *" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-          <TextInput value={defLeadDays} onChangeText={setDefLeadDays} placeholder="Lead days (show reminder this many days early)" placeholderTextColor={theme.textSecondary} keyboardType="number-pad" style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} />
-          <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>Remind (tap to select) *</ThemedText>
-          <View style={styles.chipRow}>
-            {(employees ?? []).map((e) => (
-              <Pressable key={e.id} onPress={() => toggleTarget(e.id)} style={[styles.chip, { backgroundColor: defTargets.includes(e.id) ? theme.primary : theme.backgroundElement }]}>
-                <ThemedText type="small" style={defTargets.includes(e.id) ? styles.actionLabel : undefined}>{e.name}</ThemedText>
-              </Pressable>
-            ))}
-          </View>
-          {defError && <ThemedText style={styles.error}>{defError}</ThemedText>}
-          <Pressable onPress={onSaveDefinition} disabled={isSavingDef} style={[styles.actionButton, styles.fieldLabel]}>
-            {isSavingDef ? <ActivityIndicator color="#ffffff" /> : <ThemedText style={styles.actionLabel}>{editingDef ? 'Save changes' : 'Create reminder'}</ThemedText>}
-          </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    );
-  }
+  const group = (label: string, items: ReminderOccurrence[]) => items.length === 0 ? null : (
+    <View key={label} style={styles.gap8}>
+      <ThemedText style={[styles.p, styles.bold]}>{label}</ThemedText>
+      {items.map(employeeCard)}
+    </View>
+  );
 
-  if (showManage) {
-    return (
-      <>
-        <Stack.Screen options={{ title: 'Manage Reminders' }} />
-        <ScrollView
-          contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + Spacing.three }]}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-        >
-          <Pressable onPress={() => setShowManage(false)}><ThemedText type="small">← My reminders</ThemedText></Pressable>
-          <Pressable onPress={() => setShowNewDef(true)} style={styles.actionButton}>
-            <ThemedText style={styles.actionLabel}>+ New Reminder Definition</ThemedText>
-          </Pressable>
-          {defError && <ThemedText style={styles.error}>{defError}</ThemedText>}
-          {definitions === null ? (
-            <ActivityIndicator />
-          ) : definitions.length === 0 ? (
-            <ThemedText type="small" themeColor="textSecondary">No reminder definitions.</ThemedText>
-          ) : (
-            definitions.map((def) => (
-              <ThemedView key={def.id} type="backgroundElement" style={styles.card}>
-                <ThemedText type="smallBold">{def.title}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {def.recurrenceType} · lead {def.leadDays}d · {def.targets.length} {def.targets.length === 1 ? 'person' : 'people'}
-                </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                  {def.targets.map((t) => t.user.name).join(', ')}
-                </ThemedText>
-                <View style={styles.chipRow}>
-                  <Pressable onPress={() => startEditDefinition(def)}>
-                    <ThemedText type="link">Edit</ThemedText>
-                  </Pressable>
-                  <Pressable onPress={() => onDeleteDefinition(def)}>
-                    <ThemedText type="small" style={{ color: '#B83030' }}>Delete</ThemedText>
-                  </Pressable>
-                </View>
-              </ThemedView>
-            ))
-          )}
-        </ScrollView>
-      </>
-    );
-  }
+  const skeletons = <View style={styles.gap8}><Skeleton height={wide ? 64 : 80} /><Skeleton height={wide ? 64 : 80} /><Skeleton height={wide ? 64 : 80} /></View>;
 
   return (
-    <>
+    <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <Stack.Screen options={{ title: 'Reminders' }} />
-      {isOwner && (
-        <Pressable onPress={openManage} style={styles.manageToggle}>
-          <ThemedText type="link">Manage reminder definitions →</ThemedText>
-        </Pressable>
-      )}
-      {occurrences === null ? (
-        <ThemedView style={styles.center}>
-          {error ? <ThemedText>{error}</ThemedText> : <ActivityIndicator />}
-        </ThemedView>
-      ) : (
-        <ScrollView
-          contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + Spacing.three }]}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}>
-          {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <View style={styles.flex1}>
+            <ThemedText style={styles.title}>Reminders</ThemedText>
+            <ThemedText themeColor="textMuted" style={styles.sub}>{isOwner ? 'Manual recurring reminders — pop up + bell until acknowledged.' : 'Things you need to act on.'}</ThemedText>
+          </View>
+          {isOwner ? <Button icon="add" onPress={() => openForm(null)}>New reminder</Button> : null}
+        </View>
 
-          {occurrences.length === 0 && !error && (
-            <ThemedText themeColor="textSecondary" style={styles.empty}>
-              No reminders.
-            </ThemedText>
-          )}
+        {error ? <ErrorBanner message={error} onRetry={load} /> : null}
 
-          {occurrences.map((occ) => {
-            const isActionable = occ.status === 'PENDING' || occ.status === 'SNOOZED';
-            const isBusy = busyId === occ.id;
-            return (
-              <ThemedView key={occ.id} type="backgroundElement" style={styles.card}>
-                <View style={styles.cardTop}>
-                  <ThemedText type="smallBold" style={styles.title} numberOfLines={2}>
-                    {occ.definition.title}
-                  </ThemedText>
-                  <View style={[styles.statusPill, { backgroundColor: STATUS_COLOR[occ.status] }]}>
-                    <ThemedText type="small" style={styles.statusText}>
-                      {occ.status}
-                    </ThemedText>
-                  </View>
-                </View>
+        {loading ? skeletons : isOwner ? (
+          <>
+            <View style={styles.gap8}>
+              <ThemedText style={[styles.p, styles.bold]}>My reminders</ThemedText>
+              {active.length === 0 ? <ThemedText themeColor="textMuted" style={[styles.small, styles.py16]}>Nothing due.</ThemedText> : active.map(ownerOccurrence)}
+            </View>
+            <View style={styles.gap8}>
+              <ThemedText style={[styles.p, styles.bold]}>Manage all reminders</ThemedText>
+              {definitions.length === 0 ? <ThemedText themeColor="textMuted" style={[styles.small, styles.py16]}>No reminders created yet.</ThemedText> : definitions.map(definitionCard)}
+            </View>
+          </>
+        ) : active.length === 0 ? (
+          <View style={[styles.empty, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+            <ThemedText style={[styles.p, styles.medium]}>Nothing here yet.</ThemedText>
+          </View>
+        ) : (
+          <>
+            {group('Overdue', active.filter((o) => dueBucket(o, now) === 'overdue'))}
+            {group('Due soon', active.filter((o) => dueBucket(o, now) === 'soon'))}
+            {group('Upcoming', active.filter((o) => dueBucket(o, now) === 'upcoming'))}
+          </>
+        )}
+      </ScrollView>
 
-                {occ.definition.description && (
-                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
-                    {occ.definition.description}
-                  </ThemedText>
-                )}
+      {formOpen ? (
+        <Sheet visible={!showPicker} fullHeight onClose={closeForm} locked={saving} title={editing ? 'Edit reminder' : 'New reminder'} footer={
+          <View style={styles.flex1}><Button fullWidth onPress={save} loading={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Create reminder'}</Button></View>
+        }>
+          {formError ? <ThemedText style={[styles.small, styles.errBox, { color: '#b91c1c' }]}>{formError}</ThemedText> : null}
+          <Input value={title} onChangeText={setTitle} placeholder="Title (e.g. Pay ICICI credit card)" />
+          <Input value={description} onChangeText={setDescription} placeholder="Description (optional)" multiline numberOfLines={2} />
+          <View style={[styles.two, wide && styles.twoWide]}>
+            <View style={styles.flex1}><Select label="Recurrence" value={recurrenceType} onChange={(v) => setRecurrenceType(v as ReminderRecurrenceType)} options={RECURRENCE_OPTIONS} /></View>
+            <View style={styles.flex1}>
+              <DateField label={recurrenceType === 'ONE_OFF' ? 'Due date' : recurrenceType === 'MONTHLY' ? 'Due (sets day of month)' : 'Due (sets reference date)'} value={anchorDate} onChange={setAnchorDate} />
+            </View>
+          </View>
+          <Input label="Start nagging N days before due" value={leadDays} onChangeText={(v) => setLeadDays(v.replace(/[^0-9]/g, ''))} keyboardType="number-pad" />
+          <View>
+            <ThemedText themeColor="textSecondary" style={styles.label}>Notify</ThemedText>
+            <Pressable onPress={() => setShowPicker(true)} accessibilityRole="button" style={[styles.pickBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <ThemedText style={[styles.p, !targetNames.length && { color: theme.textMuted }]}>{targetNames.length ? targetNames.join(', ') : 'Choose people to notify…'}</ThemedText>
+            </Pressable>
+          </View>
+        </Sheet>
+      ) : null}
 
-                <ThemedText type="small" themeColor="textSecondary">
-                  Due {formatDate(occ.dueDate)}
-                  {occ.status === 'SNOOZED' && occ.snoozedUntil ? ` · snoozed until ${formatDate(occ.snoozedUntil)}` : ''}
-                </ThemedText>
-
-                {isActionable && (
-                  <View style={styles.actions}>
-                    <Pressable disabled={isBusy} onPress={() => act(occ.id, 'ack')} style={styles.actionButton}>
-                      <ThemedText type="small" style={styles.actionLabel}>
-                        Acknowledge
-                      </ThemedText>
-                    </Pressable>
-                    <Pressable
-                      disabled={isBusy}
-                      onPress={() => act(occ.id, 'snooze')}
-                      style={[styles.actionButton, styles.actionButtonSecondary]}>
-                      <ThemedText type="small">Snooze 4h</ThemedText>
-                    </Pressable>
-                    <Pressable
-                      disabled={isBusy}
-                      onPress={() => act(occ.id, 'done')}
-                      style={[styles.actionButton, styles.actionButtonSecondary]}>
-                      <ThemedText type="small">Done</ThemedText>
-                    </Pressable>
-                  </View>
-                )}
-              </ThemedView>
-            );
-          })}
-        </ScrollView>
-      )}
-    </>
+      {formOpen && showPicker ? (
+        <TargetPicker employees={employees} initialSelected={targetIds} onClose={() => setShowPicker(false)} onConfirm={(ids) => { setTargetIds(ids); setShowPicker(false); }} />
+      ) : null}
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  flex1: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  list: { padding: Spacing.three, gap: Layout.cardGap, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  empty: { textAlign: 'center', marginTop: Spacing.six },
-  input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
-  fieldLabel: { marginTop: Spacing.two },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one, marginTop: Spacing.one },
-  chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.half, borderRadius: 999 },
-  manageToggle: { padding: Spacing.three, paddingBottom: 0, minHeight: 36, justifyContent: 'center' },
-  error: { color: '#B83030' },
-  card: { borderRadius: Spacing.three, padding: Spacing.three, gap: Spacing.one },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
-  title: { flex: 1 },
-  statusPill: { paddingHorizontal: Spacing.two, paddingVertical: 2, borderRadius: 999, alignSelf: 'flex-start' },
-  statusText: { color: '#ffffff' },
-  actions: { flexDirection: 'row', gap: Spacing.one, marginTop: Spacing.one },
-  actionButton: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.one,
-    borderRadius: Spacing.two,
-    backgroundColor: '#7A1C2E',
-  },
-  actionButtonSecondary: { backgroundColor: 'rgba(127,127,127,0.2)' },
-  actionLabel: { color: '#ffffff' },
+  flex1: { flex: 1, minWidth: 0 },
+  gap8: { gap: 8 },
+  row: { flexDirection: 'row', gap: 4, alignItems: 'center' },
+  wrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
+  between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  content: { padding: 16, gap: 24, width: '100%', maxWidth: 896, alignSelf: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
+  title: { fontSize: 24, lineHeight: 32, fontFamily: FontWeights.bold },
+  sub: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  p: { fontSize: 14, lineHeight: 20 },
+  small: { fontSize: 12, lineHeight: 16 },
+  semi: { fontFamily: FontWeights.semiBold },
+  bold: { fontFamily: FontWeights.bold },
+  medium: { fontFamily: FontWeights.medium },
+  mt4: { marginTop: 4 },
+  py16: { paddingVertical: 16 },
+  dim: { opacity: 0.5 },
+  card: { borderWidth: 1, borderRadius: Radii.lg, padding: 14, gap: 6 },
+  pill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: Radii.sm },
+  iconBtn: { padding: 6, minWidth: 32, minHeight: 32, alignItems: 'center', justifyContent: 'center' },
+  empty: { alignItems: 'center', paddingVertical: 48, borderWidth: 1, borderRadius: Radii.lg },
+  errBox: { backgroundColor: 'rgba(239,68,68,0.12)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radii.sm },
+  two: { gap: 16 },
+  twoWide: { flexDirection: 'row' },
+  label: { fontSize: 13, lineHeight: 18, fontFamily: FontWeights.medium, marginBottom: 4 },
+  pickBtn: { minHeight: 44, borderWidth: 1, borderRadius: Radii.sm, paddingHorizontal: 14, paddingVertical: 10, justifyContent: 'center' },
+  search: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, borderWidth: 1, borderRadius: Radii.md, paddingHorizontal: 12 },
+  searchInput: { flex: 1, fontSize: 14, paddingVertical: 8 },
+  pickRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingHorizontal: 12, minHeight: 44, borderRadius: Radii.sm },
+  pickLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  checkbox: { width: 16, height: 16, borderRadius: 4, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
 });
