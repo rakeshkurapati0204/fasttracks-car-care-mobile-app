@@ -4675,3 +4675,10 @@ export async function downloadCustomersCsv(filters: {
   }
   return { uri: result.uri, filename };
 }
+
+// POST /auth/forgot-password — public. Same body as the dashboard's forgot-password page; the backend always answers
+// success for an unknown username (no enumeration) and sends the reset link, which opens the dashboard's reset page.
+export async function requestPasswordReset(username: string) {
+  const { data } = await api.post<{ success: boolean; message: string; noContact?: boolean }>('/auth/forgot-password', { username });
+  return data;
+}
