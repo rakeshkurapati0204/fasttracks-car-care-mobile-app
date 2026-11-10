@@ -150,7 +150,7 @@ export const SCREEN_REGISTRY: ScreenMeta[] = [
   },
   {
     id: 'hr-reports',
-    title: 'HR Reports',
+    title: 'Reports',
     dashboardRoute: '/dashboard/hr-reports',
     purpose: 'Export Hiring, Onboarding, Attendance or Discipline data for a date range as PDF or Excel.',
     endpoints: ['GET /hr-reports/hiring', 'GET /hr-reports/onboarding', 'GET /hr-reports/attendance', 'GET /hr-reports/discipline'],

@@ -94,6 +94,18 @@ export default function HrReportsScreen() {
   const rows: (typeof CATEGORIES)[] = [];
   for (let i = 0; i < CATEGORIES.length; i += cols) rows.push(CATEGORIES.slice(i, i + cols));
 
+  // Same height as the DateField box (44 + its 1px borders), so the bottoms line up exactly.
+  const pdfButton = (full: boolean) => (
+    <Button variant="secondary" fullWidth={full} style={styles.btn} loading={dlLoading === `${category}-pdf`} disabled={invalidRange || dlLoading !== null} onPress={() => handleDownload('pdf')}>
+      Download PDF
+    </Button>
+  );
+  const excelButton = (full: boolean) => (
+    <Button variant="secondary" fullWidth={full} style={styles.btn} loading={dlLoading === `${category}-excel`} disabled={invalidRange || dlLoading !== null} onPress={() => handleDownload('excel')}>
+      Download Excel
+    </Button>
+  );
+
   return (
     <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <Stack.Screen options={{ title: 'Reports' }} />
@@ -129,16 +141,26 @@ export default function HrReportsScreen() {
           </View>
 
           <Card padding="lg">
-            <View style={styles.controls}>
-              <View style={styles.date}><DateField label="From" value={from} onChange={setFrom} /></View>
-              <View style={styles.date}><DateField label="To" value={to} onChange={setTo} /></View>
-              <Button variant="secondary" loading={dlLoading === `${category}-pdf`} disabled={invalidRange || dlLoading !== null} onPress={() => handleDownload('pdf')}>
-                Download PDF
-              </Button>
-              <Button variant="secondary" loading={dlLoading === `${category}-excel`} disabled={invalidRange || dlLoading !== null} onPress={() => handleDownload('excel')}>
-                Download Excel
-              </Button>
-            </View>
+            {wide ? (
+              // One line: From | To | Download PDF | Download Excel, bottom-aligned (wraps only if the width can't fit all four).
+              <View style={styles.controlsWide}>
+                <View style={styles.dateFixed}><DateField label="From" value={from} onChange={setFrom} /></View>
+                <View style={styles.dateFixed}><DateField label="To" value={to} onChange={setTo} /></View>
+                {pdfButton(false)}
+                {excelButton(false)}
+              </View>
+            ) : (
+              <View style={styles.controlsNarrow}>
+                <View style={styles.pair}>
+                  <View style={styles.half}><DateField label="From" value={from} onChange={setFrom} /></View>
+                  <View style={styles.half}><DateField label="To" value={to} onChange={setTo} /></View>
+                </View>
+                <View style={styles.pair}>
+                  <View style={styles.half}>{pdfButton(true)}</View>
+                  <View style={styles.half}>{excelButton(true)}</View>
+                </View>
+              </View>
+            )}
             {invalidRange ? (
               <ThemedText style={[styles.small, styles.msg, { color: BAD }]}>Pick a valid range — &quot;From&quot; must not be after &quot;To&quot;.</ThemedText>
             ) : null}
@@ -164,7 +186,11 @@ const styles = StyleSheet.create({
   small: { fontSize: 12, lineHeight: 18 },
   cardTitle: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold },
   cardText: { fontSize: 12, lineHeight: 18, marginTop: 4 },
-  controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 },
-  date: { flexGrow: 1, flexBasis: 140, minWidth: 140, maxWidth: 220 },
+  controlsWide: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 },
+  dateFixed: { width: 160 },
+  controlsNarrow: { gap: 12 },
+  pair: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  half: { flex: 1, minWidth: 0 },
+  btn: { height: 46 },
   msg: { marginTop: 8 },
 });

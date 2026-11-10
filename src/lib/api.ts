@@ -4644,3 +4644,34 @@ export async function fetchEmployeeTimesheetEntries(userId: string) {
   const { data } = await api.get<ApiEnvelope<{ timesheets: EmployeeTimesheetEntry[] }>>('/timesheets', { params: { userId, limit: 200 } });
   return data.data?.timesheets ?? [];
 }
+
+// All Customers → "Download CSV" (dashboard customers/page.tsx downloadCsv): GET /crm/customers/export with the
+// same filters as the list (fromDate, toDate, source, search + searchBy). The server builds the CSV (one row per
+// visit) and allows OWNER / STORE_MANAGER / HR / CASHIER only. Saved to the cache with the dashboard's file name.
+export async function downloadCustomersCsv(filters: {
+  fromDate?: string;
+  toDate?: string;
+  source?: string;
+  search?: string;
+  searchBy?: string;
+}): Promise<{ uri: string; filename: string }> {
+  const token = await tokenStorage.get();
+  const q: string[] = [];
+  if (filters.fromDate) q.push(`fromDate=${encodeURIComponent(filters.fromDate)}`);
+  if (filters.toDate) q.push(`toDate=${encodeURIComponent(filters.toDate)}`);
+  if (filters.source) q.push(`source=${encodeURIComponent(filters.source)}`);
+  if (filters.search?.trim()) {
+    q.push(`search=${encodeURIComponent(filters.search.trim())}`);
+    q.push(`searchBy=${encodeURIComponent(filters.searchBy ?? 'name')}`);
+  }
+  const filename = `customers_jobs_${filters.fromDate || 'all'}_to_${filters.toDate || 'today'}.csv`;
+  const dest = `${FileSystem.cacheDirectory}${filename}`;
+  const result = await FileSystem.downloadAsync(`${API_BASE_URL}/crm/customers/export${q.length ? `?${q.join('&')}` : ''}`, dest, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (result.status < 200 || result.status >= 300) {
+    await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    throw new Error(`CSV export failed (error ${result.status}).`);
+  }
+  return { uri: result.uri, filename };
+}

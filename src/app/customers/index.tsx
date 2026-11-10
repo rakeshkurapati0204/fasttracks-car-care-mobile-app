@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, FlatList, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DateField } from '@/components/call-tracker/date-field';
@@ -21,6 +22,7 @@ import { FontWeights, Radii, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
   deleteCustomer,
+  downloadCustomersCsv,
   fetchActiveJobCards,
   fetchBoardJobCards,
   fetchCrmCustomerPage,
@@ -38,6 +40,8 @@ import type { BoardStage, CjJobCard, CrmCustomerRow, CrmSearchBy, HandledByEmplo
 
 // Dashboard ALLOWED_ROLES; anyone else needs the customers_jobs tab granted.
 const ALLOWED_ROLES = ['OWNER', 'STORE_MANAGER', 'SALES'];
+// Who may export the All Customers CSV (dashboard check, and the server's EXPORT_ROLES).
+const CSV_ROLES = ['OWNER', 'STORE_MANAGER', 'HR', 'CASHIER'];
 const LIMIT = 30;
 // Active jobs and board cards are rendered 20 at a time (filters and counts
 // still run over the full set); the rest loads on scroll / "Show more".
@@ -99,6 +103,7 @@ export default function CustomersScreen() {
   const [deleteTarget, setDeleteTarget] = useState<CrmCustomerRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [crmReload, setCrmReload] = useState(0);
+  const [csvLoading, setCsvLoading] = useState(false);
 
   // Status board
   const [boardJobs, setBoardJobs] = useState<CjJobCard[]>([]);
@@ -298,6 +303,19 @@ export default function CustomersScreen() {
 
   const totalPages = Math.ceil(crmTotal / LIMIT);
   const crmFiltersActive = !!(crmFromDate || crmToDate || crmSource);
+  // Dashboard downloadCsv: same filters as the list, built by the server, saved to the cache, then the share sheet.
+  const downloadCsv = async () => {
+    setCsvLoading(true);
+    try {
+      const { uri } = await downloadCustomersCsv({ fromDate: crmFromDate, toDate: crmToDate, source: crmSource, search: crmSearch, searchBy: crmSearchBy });
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'text/csv', dialogTitle: 'Customers & Jobs CSV', UTI: 'public.comma-separated-values-text' });
+      else Alert.alert('CSV saved', 'Sharing isn’t available on this device.');
+    } catch {
+      Alert.alert('CSV download failed. Please try again.');
+    } finally {
+      setCsvLoading(false);
+    }
+  };
   const clearJobFilters = () => { setJobSearch(''); setHandledByFilter(''); setJobStatusFilter(''); setJobFromDate(''); setJobToDate(''); };
 
   const tabOptions = [
@@ -379,6 +397,11 @@ export default function CustomersScreen() {
             </View>
             {crmFiltersActive ? <Button size="sm" variant="secondary" onPress={() => { setCrmFromDate(''); setCrmToDate(''); setCrmSource(''); setCrmPage(1); }}>Clear</Button> : null}
             {crmFiltersActive ? <ThemedText themeColor="textMuted" style={styles.count}>{crmTotal} customers</ThemedText> : null}
+            {CSV_ROLES.includes(user?.role ?? '') ? (
+              <View style={styles.csvBtn}>
+                <Button size="sm" disabled={csvLoading} onPress={downloadCsv}>{csvLoading ? 'Preparing…' : '⬇ Download CSV'}</Button>
+              </View>
+            ) : null}
           </View>
           {!wide && !crmLoading && customers.length > 0 ? <View style={[styles.tableCap, { borderColor: theme.border }]} /> : null}
           {wide && !crmLoading && customers.length > 0 ? (
@@ -472,7 +495,7 @@ export default function CustomersScreen() {
                 <ThemedText themeColor="textMuted" style={styles.emptyTitle}>No active jobs right now</ThemedText>
                 <Button icon="add" onPress={() => router.push('/more/new-entry' as never)}>New Entry</Button>
               </View>
-            ) : empty('No jobs match your filters', <Button variant="ghost" onPress={() => { setJobSearch(''); setJobFromDate(''); setJobToDate(''); }}>Clear filters</Button>)
+            ) : empty('No jobs match your filters', <Button variant="ghost" onPress={clearJobFilters}>Clear filters</Button>)
           }
           ListFooterComponent={filteredJobs.length > visibleJobs.length ? <ThemedText themeColor="textMuted" style={styles.more}>Showing {visibleJobs.length} of {filteredJobs.length} — scroll for more</ThemedText> : null}
         />
@@ -542,6 +565,7 @@ const styles = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 28, paddingHorizontal: 10, borderRadius: Radii.pill },
   chipText: { color: '#fff', fontSize: 12, lineHeight: 16 },
   count: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.medium },
+  csvBtn: { marginLeft: 'auto' },
   sourceSelect: { minWidth: 170, flexGrow: 1, flexBasis: 170 },
   skelWrap: { gap: Spacing.three },
   skelCard: { borderRadius: Radii.lg },
