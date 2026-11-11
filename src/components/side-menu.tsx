@@ -2,9 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router, usePathname } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import { Alert, Keyboard, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { hasMenuIcon, MenuIcon } from '@/components/menu-icon';
@@ -15,28 +15,14 @@ import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth-context';
 import { avatarColor } from '@/lib/call-format';
 import { initials } from '@/lib/call-tracker-format';
-import { DOCKED_WIDTH, useDrawer, useIsDocked } from '@/lib/drawer-context';
+import { useDrawer, useIsDocked } from '@/lib/drawer-context';
 import { usePermissions } from '@/lib/permissions-context';
+import { ROLE_LABELS } from '@/lib/labels';
 import { sideNavAction } from '@/lib/side-nav';
+import { fitWidth, isRail, liveWidth, maxFor, nudgeWidth, settleWidth, SIDEBAR_DEFAULT } from '@/lib/sidebar-width';
 
-// Docked width lives in drawer-context (screens subtract it from their own width).
+// The docked width is chosen by the person (drag the edge, or fold to a rail) and lives in drawer-context; screens subtract it from their own width.
 const OVERLAY_WIDTH = 256;
-
-// Dashboard ROLE_LABELS.
-const ROLE_LABELS: Record<string, string> = {
-  OWNER: 'Founder',
-  STORE_MANAGER: 'Store Manager',
-  SALES: 'Sales',
-  TECHNICIAN: 'Technician',
-  TECH_TEAM: 'Tech Team',
-  SOCIAL_MEDIA: 'Social Media',
-  STAFF: 'Staff',
-  INVENTORY_MANAGER: 'Inventory Manager',
-  ACCOUNTING: 'Accounting',
-  HR: 'HR',
-  HOUSEKEEPING: 'Housekeeping',
-  CASHIER: 'Cashier',
-};
 
 // Dashboard navItems: the collapsible "Templates" group and the NEW badge.
 const NAV_GROUP_OF: Record<string, string> = { competencies: 'templates', 'onboarding-templates': 'templates' };
@@ -88,6 +74,22 @@ function setProgress(p: SharedValue<number>, value: number) {
   p.value = value;
 }
 
+// The sidebar drag, as module-level worklets for the same reason.
+function beginDrag(live: SharedValue<number>, start: SharedValue<number>) {
+  'worklet';
+  start.value = live.value;
+}
+function dragBy(live: SharedValue<number>, start: SharedValue<number>, dx: number, max: number) {
+  'worklet';
+  live.value = liveWidth(start.value + dx, max);
+}
+function endDrag(live: SharedValue<number>, commit: (w: number) => void, max: number) {
+  'worklet';
+  const w = settleWidth(live.value, max);
+  live.value = withTiming(w, { duration: 150 });
+  runOnJS(commit)(w);
+}
+
 function animateTo(p: SharedValue<number>, to: number, onDone?: () => void) {
   'worklet';
   p.value = withTiming(to, { duration: 240 }, (finished) => {
@@ -97,7 +99,8 @@ function animateTo(p: SharedValue<number>, to: number, onDone?: () => void) {
 }
 
 // The sidebar itself: solid panel, logo, search, nav, fixed user / theme / logout block.
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+// compact = the icon-only rail. onToggle = fold / unfold button (only the docked sidebar has one).
+function SidebarContent({ onNavigate, compact = false, onToggle }: { onNavigate?: () => void; compact?: boolean; onToggle?: () => void }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
@@ -146,6 +149,20 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     const active = item.id === activeId;
     const color = active ? theme.primary : theme.textSecondary;
     const badge = NAV_BADGES[item.id];
+    if (compact) {
+      return (
+        <Pressable
+          key={item.id}
+          onPress={() => go(item)}
+          accessibilityRole="button"
+          accessibilityLabel={item.title}
+          accessibilityState={{ selected: active }}
+          style={({ pressed }) => [styles.rowCompact, active && { backgroundColor: withAlpha(theme.primary, 0.12) }, pressed && !active && { backgroundColor: theme.background }]}>
+          <MenuIcon id={item.id} color={color} size={20} />
+          {badge ? <View style={[styles.dot, { backgroundColor: theme.primary }]} /> : null}
+        </Pressable>
+      );
+    }
     return (
       <Pressable
         key={item.id}
@@ -169,12 +186,24 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <View style={[styles.panel, { backgroundColor: theme.surface, borderRightColor: theme.border, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       {/* Logo */}
-      <View style={[styles.logoRow, { borderBottomColor: theme.border }]}>
-        <Image source={require('@/../assets/images/brand-logo-icon.png')} style={styles.logoIcon} contentFit="contain" />
-        <Image source={require('@/../assets/images/brand-logo-wordmark.png')} style={styles.wordmark} contentFit="contain" contentPosition="left" />
-      </View>
+      {compact ? (
+        <Pressable onPress={onToggle} accessibilityRole="button" accessibilityLabel="Expand sidebar" style={[styles.logoRowCompact, { borderBottomColor: theme.border }]}>
+          <Image source={require('@/../assets/images/brand-logo-icon.png')} style={styles.logoIcon} contentFit="contain" />
+        </Pressable>
+      ) : (
+        <View style={[styles.logoRow, { borderBottomColor: theme.border }]}>
+          <Image source={require('@/../assets/images/brand-logo-icon.png')} style={styles.logoIcon} contentFit="contain" />
+          <Image source={require('@/../assets/images/brand-logo-wordmark.png')} style={styles.wordmark} contentFit="contain" contentPosition="left" />
+          {onToggle ? (
+            <Pressable onPress={onToggle} accessibilityRole="button" accessibilityLabel="Collapse sidebar" hitSlop={8} style={styles.foldButton}>
+              <Ionicons name="chevron-back" size={18} color={theme.textMuted} />
+            </Pressable>
+          ) : null}
+        </View>
+      )}
 
       {/* Search */}
+      {compact ? null : (
       <View style={[styles.searchWrap, { borderBottomColor: theme.border }]}>
         <View style={[styles.search, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <Ionicons name="search" size={14} color={theme.textMuted} />
@@ -195,13 +224,16 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           ) : null}
         </View>
       </View>
+      )}
 
       {/* Navigation */}
-      <ScrollView style={styles.nav} contentContainerStyle={styles.navContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+      <ScrollView style={styles.nav} contentContainerStyle={[styles.navContent, compact && styles.navContentCompact]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
         {filtered.length === 0 ? (
           <ThemedText themeColor="textMuted" style={styles.noMatch}>No matches</ThemedText>
         ) : nodes.map((node) => {
           if (node.type === 'item') return renderItem(node.item);
+          // The rail has no room for a group heading: its entries are simply listed.
+          if (compact) return <View key={node.key} style={styles.group}>{node.items.map((item) => renderItem(item))}</View>;
           // Never hide where you currently are, even if the group was collapsed.
           const expanded = node.items.some((i) => i.id === activeId) || !collapsed[node.key];
           return (
@@ -221,15 +253,17 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </ScrollView>
 
       {/* Bottom section: fixed, never scrolls */}
-      <View style={[styles.bottom, { borderTopColor: theme.border }]}>
-        <View style={[styles.userCard, { backgroundColor: theme.backgroundElement }]}>
+      <View style={[styles.bottom, compact && styles.bottomCompact, { borderTopColor: theme.border }]}>
+        <View style={[styles.userCard, compact && styles.userCardCompact, { backgroundColor: theme.backgroundElement }]} accessibilityLabel={`${name}, ${user?.role ? (ROLE_LABELS[user.role] ?? user.role) : ''}`}>
           <View style={[styles.avatar, { backgroundColor: avatarColor(name) }]}>
             <ThemedText style={styles.avatarText}>{user ? initials(name) : 'U'}</ThemedText>
           </View>
-          <View style={styles.userText}>
-            <ThemedText style={styles.userName} numberOfLines={1}>{name}</ThemedText>
-            <ThemedText themeColor="textMuted" style={styles.userRole}>{user?.role ? (ROLE_LABELS[user.role] ?? user.role) : '—'}</ThemedText>
-          </View>
+          {compact ? null : (
+            <View style={styles.userText}>
+              <ThemedText style={styles.userName} numberOfLines={1}>{name}</ThemedText>
+              <ThemedText themeColor="textMuted" style={styles.userRole}>{user?.role ? (ROLE_LABELS[user.role] ?? user.role) : '—'}</ThemedText>
+            </View>
+          )}
         </View>
 
         {/* The app is light-only today (use-color-scheme.ts returns 'light' on purpose), so
@@ -237,9 +271,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         <Pressable
           onPress={() => Alert.alert('Dark mode', "Dark mode isn't available in the app yet.")}
           accessibilityRole="button"
-          style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.background }]}>
+          accessibilityLabel="Dark Mode"
+          style={({ pressed }) => [compact ? styles.rowCompact : styles.row, pressed && { backgroundColor: theme.background }]}>
           <Ionicons name="moon-outline" size={20} color={theme.textSecondary} />
-          <ThemedText style={[styles.rowLabel, { color: theme.textSecondary }]}>Dark Mode</ThemedText>
+          {compact ? null : <ThemedText style={[styles.rowLabel, { color: theme.textSecondary }]}>Dark Mode</ThemedText>}
         </Pressable>
 
         <Pressable
@@ -248,9 +283,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             signOut();
           }}
           accessibilityRole="button"
-          style={({ pressed }) => [styles.row, pressed && { backgroundColor: withAlpha(theme.danger, 0.1) }]}>
+          accessibilityLabel="Logout"
+          style={({ pressed }) => [compact ? styles.rowCompact : styles.row, pressed && { backgroundColor: withAlpha(theme.danger, 0.1) }]}>
           <MenuIcon id="sign-out" color={theme.danger} size={20} />
-          <ThemedText style={[styles.rowLabel, { color: theme.danger }]}>Logout</ThemedText>
+          {compact ? null : <ThemedText style={[styles.rowLabel, { color: theme.danger }]}>Logout</ThemedText>}
         </Pressable>
       </View>
     </View>
@@ -270,11 +306,57 @@ export function SideMenu({ variant }: { variant: 'docked' | 'overlay' }) {
   return docked ? null : <OverlaySidebar />;
 }
 
+// The always-visible sidebar beside the content. Its right edge is a drag handle: wider, narrower, or fold it into an icon-only rail. The width is
+// remembered. Double-tap the edge to get the default width back. Screen readers get the same through increment / decrement.
 function DockedSidebar() {
+  const { sidebarWidth, setSidebarWidth, toggleSidebar } = useDrawer();
+  const theme = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
+  const maxW = maxFor(windowWidth);
+  const shown = fitWidth(sidebarWidth, windowWidth);
+  const live = useSharedValue(shown);
+  const start = useSharedValue(shown);
+  const [compact, setCompact] = useState(isRail(shown));
+
+  // A change that did not come from the finger (the fold button, a saved width loading, the window turning): glide to it.
+  useEffect(() => {
+    animateTo(live, shown);
+  }, [shown, live]);
+
+  // Narrower than ~150 the labels cannot fit: switch to the icon-only layout while the finger is still down.
+  useAnimatedReaction(
+    () => isRail(live.value),
+    (now, prev) => {
+      if (now !== prev) runOnJS(setCompact)(now);
+    },
+  );
+
+  const pan = Gesture.Pan()
+    .minDistance(2)
+    .onBegin(() => beginDrag(live, start))
+    .onUpdate((e) => dragBy(live, start, e.translationX, maxW))
+    .onEnd(() => endDrag(live, setSidebarWidth, maxW));
+  const reset = Gesture.Tap().numberOfTaps(2).onEnd(() => { runOnJS(setSidebarWidth)(SIDEBAR_DEFAULT); });
+  const gesture = Gesture.Race(pan, reset);
+
+  const panelStyle = useAnimatedStyle(() => ({ width: live.value }));
+
   return (
-    <View style={{ width: DOCKED_WIDTH, zIndex: 1 }}>
-      <SidebarContent />
-    </View>
+    <Animated.View style={[styles.docked, panelStyle]}>
+      <SidebarContent compact={compact} onToggle={toggleSidebar} />
+      <GestureDetector gesture={gesture}>
+        <View
+          style={styles.resizeHandle}
+          accessible
+          accessibilityRole="adjustable"
+          accessibilityLabel="Resize sidebar"
+          accessibilityValue={{ text: compact ? 'Collapsed' : `${shown} points wide` }}
+          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+          onAccessibilityAction={(e) => setSidebarWidth(Math.min(maxW, nudgeWidth(shown, e.nativeEvent.actionName === 'increment' ? 1 : -1)))}>
+          <View style={[styles.grip, { backgroundColor: theme.border }]} />
+        </View>
+      </GestureDetector>
+    </Animated.View>
   );
 }
 
@@ -331,8 +413,14 @@ function OverlaySidebar() {
 const styles = StyleSheet.create({
   backdrop: { backgroundColor: 'rgba(0,0,0,0.6)' },
   overlayPanel: { position: 'absolute', left: 0, top: 0, bottom: 0 },
+  docked: { zIndex: 1, overflow: 'hidden' },
+  // 12 dp wide strip on the sidebar's right edge (inside it: a child outside its parent is not touchable on Android).
+  resizeHandle: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 12, alignItems: 'center', justifyContent: 'center', zIndex: 5, ...Platform.select({ web: { cursor: 'col-resize' } as object, default: {} }) },
+  grip: { width: 3, height: 40, borderRadius: 2 },
   panel: { flex: 1, borderRightWidth: 1 },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth },
+  logoRowCompact: { alignItems: 'center', justifyContent: 'center', paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth },
+  foldButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   logoIcon: { width: 32, height: 32 },
   wordmark: { flex: 1, height: 18, maxWidth: 140 },
   searchWrap: { paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth },
@@ -340,6 +428,9 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 12, paddingVertical: 0 },
   nav: { flex: 1 },
   navContent: { paddingHorizontal: 12, paddingVertical: 16, gap: 4 },
+  navContentCompact: { paddingHorizontal: 8 },
+  rowCompact: { height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: Radii.sm },
+  dot: { position: 'absolute', top: 9, right: 12, width: 7, height: 7, borderRadius: 4 },
   noMatch: { fontSize: 12, textAlign: 'center', paddingVertical: 16 },
   group: { gap: 4 },
   row: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, borderRadius: Radii.sm },
@@ -349,6 +440,8 @@ const styles = StyleSheet.create({
   badge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   badgeText: { fontSize: 12, lineHeight: 16, fontFamily: FontWeights.semiBold },
   bottom: { paddingHorizontal: 12, paddingVertical: 16, gap: 8, borderTopWidth: StyleSheet.hairlineWidth },
+  bottomCompact: { paddingHorizontal: 8, alignItems: 'stretch' },
+  userCardCompact: { justifyContent: 'center', padding: 8 },
   userCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: Radii.md },
   avatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 12, lineHeight: 16, fontFamily: FontWeights.bold },
