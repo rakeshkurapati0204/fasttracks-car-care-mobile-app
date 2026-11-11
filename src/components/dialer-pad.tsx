@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, TextInput, Vibration, View } from 'react-native';
+import { ActivityIndicator, AppState, Keyboard, Platform, Pressable, StyleSheet, TextInput, Vibration, View } from 'react-native';
 
 import { InCallModal } from '@/components/call/in-call-modal';
 import { ThemedText } from '@/components/themed-text';
@@ -186,12 +186,15 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
               setInput((cur) => ({ ...cur, start: toDigit(start, cur.digits.length), end: toDigit(end, cur.digits.length) }));
             }}
             onChangeText={(text) => edit(applyFieldText(input, text))}
+            // The on-screen keypad is the keyboard: the system keyboard must never open over it (it covered the keypad, the Call button and
+            // the tabs). inputMode "none" + showSoftInputOnFocus keep it closed; onFocus dismisses it if a device opens it anyway.
+            inputMode="none"
             showSoftInputOnFocus={false}
+            onFocus={() => Keyboard.dismiss()}
             autoFocus
             caretHidden={false}
             cursorColor={theme.primary}
             selectionColor={theme.primary}
-            keyboardType="phone-pad"
             autoCorrect={false}
             autoComplete="off"
             importantForAutofill="no"

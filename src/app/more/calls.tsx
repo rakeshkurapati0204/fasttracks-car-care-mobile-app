@@ -12,6 +12,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useIsDocked } from '@/lib/drawer-context';
 import { fetchCallCapabilities, fetchCallLog, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { groupLabel } from '@/lib/call-format';
@@ -39,6 +40,7 @@ const TABS: { key: CallsTab; label: string; icon: 'keypad' | 'time' | 'people' |
 
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
+  const docked = useIsDocked();
   const theme = useTheme();
   const router = useRouter();
   const [tab, setTab] = useState<CallsTab>('dialer');
@@ -124,7 +126,8 @@ export default function CallsScreen() {
       <Stack.Screen
         options={{
           title: 'Calls',
-          headerLeft: () => (
+          // Beside the docked sidebar Calls is a top-level screen (like the others), so there is no back arrow.
+          headerLeft: docked ? () => null : () => (
             <Pressable
               onPress={() => (router.canGoBack() ? router.back() : router.replace('/' as never))}
               accessibilityLabel="Go back"
