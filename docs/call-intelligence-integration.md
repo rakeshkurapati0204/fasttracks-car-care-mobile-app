@@ -11,26 +11,18 @@ mobile app  --JWT-->  Node/Express backend (dashboard repo)  --bearer token-->  
 ```
 
 - The app only talks to the existing backend, with the existing axios client and login. It never sees the service URL or its token.
-- The service is `poc/call-intelligence-python` in the `fasttracks-dashboard` repo (`docs/DASHBOARD_API.md` there). It is read-only for this
+- The service is `services/call-intelligence` in the `fasttracks-dashboard` repo (`docs/DASHBOARD_API.md` there). It is read-only for this
   purpose: `GET /api/recordings`, `GET /api/recordings/{id}`, `GET /api/recordings/{id}/audio`, all with `Authorization: Bearer <DASHBOARD_API_TOKEN>`.
 - Exotel and Sarvam credentials stay in the service's own `.env`. Nothing secret goes into this app.
 
-## The Call Intelligence service is bundled in this repo
+## Where the service lives
 
-`services/call-intelligence/` is a copy of the Python PoC (Exotel callbacks, recording retrieval, Sarvam transcription with SALESMAN/CUSTOMER
-channel labels, structured summary, cost tracking, mock/demo mode). It is NOT part of the app bundle (Metro only bundles what the app imports) and
-its `.venv`, `.env*`, `data*` and real salesperson numbers are git-ignored. Mock-only commands (no real Exotel, no Sarvam, no credits):
+The Python service is server code, so it lives only in the `fasttracks-dashboard` repo at `services/call-intelligence/`, next to the backend
+that runs it. This app holds no copy of it. Setup, tests and the mock stack (`ci:setup`, `ci:test`, `ci:stack`, `ci:e2e` used to be npm
+scripts here) are in that folder's `README.md`; see also `docs/call-tracker-architecture.md` in the dashboard repo for where every part of
+the call tracker lives.
 
-```bash
-npm run ci:setup   # once: virtual environment + dependencies inside services/call-intelligence
-npm run ci:test    # the service's tests
-npm run ci:stack   # mock Exotel + fake Sarvam + the read API on port 4437 (writes /tmp/call-intel-stack.json)
-npm run ci:e2e     # 20 scenarios against that stack: outgoing, incoming, duplicates, retry, unanswered
-```
-
-Real provider use stays in that folder's own `.env` (never committed) and its CLI (`README.md` there), and always needs explicit approval.
-
-## Backend routes (dashboard repo, branch `feature/call-intelligence`, not committed yet)
+## Backend routes (dashboard repo, `main`)
 
 `backend/src/routes/callIntelligence.ts`, mounted at `/api/v1/call-intelligence`, behind `verifyToken` and `requireRoles('OWNER')`. Read-only proxy to the service:
 
