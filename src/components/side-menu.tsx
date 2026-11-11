@@ -17,6 +17,7 @@ import { avatarColor } from '@/lib/call-format';
 import { initials } from '@/lib/call-tracker-format';
 import { DOCKED_WIDTH, useDrawer, useIsDocked } from '@/lib/drawer-context';
 import { usePermissions } from '@/lib/permissions-context';
+import { sideNavAction } from '@/lib/side-nav';
 
 // Docked width lives in drawer-context (screens subtract it from their own width).
 const OVERLAY_WIDTH = 256;
@@ -131,9 +132,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     return best?.id ?? null;
   }, [items, pathname]);
 
+  const docked = useIsDocked();
   const go = (item: ScreenMeta) => {
     onNavigate?.();
-    router.push(routeOf(item) as never);
+    const href = routeOf(item);
+    const action = sideNavAction(pathname, href, docked);
+    if (action === 'none') return; // already on this screen: a second copy would only pile up in the back stack
+    if (action === 'replace') router.replace(href as never);
+    else router.push(href as never);
   };
 
   const renderItem = (item: ScreenMeta, indent = false) => {
@@ -266,7 +272,7 @@ export function SideMenu({ variant }: { variant: 'docked' | 'overlay' }) {
 
 function DockedSidebar() {
   return (
-    <View style={{ width: DOCKED_WIDTH }}>
+    <View style={{ width: DOCKED_WIDTH, zIndex: 1 }}>
       <SidebarContent />
     </View>
   );

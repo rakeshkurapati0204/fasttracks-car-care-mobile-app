@@ -21,6 +21,7 @@ import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { DrawerProvider, useIsDocked } from '@/lib/drawer-context';
 import { PermissionsProvider } from '@/lib/permissions-context';
 import { runContactSync } from '@/lib/contact-sync-runner';
+import { stackAnimation } from '@/lib/side-nav';
 import { subscribeToNotificationTaps } from '@/lib/push-notifications';
 
 SplashScreen.preventAutoHideAsync();
@@ -82,8 +83,9 @@ function RootNavigator() {
     <View style={{ flex: 1, flexDirection: 'row' }}>
       {/* Wide screens: the sidebar is docked on the left and the screens sit to its right. */}
       {isAuthenticated && docked ? <SideMenu variant="docked" /> : null}
-      <View style={{ flex: 1 }}>
-    <Stack>
+      {/* overflow hidden: whatever a screen draws while it transitions can never spill over the sidebar. */}
+      <View style={{ flex: 1, overflow: 'hidden' }}>
+    <Stack screenOptions={{ animation: stackAnimation(docked) }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       {/* Forgot Password is public and not guarded either way, so it never blocks a signed-in user. */}
       <Stack.Screen name="forgot-password" options={{ headerShown: false }} />
