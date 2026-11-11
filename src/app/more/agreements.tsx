@@ -31,6 +31,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import type { AgreementDetail, AgreementListItem, EmployeeListItem } from '@/types/api';
 
+import { humanize } from '@/lib/labels';
 // ADMIN_ROLES=[OWNER,STORE_MANAGER,HR] — re-verified 2026-09-21 against
 // backend/src/routes/agreements.ts: every route (list, detail, preview,
 // create, sign-owner, sign-employee, void, pdf) gates on the identical
@@ -254,7 +255,7 @@ export default function AgreementsScreen() {
         {notice && <ThemedText style={styles.notice}>{notice}</ThemedText>}
 
         <Pressable onPress={() => (showCreate ? setShowCreate(false) : onOpenCreate())} style={styles.newButton}>
-          <ThemedText style={styles.buttonLabel}>{showCreate ? 'Cancel' : '+ New agreement'}</ThemedText>
+          <ThemedText style={styles.buttonLabel}>{showCreate ? 'Cancel' : 'New agreement'}</ThemedText>
         </Pressable>
 
         {showCreate && (
@@ -324,7 +325,7 @@ export default function AgreementsScreen() {
                     {a.agreementType} · {a.designation ?? a.role}
                   </ThemedText>
                 </View>
-                <ThemedText type="small" style={{ color: statusColor(a.status) }}>{a.status}</ThemedText>
+                <ThemedText type="small" style={{ color: statusColor(a.status) }}>{humanize(a.status)}</ThemedText>
               </ThemedView>
             </Pressable>
           ))

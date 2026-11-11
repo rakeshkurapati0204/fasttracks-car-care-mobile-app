@@ -43,15 +43,13 @@ const EMPTY_STATS: ConversationStats = {
 };
 
 function InstagramPlaceholder() {
-  const theme = useTheme();
   return (
     <View style={styles.insta}>
       <View style={[styles.instaIcon, { backgroundColor: '#dc2743' }]}><Ionicons name="logo-instagram" size={32} color="#ffffff" /></View>
-      <ThemedText style={styles.instaTitle}>Instagram DMs — Coming Soon</ThemedText>
+      <ThemedText style={styles.instaTitle}>Instagram messages</ThemedText>
       <ThemedText themeColor="textMuted" style={styles.instaBody}>
-        Connect your Instagram Business account to monitor DMs and enquiries from Instagram directly in the dashboard.
+        Instagram is not connected yet. Once it is, enquiries from your Instagram messages will show up here.
       </ThemedText>
-      <View style={styles.instaPill}><ThemedText style={[styles.instaPillText, { color: theme.primary }]}>Integration coming in a future update</ThemedText></View>
     </View>
   );
 }
@@ -114,7 +112,7 @@ export default function ConversationsScreen() {
       if (numberFilter !== 'ALL') params.staffPhoneNumberId = numberFilter;
       setConversations(await fetchConversationList(params));
     } catch (e: unknown) {
-      if (!quiet) setError(getErrorMessage(e, 'Failed to load conversations.'));
+      if (!quiet) setError(getErrorMessage(e, "Couldn't load conversations. Check your connection and try again."));
     } finally {
       setLoading(false);
     }
@@ -202,7 +200,7 @@ export default function ConversationsScreen() {
         </View>
         <View style={styles.topBtns}>
           {isOwner ? <Button variant="outline" size="sm" onPress={() => setShowManage(true)}>Manage Numbers</Button> : null}
-          <Button size="sm" onPress={() => setShowNew(true)}>+ New</Button>
+          <Button size="sm" icon="add" onPress={() => setShowNew(true)}>New conversation</Button>
         </View>
       </View>
       {wide ? (

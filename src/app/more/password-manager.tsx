@@ -126,7 +126,7 @@ export default function PasswordManagerScreen() {
     try {
       setPasswords(await fetchPasswordEntries());
     } catch {
-      setPwdError('Failed to load passwords');
+      setPwdError("Couldn't load passwords. Check your connection and try again.");
     }
   }, []);
 
@@ -135,7 +135,7 @@ export default function PasswordManagerScreen() {
     try {
       setCards(await fetchCardEntries());
     } catch {
-      setCardError('Failed to load cards');
+      setCardError("Couldn't load cards. Check your connection and try again.");
     }
   }, []);
 

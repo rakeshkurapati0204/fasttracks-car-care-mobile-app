@@ -58,7 +58,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "node --test src/lib/call-intelligence.test.ts src/lib/contacts.test.ts src/lib/contact-sync.test.ts src/lib/call-search.test.ts src/lib/dial.test.ts src/lib/dial-input.test.ts src/lib/side-nav.test.ts src/lib/voip/voip.test.ts src/lib/voip/voip-ccm.test.ts src/lib/voip/native-engine.test.ts plugins/with-exotel-voice.test.js plugins/with-fasttracks-dialer.test.js scripts/enable-native-modules.test.js scripts/check-trial-build.test.js src/lib/auto-answer/arm.test.ts"
+    "test": "node --test src/lib/call-intelligence.test.ts src/lib/contacts.test.ts src/lib/contact-sync.test.ts src/lib/call-search.test.ts src/lib/dial.test.ts src/lib/dial-input.test.ts src/lib/side-nav.test.ts src/lib/sidebar-width.test.ts src/lib/labels.test.ts src/lib/voip/voip.test.ts src/lib/voip/voip-ccm.test.ts src/lib/voip/native-engine.test.ts plugins/with-exotel-voice.test.js plugins/with-fasttracks-dialer.test.js scripts/enable-native-modules.test.js scripts/check-trial-build.test.js src/lib/auto-answer/arm.test.ts"
   },
   "private": true
 }

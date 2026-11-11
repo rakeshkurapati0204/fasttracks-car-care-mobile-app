@@ -15,6 +15,7 @@ import { fetchLegalCases } from '@/lib/api';
 import { usePermissions } from '@/lib/permissions-context';
 import type { LegalCase } from '@/types/api';
 
+import { humanize } from '@/lib/labels';
 const WIDE_MIN = 560;
 
 // Access is the per-person `hasLegalAccess` check (a LegalAccessConfig row on
@@ -52,7 +53,7 @@ export default function LegalDocumentsScreen() {
       setCases(Array.isArray(r) ? r : []);
     } catch (err: unknown) {
       if ((err as { response?: { status?: number } })?.response?.status === 403) setForbidden(true);
-      else setLoadError('Failed to load cases');
+      else setLoadError("Couldn't load cases. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -135,7 +136,7 @@ export default function LegalDocumentsScreen() {
                   {c.nextHearingDate ? `Next hearing: ${fmtDate(c.nextHearingDate)}` : `Updated ${fmtDate(c.updatedAt)}`}
                 </ThemedText>
               </View>
-              <Badge variant="secondary">{c.status}</Badge>
+              <Badge variant="secondary">{humanize(c.status)}</Badge>
             </View>
           </Card>
         )}

@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Linking, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { InvStatusBadge, VisitStatusBadge } from '@/components/customers/badges';
@@ -24,6 +24,7 @@ import { useAuth } from '@/lib/auth-context';
 import { fmtDate, fmtINR, fmtMonthYear, quoteLabel } from '@/lib/customers-format';
 import type { CrmInteraction, CrmVisitJobCard, CustomerProfile, CustomerProfileInvoice, CustomerRemark } from '@/types/api';
 
+import { humanize } from '@/lib/labels';
 type VisitEntry = { kind: 'jc'; date: string; jc: CrmVisitJobCard } | { kind: 'inv'; date: string; inv: CustomerProfileInvoice };
 
 const VISITS_PREVIEW = 5;
@@ -155,7 +156,7 @@ export default function CustomerPanelScreen() {
           </View>
         ) : !profile && jobCards.length === 0 && interactions.length === 0 ? (
           <View style={styles.center}>
-            <ThemedText themeColor="textMuted">Failed to load profile</ThemedText>
+            <ThemedText themeColor="textMuted">Couldn&apos;t load this profile. Pull down to try again.</ThemedText>
             <Button variant="secondary" onPress={onRefresh}>Retry</Button>
           </View>
         ) : (
@@ -346,7 +347,7 @@ export default function CustomerPanelScreen() {
                               {' · '}
                               <ThemedText style={[styles.tiny, styles.bold]}>{fmtINR(jc.invoice.grandTotal || 0)}</ThemedText>
                               {' · '}
-                              <ThemedText style={[styles.tiny, { color: jc.invoice.status === 'PAID' ? theme.success : jc.invoice.status === 'DRAFT' ? theme.textMuted : theme.warning }]}>{jc.invoice.status}</ThemedText>
+                              <ThemedText style={[styles.tiny, { color: jc.invoice.status === 'PAID' ? theme.success : jc.invoice.status === 'DRAFT' ? theme.textMuted : theme.warning }]}>{humanize(jc.invoice.status)}</ThemedText>
                               {jc.invoice.status !== 'PAID' && jc.invoice.balanceDue > 0 ? <ThemedText themeColor="danger" style={styles.tiny}>{` · Due ${fmtINR(jc.invoice.balanceDue)}`}</ThemedText> : null}
                             </ThemedText>
                           ) : (
@@ -395,8 +396,8 @@ export default function CustomerPanelScreen() {
 
             {/* Actions */}
             <View style={styles.actions}>
-              <Button style={styles.flex1} onPress={() => Alert.alert('Not available yet', "Creating invoices isn't available in the app yet. Use the dashboard.")}>+ New Invoice</Button>
-              <Button style={styles.flex1} variant="secondary" onPress={goInvoices}>View All Invoices</Button>
+              {/* No "New Invoice" button: the app cannot create invoices yet, and a button that only says so is clutter. */}
+              <Button style={styles.flex1} variant="secondary" onPress={goInvoices}>View all invoices</Button>
             </View>
           </>
         )}

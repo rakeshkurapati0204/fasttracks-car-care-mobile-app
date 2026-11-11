@@ -117,7 +117,7 @@ export default function FinanceApprovalsScreen() {
     try {
       setLoans(await fetchLoans());
     } catch {
-      setError('Failed to load advances.');
+      setError("Couldn't load advances. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -211,7 +211,7 @@ export default function FinanceApprovalsScreen() {
     try {
       if (!(await shareCsv(`finance-active-${new Date().toISOString().slice(0, 10)}.csv`, rows))) setToast({ type: 'error', msg: 'Sharing isn’t available on this device.' });
     } catch (e: unknown) {
-      setToast({ type: 'error', msg: e instanceof Error && e.message ? e.message : 'Failed to export CSV.' });
+      setToast({ type: 'error', msg: e instanceof Error && e.message ? e.message : "Couldn't export CSV. Try again." });
     }
   };
 

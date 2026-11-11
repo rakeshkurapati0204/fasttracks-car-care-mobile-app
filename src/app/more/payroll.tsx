@@ -87,7 +87,7 @@ export default function PayrollScreen() {
     try {
       setSummary(await fetchCompanyPayroll(month, year));
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Failed to load payroll data.'));
+      setError(getErrorMessage(err, "Couldn't load payroll data. Check your connection and try again."));
     } finally {
       setLoading(false);
     }

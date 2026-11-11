@@ -60,7 +60,7 @@ export default function CompanySettingsScreen() {
       // null = nothing saved yet: leave the fields empty, not an error.
       const d = await fetchCompanySettings();
       if (d) setForm({ gstNo: d.gstNo || '', name: d.name || '', address: d.address || '', phone: d.phone || '', email: d.email || '', logoUrl: d.logoUrl || '' });
-    } catch (err) { showToast(false, describeError(err, 'Failed to load company settings')); }
+    } catch (err) { showToast(false, describeError(err, "Couldn't load company settings. Check your connection and try again.")); }
     finally { setLoading(false); }
   }, [showToast]);
 
@@ -74,7 +74,7 @@ export default function CompanySettingsScreen() {
   const save = async () => {
     setSaving(true);
     try { await updateCompanySettings(form); showToast(true, 'Company settings saved successfully.'); }
-    catch (err) { showToast(false, describeError(err, 'Failed to save settings.')); }
+    catch (err) { showToast(false, describeError(err, "Couldn't save the settings. Try again.")); }
     finally { setSaving(false); }
   };
 

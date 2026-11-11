@@ -148,7 +148,7 @@ export default function TasksScreen() {
       setTasks(await fetchTasks({ assignedToId: assigneeId }));
     } catch {
       setTasks((t) => t ?? []);
-      setLoadError('Failed to load tasks.');
+      setLoadError("Couldn't load tasks. Check your connection and try again.");
     }
   }, [assigneeId]);
 

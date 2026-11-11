@@ -26,7 +26,7 @@ import type { QuotationFull, QuotationListItem } from '@/types/api';
 //
 // GET / GET :id are open to ADMIN_ROLES (OWNER, STORE_MANAGER, ACCOUNTING) and to anyone with a per-employee
 // 'quotations' permission override (those see only their own). Not predictable from the role alone, so the
-// screen is not hidden client-side: a denied fetch shows "Failed to load quotations." like the dashboard.
+// screen is not hidden client-side: a denied fetch shows "Couldn't load quotations. Check your connection and try again." like the dashboard.
 // PUT /:id is admin or the quotation's own creator; cancel and delete are ADMIN_ROLES only (the server
 // re-checks all of it). "Print" is the OS share sheet (no PDF package in the app).
 export default function QuotationsScreen() {
@@ -75,8 +75,8 @@ export default function QuotationsScreen() {
       setQuotations(res.items);
       setTotalCount(res.total);
     } catch {
-      setLoadError('Failed to load quotations.');
-      showToast(false, 'Failed to load quotations.');
+      setLoadError("Couldn't load quotations. Check your connection and try again.");
+      showToast(false, "Couldn't load quotations. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -108,7 +108,7 @@ export default function QuotationsScreen() {
       setModalError('');
       setViewQuotation(null);
     } catch {
-      showToast(false, 'Failed to load quotation details.');
+      showToast(false, "Couldn't load quotation details. Check your connection and try again.");
     } finally {
       setOpeningId(null);
     }
@@ -120,7 +120,7 @@ export default function QuotationsScreen() {
       setViewQuotation(await fetchQuotationFull(id));
       setViewError('');
     } catch {
-      showToast(false, 'Failed to load quotation details.');
+      showToast(false, "Couldn't load quotation details. Check your connection and try again.");
     } finally {
       setOpeningId(null);
     }
@@ -133,7 +133,7 @@ export default function QuotationsScreen() {
       const full = loaded ?? await fetchQuotationFull(id);
       await Share.share({ message: buildQuotationText(full), title: `Quotation ${full.quotationNumber}` });
     } catch {
-      showToast(false, 'Failed to load quotation details.');
+      showToast(false, "Couldn't load quotation details. Check your connection and try again.");
     } finally {
       setOpeningId(null);
     }

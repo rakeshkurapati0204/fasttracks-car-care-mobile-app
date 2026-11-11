@@ -103,7 +103,7 @@ export default function LeaveRequestsScreen() {
       setRequests(await fetchLeaveRequests(tab));
     } catch {
       setLoadError(true);
-      showToast('Failed to load leave requests.', false);
+      showToast("Couldn't load leave requests. Check your connection and try again.", false);
     } finally {
       setLoading(false);
     }
@@ -173,7 +173,7 @@ export default function LeaveRequestsScreen() {
       </View>
 
       {toast ? (toast.ok ? <SuccessBanner message={toast.text} /> : <ErrorBanner message={toast.text} />) : null}
-      {loadError && !loading ? <ErrorBanner message="Failed to load leave requests." onRetry={load} /> : null}
+      {loadError && !loading ? <ErrorBanner message="Couldn't load leave requests. Check your connection and try again." onRetry={load} /> : null}
     </View>
   );
 

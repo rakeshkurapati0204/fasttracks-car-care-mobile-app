@@ -102,7 +102,7 @@ export default function InvoicesScreen() {
     try {
       const r = await fetchInvoicesPage({ page, limit: PAGE_SIZE, sortBy: sortCol, sortDir, search, status: filterStatus, from: filterFrom, to: filterTo });
       setInvoices(r.items); setTotalCount(r.total);
-    } catch { setLoadError('Failed to load invoices.'); showToast(false, 'Failed to load invoices.'); }
+    } catch { setLoadError("Couldn't load invoices. Check your connection and try again."); showToast(false, "Couldn't load invoices. Check your connection and try again."); }
     finally { setLoading(false); }
   }, [page, sortCol, sortDir, search, filterStatus, filterFrom, filterTo, showToast]);
 
@@ -132,7 +132,7 @@ export default function InvoicesScreen() {
 
   // GET /invoices (the list) has no line items; only the detail route does.
   const fetchFull = async (id: string): Promise<InvoiceFull | null> => {
-    try { return await fetchInvoiceFull(id); } catch { showToast(false, 'Failed to load invoice details.'); return null; }
+    try { return await fetchInvoiceFull(id); } catch { showToast(false, "Couldn't load invoice details. Check your connection and try again."); return null; }
   };
 
   const openView = async (id: string, pay = false) => {

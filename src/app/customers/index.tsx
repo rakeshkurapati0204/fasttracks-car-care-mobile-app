@@ -124,7 +124,7 @@ export default function CustomersScreen() {
     setJobsLoading(true);
     fetchActiveJobCards()
       .then((list) => { if (alive) { setJobs(list); setError(''); } })
-      .catch((e: unknown) => { if (alive) setError(getErrorMessage(e, 'Failed to load jobs')); })
+      .catch((e: unknown) => { if (alive) setError(getErrorMessage(e, "Couldn't load jobs. Check your connection and try again.")); })
       .finally(() => { if (alive) setJobsLoading(false); });
     return () => { alive = false; };
   }, [hasAccess, opened.jobs, jobsReload]);
@@ -142,7 +142,7 @@ export default function CustomersScreen() {
       setCrmLoading(true);
       fetchCrmCustomerPage({ page: crmPage, limit: LIMIT, search: crmSearch, searchBy: crmSearchBy, fromDate: crmFromDate, toDate: crmToDate, source: crmSource })
         .then((r) => { if (alive) { setCustomers(r.customers); setCrmTotal(r.total); setError(''); } })
-        .catch((e: unknown) => { if (alive) setError(getErrorMessage(e, 'Failed to load customers')); })
+        .catch((e: unknown) => { if (alive) setError(getErrorMessage(e, "Couldn't load customers. Check your connection and try again.")); })
         .finally(() => { if (alive) setCrmLoading(false); });
     }, 300);
     return () => { alive = false; clearTimeout(t); };
@@ -155,7 +155,7 @@ export default function CustomersScreen() {
     setBoardLoading(true);
     fetchBoardJobCards()
       .then((list) => { if (alive) { setBoardJobs(list); setError(''); } })
-      .catch((e: unknown) => { if (alive) setError(getErrorMessage(e, 'Failed to load status board')); })
+      .catch((e: unknown) => { if (alive) setError(getErrorMessage(e, "Couldn't load status board. Check your connection and try again.")); })
       .finally(() => { if (alive) setBoardLoading(false); });
     return () => { alive = false; };
   }, [hasAccess, opened.status, boardReload]);
@@ -219,7 +219,7 @@ export default function CustomersScreen() {
       const r = await reassignJobCard(job.id, handledById);
       setJobs((js) => js.map((j) => (j.id === job.id ? { ...j, handledBy: { id: r.handledBy.id, name: r.handledBy.name } } : j)));
     } catch (e: unknown) {
-      setError(getErrorMessage(e, 'Failed to reassign'));
+      setError(getErrorMessage(e, "Couldn't reassign. Try again."));
     }
   }, []);
 
@@ -252,7 +252,7 @@ export default function CustomersScreen() {
       await deleteCustomer(deleteTarget.id);
       setCustomers((cs) => cs.filter((c) => c.id !== deleteTarget.id));
     } catch (e: unknown) {
-      setError(getErrorMessage(e, 'Failed to delete customer'));
+      setError(getErrorMessage(e, "Couldn't delete customer. Try again."));
     } finally {
       setDeleting(false);
       setDeleteTarget(null);
@@ -492,8 +492,9 @@ export default function CustomersScreen() {
             : jobs.length === 0 ? (
               <View style={styles.empty}>
                 <Ionicons name="clipboard-outline" size={48} color={theme.textMuted} />
-                <ThemedText themeColor="textMuted" style={styles.emptyTitle}>No active jobs right now</ThemedText>
-                <Button icon="add" onPress={() => router.push('/more/new-entry' as never)}>New Entry</Button>
+                <ThemedText style={styles.emptyTitle}>No active jobs right now</ThemedText>
+                {/* The header already has the one "New Entry" button; a second one here made the screen look cluttered. */}
+                <ThemedText themeColor="textMuted" style={styles.emptyHint}>Jobs you add with New Entry appear here.</ThemedText>
               </View>
             ) : empty('No jobs match your filters', <Button variant="ghost" onPress={clearJobFilters}>Clear filters</Button>)
           }
@@ -573,6 +574,7 @@ const styles = StyleSheet.create({
   skelRow: { borderRadius: Radii.sm },
   empty: { alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.six },
   emptyTitle: { fontSize: 16, lineHeight: 22, fontFamily: FontWeights.medium, textAlign: 'center' },
+  emptyHint: { fontSize: 14, lineHeight: 20, textAlign: 'center', maxWidth: 360 },
   more: { textAlign: 'center', fontSize: 12, lineHeight: 18, paddingVertical: Spacing.two },
   rowSides: { borderLeftWidth: 1, borderRightWidth: 1 },
   tableCap: { height: 0, borderTopWidth: 1, borderLeftWidth: 1, borderRightWidth: 1, borderTopLeftRadius: Radii.md, borderTopRightRadius: Radii.md },

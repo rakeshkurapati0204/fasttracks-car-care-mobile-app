@@ -212,10 +212,10 @@ function AnalyticsContent() {
           <ThemedText themeColor="textMuted" style={styles.subtitle}>Hiring and retention trends across the HR module.</ThemedText>
         </View>
 
-        {hiringError ? <ErrorBanner message="Failed to load hiring analytics." onRetry={loadHiring} />
+        {hiringError ? <ErrorBanner message="Couldn't load hiring analytics. Check your connection and try again." onRetry={loadHiring} />
           : hiring === null ? <Loading /> : <HiringSection data={hiring} wide={wide} />}
 
-        {retentionError ? <ErrorBanner message="Failed to load retention analytics." onRetry={loadRetention} />
+        {retentionError ? <ErrorBanner message="Couldn't load retention analytics. Check your connection and try again." onRetry={loadRetention} />
           : retention === null ? <Loading /> : <RetentionSection data={retention} wide={wide} />}
       </ScrollView>
     </ThemedView>

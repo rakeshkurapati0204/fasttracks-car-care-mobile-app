@@ -119,7 +119,7 @@ function SlabSheet({
     try {
       if (!(await shareCsv(`customer-spend-${slab}-${period}.csv`, rows))) setExportError('Sharing isn’t available on this device.');
     } catch (e: unknown) {
-      setExportError(e instanceof Error && e.message ? e.message : 'Failed to export CSV.');
+      setExportError(e instanceof Error && e.message ? e.message : "Couldn't export CSV. Try again.");
     }
   };
 

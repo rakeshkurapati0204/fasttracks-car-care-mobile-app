@@ -98,7 +98,7 @@ export default function InventoryScreen() {
         q: debounced || undefined,
       }));
     } catch (e: unknown) {
-      setLoadError(getErrorMessage(e, 'Failed to load items'));
+      setLoadError(getErrorMessage(e, "Couldn't load items. Check your connection and try again."));
     } finally {
       setLoading(false);
     }

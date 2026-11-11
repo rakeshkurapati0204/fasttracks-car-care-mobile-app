@@ -107,7 +107,7 @@ export default function EmployeeDocumentsScreen() {
       const dataUri = await fetchIdentityDocumentDataUri(doc.id, doc.mimeType ?? 'application/octet-stream');
       await Linking.openURL(dataUri);
     } catch {
-      showMsg('Failed to load document.');
+      showMsg("Couldn't load document. Check your connection and try again.");
     } finally {
       setOpeningId(null);
     }

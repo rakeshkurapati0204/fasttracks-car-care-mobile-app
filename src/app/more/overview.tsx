@@ -236,12 +236,10 @@ function WelcomeScreen() {
 function QuickActions() {
   const router = useRouter();
   const theme = useTheme();
-  // "New Invoice" has no app screen of its own (the dashboard's /invoices/new
-  // page; in the app, creating an invoice lives inside the Invoices list), so
-  // it stays non-tappable.
+  // No "New Invoice" here: the app has no screen of its own for it (invoices are created inside the Invoices list), and a chip that does
+  // nothing when tapped only looks broken.
   const actions: { label: string; icon: keyof typeof Ionicons.glyphMap; href?: string }[] = [
     { label: 'New Entry', icon: 'add', href: '/more/new-entry' },
-    { label: 'New Invoice', icon: 'document-text-outline' },
     { label: 'Attendance', icon: 'calendar-outline', href: '/more/attendance' },
     { label: 'Payroll', icon: 'cash-outline', href: '/more/payroll' },
   ];
@@ -304,7 +302,7 @@ function OwnerOverviewBody() {
     try {
       setData(await fetchDashboardOverview());
     } catch (err: any) {
-      setError(getErrorMessage(err, 'Failed to load overview'));
+      setError(getErrorMessage(err, "Couldn't load overview. Check your connection and try again."));
     } finally {
       setLoading(false);
     }
@@ -320,7 +318,7 @@ function OwnerOverviewBody() {
     } catch (err: any) {
       if (req !== dailyReq.current) return;
       setDailyData(null);
-      setDailyError(getErrorMessage(err, 'Failed to load daily breakdown'));
+      setDailyError(getErrorMessage(err, "Couldn't load daily breakdown. Check your connection and try again."));
     } finally {
       if (req === dailyReq.current) setDailyLoading(false);
     }
@@ -336,7 +334,7 @@ function OwnerOverviewBody() {
     } catch (err: any) {
       if (req !== statsReq.current) return;
       setCustomerStats(null);
-      setStatsError(getErrorMessage(err, 'Failed to load customer & walkout stats'));
+      setStatsError(getErrorMessage(err, "Couldn't load customer & walkout stats. Check your connection and try again."));
     } finally {
       if (req === statsReq.current) setStatsLoading(false);
     }
@@ -444,7 +442,7 @@ function OwnerOverviewBody() {
   );
 
   const recentJobs = (
-    <Card divided title="Recent Job Cards" action={<LinkText onPress={() => router.push('/more/new-entry' as never)}>+ New →</LinkText>}>
+    <Card divided title="Recent Job Cards">
       {loading ? (
         <SkeletonList items={3} />
       ) : !data || data.recentJobs.length === 0 ? (

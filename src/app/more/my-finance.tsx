@@ -101,7 +101,7 @@ export default function MyFinanceScreen() {
     try {
       setLoans(await fetchMyLoans());
     } catch {
-      showToast('error', 'Failed to load advances.');
+      showToast('error', "Couldn't load advances. Check your connection and try again.");
       setLoansError(true);
     } finally {
       setLoansLoading(false);
@@ -122,7 +122,7 @@ export default function MyFinanceScreen() {
       const rows = await fetchLoanRepayments(loanId);
       setRepayments((p) => ({ ...p, [loanId]: rows }));
     } catch {
-      showToast('error', 'Failed to load repayments.');
+      showToast('error', "Couldn't load repayments. Check your connection and try again.");
     } finally {
       setLoadingRep(null);
     }

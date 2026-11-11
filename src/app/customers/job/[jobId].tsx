@@ -506,7 +506,7 @@ export default function JobCardDetailScreen() {
             <ThemedView type="backgroundElement" style={styles.card}>
               <ThemedText type="smallBold">Reason for Visit</ThemedText>
               <ThemedText type="small">{job.reasonForVisit}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">Estimated Total (₹) {formatCurrency(job.estimatedTotal)} · {formatDate(job.createdAt)}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">Estimated total {formatCurrency(job.estimatedTotal)} · {formatDate(job.createdAt)}</ThemedText>
             </ThemedView>
           </>
         )}

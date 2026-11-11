@@ -67,7 +67,7 @@ export default function AccountsScreen() {
       setAccounts(Array.isArray(r) ? r : []);
       setLoadError('');
     } catch {
-      setLoadError('Failed to load bank accounts');
+      setLoadError("Couldn't load bank accounts. Check your connection and try again.");
     } finally {
       setAccountsLoading(false);
     }
@@ -76,21 +76,21 @@ export default function AccountsScreen() {
   const loadEmis = useCallback(async () => {
     setEmisLoading(true);
     try { const r = await fetchEmis(); setEmis(Array.isArray(r) ? r : []); setLoadError(''); }
-    catch { setLoadError('Failed to load EMIs'); }
+    catch { setLoadError("Couldn't load EMIs. Check your connection and try again."); }
     finally { setEmisLoading(false); }
   }, []);
 
   const loadReminders = useCallback(async () => {
     setRemindersLoading(true);
     try { const r = await fetchPaymentRemindersFull(); setReminders(Array.isArray(r) ? r : []); setLoadError(''); }
-    catch { setLoadError('Failed to load reminders'); }
+    catch { setLoadError("Couldn't load reminders. Check your connection and try again."); }
     finally { setRemindersLoading(false); }
   }, []);
 
   const loadEmail = useCallback(async () => {
     setEmailLoading(true);
     try { setEmail(await fetchEmailCheckStatus()); setLoadError(''); }
-    catch { setLoadError('Failed to load email check status'); }
+    catch { setLoadError("Couldn't load email check status. Check your connection and try again."); }
     finally { setEmailLoading(false); }
   }, []);
 
