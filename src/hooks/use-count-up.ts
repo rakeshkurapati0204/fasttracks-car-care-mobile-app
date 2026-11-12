@@ -31,12 +31,12 @@ export function useCountUp(value: string | number): string {
         if (t < 1) raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
-    }).catch(() => { /* motion is optional */ });
+    }).catch(() => { if (!cancelled) setAnim({ target: text, from: p.n, n: p.n }); });
     return () => { cancelled = true; cancelAnimationFrame(raf); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
   if (!parts) return text;
-  if (anim.target !== text) return text;
+  if (anim.target !== text || anim.n === parts.n) return text; // at rest, show the original text exactly (leading zeros, signs)
   return formatCount(parts, anim.n);
 }
