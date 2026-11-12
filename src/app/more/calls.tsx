@@ -1,17 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { AppState, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CallRow } from '@/components/call-row';
 import { CustomerPhoneSearch } from '@/components/customer-phone-search';
 import { ContactsTab } from '@/components/contacts-tab';
 import { DialerPad } from '@/components/dialer-pad';
+import { SkeletonList } from '@/components/ui/skeleton';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useIsDocked } from '@/lib/drawer-context';
 import { fetchCallCapabilities, fetchCallLog, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { groupLabel } from '@/lib/call-format';
@@ -39,6 +41,7 @@ const TABS: { key: CallsTab; label: string; icon: 'keypad' | 'time' | 'people' |
 
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
+  const docked = useIsDocked();
   const theme = useTheme();
   const router = useRouter();
   const [tab, setTab] = useState<CallsTab>('dialer');
@@ -124,7 +127,8 @@ export default function CallsScreen() {
       <Stack.Screen
         options={{
           title: 'Calls',
-          headerLeft: () => (
+          // Beside the docked sidebar Calls is a top-level screen (like the others), so there is no back arrow.
+          headerLeft: docked ? () => null : () => (
             <Pressable
               onPress={() => (router.canGoBack() ? router.back() : router.replace('/' as never))}
               accessibilityLabel="Go back"
@@ -146,7 +150,7 @@ export default function CallsScreen() {
           <ThemedText type="smallBold">Retry</ThemedText>
         </Pressable>
       ) : calls === null ? (
-        <ActivityIndicator style={styles.spinner} />
+        <View style={styles.spinner}><SkeletonList items={6} /></View>
       ) : (
         <ScrollView
           contentContainerStyle={[styles.content, { paddingBottom: Spacing.three }]}
@@ -235,7 +239,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.three },
   section: { gap: Spacing.two },
   error: { color: '#B83030', marginHorizontal: Spacing.three, marginTop: Spacing.two },
-  spinner: { marginTop: Spacing.three },
+  spinner: { marginTop: Spacing.three, paddingHorizontal: Spacing.three },
   input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
   chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, borderRadius: 999, marginRight: Spacing.one },
   retry: { alignSelf: 'center', marginTop: Spacing.three, paddingHorizontal: Spacing.four, paddingVertical: Spacing.two },

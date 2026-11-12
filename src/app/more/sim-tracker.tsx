@@ -99,7 +99,7 @@ export default function SimTrackerScreen() {
         fetchSimStats(),
       ]);
       setSims(list); setStats(st); setPage(1);
-    } catch { showToast(false, 'Failed to load SIM data.'); }
+    } catch { showToast(false, "Couldn't load SIM data. Check your connection and try again."); }
     finally { setLoading(false); }
   }, [search, filterStatus, filterOperator, showToast]);
 

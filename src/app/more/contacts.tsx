@@ -99,7 +99,7 @@ export default function ContactsScreen() {
       setTotalPages(res.totalPages ?? 1);
     } catch {
       setContacts((c) => c ?? []);
-      setListError('Failed to load contacts.');
+      setListError("Couldn't load contacts. Check your connection and try again.");
     }
   }, [canAccess, page, filterType, search]);
 
@@ -129,7 +129,7 @@ export default function ContactsScreen() {
     try {
       setDetail(await fetchContact(id));
     } catch {
-      setDetailError('Failed to load contact details.');
+      setDetailError("Couldn't load contact details. Check your connection and try again.");
     } finally {
       setDetailLoading(false);
     }

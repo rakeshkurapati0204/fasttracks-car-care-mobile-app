@@ -1,3 +1,4 @@
+import { useCountUp } from '@/hooks/use-count-up';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack } from 'expo-router';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
@@ -25,6 +26,7 @@ function StatCard({ label, value, color, big, outlined, wide, width }: {
   label: string; value: string; color: string; big?: boolean; outlined?: boolean; wide: boolean; width?: number;
 }) {
   const theme = useTheme();
+  const counted = useCountUp(value);
   return (
     <View
       style={[
@@ -33,7 +35,7 @@ function StatCard({ label, value, color, big, outlined, wide, width }: {
         wide ? styles.flex1 : { width },
       ]}>
       <ThemedText style={[styles.statLabel, { color: outlined ? theme.primary : theme.textMuted }, outlined && styles.semi]}>{label}</ThemedText>
-      <ThemedText style={[styles.mono, big ? styles.statBig : styles.statNum, { color }]}>{value}</ThemedText>
+      <ThemedText style={[styles.mono, big ? styles.statBig : styles.statNum, { color }]}>{counted}</ThemedText>
     </View>
   );
 }
@@ -87,7 +89,7 @@ export default function PayrollScreen() {
     try {
       setSummary(await fetchCompanyPayroll(month, year));
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Failed to load payroll data.'));
+      setError(getErrorMessage(err, "Couldn't load payroll data. Check your connection and try again."));
     } finally {
       setLoading(false);
     }

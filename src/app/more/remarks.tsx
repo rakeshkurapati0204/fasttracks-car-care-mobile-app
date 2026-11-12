@@ -414,7 +414,7 @@ function OwnerRemarksView() {
     try {
       setAllRemarks(await fetchAllStaffRemarks());
     } catch (err: any) {
-      showToast(false, errText(err, 'Failed to load remarks.'));
+      showToast(false, errText(err, "Couldn't load remarks. Check your connection and try again."));
     }
   }, [showToast]);
 

@@ -128,7 +128,7 @@ export default function ErpFinanceScreen() {
       setOrders(r.orders ?? []);
       setOrdersTotal(r.total ?? 0);
     } catch {
-      if (id === reqId.current) { setOrders([]); setError('Failed to load orders'); }
+      if (id === reqId.current) { setOrders([]); setError("Couldn't load orders. Check your connection and try again."); }
     } finally {
       if (id === reqId.current) setOrdersLoading(false);
     }
@@ -367,7 +367,7 @@ export default function ErpFinanceScreen() {
           </View>
         ) : (
           <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-            <EmptyText text="Failed to load overview data." />
+            <EmptyText text="Couldn't load overview data. Check your connection and try again." />
           </View>
         )}
 

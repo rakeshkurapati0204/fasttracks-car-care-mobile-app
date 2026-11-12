@@ -32,6 +32,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import type { EmployeeListItem, SalaryHistoryEntry, ShiftTimingConfig } from '@/types/api';
 
+import { roleLabel } from '@/lib/labels';
 // Staff Config is a separate Prisma model (ShiftConfig/SalaryHistory) from
 // Employees/User — backend/src/routes/staffConfig.ts, re-verified in full
 // 2026-09-21. ADMIN_ROLES=[OWNER,STORE_MANAGER] gate GET/PUT/DELETE shift
@@ -396,7 +397,7 @@ export default function StaffConfigScreen() {
               <ThemedView type="backgroundElement" style={styles.row}>
                 <View style={styles.flex1}>
                   <ThemedText type="smallBold" numberOfLines={1} ellipsizeMode="tail">{e.name}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">{e.role}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">{roleLabel(e.role)}</ThemedText>
                 </View>
                 <ThemedText type="link">Configure ›</ThemedText>
               </ThemedView>

@@ -1,3 +1,5 @@
+import Animated, { cancelAnimation, FadeInDown, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
+import { BrandLoading } from '@/components/brand-loading';
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -19,6 +21,12 @@ import { tokenStorage } from '@/lib/token-storage';
 // because they are web-only: the radial background glow and the install-app banner.
 const SESSION_EXPIRED = 'Your session expired. Please log in again.';
 
+function nudge(x: { value: number }) {
+  'worklet';
+  cancelAnimation(x as never);
+  x.value = withSequence(withTiming(-9, { duration: 50 }), withTiming(9, { duration: 70 }), withTiming(-6, { duration: 70 }), withTiming(4, { duration: 60 }), withTiming(0, { duration: 50 }));
+}
+
 export default function LoginScreen() {
   const { signIn, sessionExpired } = useAuth();
   const router = useRouter();
@@ -30,6 +38,8 @@ export default function LoginScreen() {
   // Shown when the app signed the user out because the token expired (same strip as an error).
   const [error, setError] = useState(() => (sessionExpired ? SESSION_EXPIRED : ''));
   const [loading, setLoading] = useState(false);
+  const shake = useSharedValue(0);
+  const shakeStyle = useAnimatedStyle(() => ({ transform: [{ translateX: shake.value }] }));
 
   // Pre-fill the remembered username (never a password).
   useEffect(() => {
@@ -48,6 +58,8 @@ export default function LoginScreen() {
   const cardY = useRef(0);
   const fieldY = useRef({ username: 0, password: 0 });
   const passwordRef = useRef<TextInput>(null);
+  // A wrong password or empty field makes the card shake once, so the failure is felt as well as read.
+  useEffect(() => { if (error) nudge(shake); }, [error, shake]);
   const scrollTo = useCallback((key: 'username' | 'password') => {
     setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, cardY.current + fieldY.current[key] - 24), animated: true }), 150);
   }, []);
@@ -79,6 +91,7 @@ export default function LoginScreen() {
 
   return (
     <ThemedView style={[styles.flex1, { paddingBottom: keyboardH }]}>
+      {loading ? <BrandLoading /> : null}
       <ScrollView
         ref={scrollRef}
         keyboardShouldPersistTaps="handled"
@@ -86,7 +99,8 @@ export default function LoginScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 16, paddingBottom: keyboardH ? 16 : insets.bottom + 16 }]}>
         <View style={styles.wrap}>
-          <View onLayout={(e) => { cardY.current = e.nativeEvent.layout.y; }} style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+          <Animated.View entering={FadeInDown.duration(420).springify().damping(18)} onLayout={(e) => { cardY.current = e.nativeEvent.layout.y; }}>
+          <Animated.View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }, shakeStyle]}>
             <AuthLogo />
 
             <ThemedText themeColor="textSecondary" style={styles.heading}>Sign in to your App</ThemedText>
@@ -155,7 +169,8 @@ export default function LoginScreen() {
                 )}
               </Pressable>
             </View>
-          </View>
+          </Animated.View>
+          </Animated.View>
 
           {/* Forgot Password */}
           <Pressable onPress={() => router.push('/forgot-password')} hitSlop={8} accessibilityRole="link" style={styles.forgot}>

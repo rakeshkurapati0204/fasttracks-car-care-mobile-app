@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, Pressable, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { FontWeights, Radii } from '@/constants/theme';
@@ -30,6 +31,13 @@ const SIZES = {
   lg: { px: 20, py: 10, font: 16, radius: Radii.md, gap: 8 },
 } as const;
 
+const APressable = Animated.createAnimatedComponent(Pressable);
+
+function squish(scale: { value: number }, to: number) {
+  'worklet';
+  scale.value = withSpring(to, { damping: 14, stiffness: 420, mass: 0.6 });
+}
+
 export function Button({
   children,
   onPress,
@@ -44,6 +52,8 @@ export function Button({
   const theme = useTheme();
   const s = SIZES[size];
   const isDisabled = disabled || loading;
+  const scale = useSharedValue(1);
+  const press = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
   const look = {
     primary: { bg: theme.primary, fg: '#ffffff', border: 'transparent' },
@@ -54,12 +64,14 @@ export function Button({
   }[variant];
 
   return (
-    <Pressable
+    <APressable
       onPress={onPress}
+      onPressIn={() => squish(scale, 0.97)}
+      onPressOut={() => squish(scale, 1)}
       disabled={isDisabled}
       accessibilityRole="button"
       accessibilityState={{ disabled: isDisabled, busy: loading }}
-      style={({ pressed }) => [
+      style={[
         styles.base,
         {
           backgroundColor: look.bg,
@@ -70,9 +82,9 @@ export function Button({
           gap: s.gap,
         },
         fullWidth && styles.full,
-        pressed && styles.pressed,
         isDisabled && styles.disabled,
         style,
+        press,
       ]}>
       {loading ? (
         <ActivityIndicator size="small" color={look.fg} />
@@ -80,14 +92,13 @@ export function Button({
         <Ionicons name={icon} size={s.font + 4} color={look.fg} />
       ) : null}
       <ThemedText style={[styles.label, { color: look.fg, fontSize: s.font, lineHeight: s.font + 6 }]}>{children}</ThemedText>
-    </Pressable>
+    </APressable>
   );
 }
 
 const styles = StyleSheet.create({
   base: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', minHeight: 44, borderWidth: 1, alignSelf: 'flex-start' },
   full: { alignSelf: 'stretch' },
-  pressed: { opacity: 0.85 },
   disabled: { opacity: 0.5 },
   label: { fontFamily: FontWeights.medium },
 });

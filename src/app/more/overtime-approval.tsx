@@ -104,7 +104,7 @@ export default function OvertimeApprovalScreen() {
       setAllRequests(reqs);
       setEmployees(emps.filter((e) => e.isActive));
     } catch {
-      setLoadError('Failed to load data.');
+      setLoadError("Couldn't load data. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -128,7 +128,7 @@ export default function OvertimeApprovalScreen() {
       setToast({ type: 'success', msg: 'Request approved.' });
       load();
     } catch (err: unknown) {
-      setToast({ type: 'error', msg: getErrorMessage(err, 'Failed to approve.') });
+      setToast({ type: 'error', msg: getErrorMessage(err, "Couldn't approve. Try again.") });
     } finally {
       setProcessing(null);
     }
@@ -143,7 +143,7 @@ export default function OvertimeApprovalScreen() {
       setRejectModal(null);
       load();
     } catch (err: unknown) {
-      setToast({ type: 'error', msg: getErrorMessage(err, 'Failed to reject.') });
+      setToast({ type: 'error', msg: getErrorMessage(err, "Couldn't reject. Try again.") });
     } finally {
       setProcessing(null);
     }
@@ -158,7 +158,7 @@ export default function OvertimeApprovalScreen() {
       setActualModal(null);
       load();
     } catch (err: unknown) {
-      setToast({ type: 'error', msg: getErrorMessage(err, 'Failed to update.') });
+      setToast({ type: 'error', msg: getErrorMessage(err, "Couldn't update. Try again.") });
     } finally {
       setActualLoading(false);
     }

@@ -47,7 +47,7 @@ export default function MyPayslipsScreen() {
     try {
       setPayslips(await fetchMyPayslips());
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Failed to load your payslips.'));
+      setError(getErrorMessage(err, "Couldn't load your payslips. Check your connection and try again."));
     } finally {
       setLoading(false);
     }

@@ -5,7 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-// The dashboard's ComingSoon screen, word for word.
+// Shown where a screen is not built yet.
 export function ComingSoon() {
   const theme = useTheme();
   return (
@@ -13,15 +13,9 @@ export function ComingSoon() {
       <View style={[styles.icon, { backgroundColor: theme.surface, borderColor: theme.border }]}>
         <Ionicons name="color-fill-outline" size={44} color={theme.primary} />
       </View>
-      <ThemedText style={styles.title}>This feature is still in the booth.</ThemedText>
-      <ThemedText themeColor="textSecondary" style={styles.sub}>No shortcuts on a proper paint job.</ThemedText>
-      <ThemedText themeColor="textMuted" style={styles.small}>CHECK BACK SOON.</ThemedText>
-      <ThemedText themeColor="textMuted" style={styles.note}>
-        {'Need access? Contact '}
-        <ThemedText style={[styles.note, styles.bold]}>Rakesh Sir</ThemedText>
-        {' · For technical issues, contact the '}
-        <ThemedText style={[styles.note, styles.bold]}>AI Team</ThemedText>
-      </ThemedText>
+      <ThemedText style={styles.title}>Coming soon</ThemedText>
+      <ThemedText themeColor="textSecondary" style={styles.sub}>We are still working on this. It will appear here when it is ready.</ThemedText>
+      <ThemedText themeColor="textMuted" style={styles.note}>Need it sooner? Ask your manager.</ThemedText>
     </View>
   );
 }

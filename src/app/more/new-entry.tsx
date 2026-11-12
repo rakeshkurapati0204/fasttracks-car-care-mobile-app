@@ -278,10 +278,8 @@ export default function NewEntryScreen() {
     <ThemedView style={styles.flex1} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <Stack.Screen options={{ title: 'New Entry' }} />
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]} keyboardShouldPersistTaps="handled">
-        <View>
-          <ThemedText style={styles.title}>New Entry</ThemedText>
-          <ThemedText themeColor="textMuted" style={styles.sub}>Create a job card and draft invoice for a new vehicle visit</ThemedText>
-        </View>
+        {/* The screen header already says "New Entry"; repeating it here only stacked two identical titles. */}
+        <ThemedText themeColor="textMuted" style={styles.sub}>Create a job card and draft invoice for a new vehicle visit</ThemedText>
 
         {/* Customer */}
         <Section title="Customer">

@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, TextInput, Vibration, View } from 'react-native';
+import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
+import { ActivityIndicator, AppState, Keyboard, Platform, Pressable, StyleSheet, TextInput, Vibration, View } from 'react-native';
 
+import { EnableFade, MotionPressable, NumberMotion, PresenceScale } from '@/components/dialer-motion';
 import { InCallModal } from '@/components/call/in-call-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -150,6 +152,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
   };
 
   const len = digits.length;
+  const statusKind = result ? `r${result.ok}${result.text}` : invalid ? 'invalid' : match.exact ? `e${match.exact.name}` : match.suggestions.length > 0 ? `s${match.suggestions[0].name}` : valid && onAddContact ? 'add' : 'none';
   const statusLine = result ? (
     <ThemedText type="small" style={[styles.status, { color: result.ok ? theme.textSecondary : theme.danger }]} numberOfLines={2}>{result.text}</ThemedText>
   ) : invalid ? (
@@ -177,6 +180,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
     <ThemedView style={styles.container}>
       <View style={styles.inner}>
         <View style={styles.display}>
+          <NumberMotion shake={invalid} token={digits}>
           <TextInput
             ref={field}
             value={spaced(digits)}
@@ -186,12 +190,15 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
               setInput((cur) => ({ ...cur, start: toDigit(start, cur.digits.length), end: toDigit(end, cur.digits.length) }));
             }}
             onChangeText={(text) => edit(applyFieldText(input, text))}
+            // The on-screen keypad is the keyboard: the system keyboard must never open over it (it covered the keypad, the Call button and
+            // the tabs). inputMode "none" + showSoftInputOnFocus keep it closed; onFocus dismisses it if a device opens it anyway.
+            inputMode="none"
             showSoftInputOnFocus={false}
+            onFocus={() => Keyboard.dismiss()}
             autoFocus
             caretHidden={false}
             cursorColor={theme.primary}
             selectionColor={theme.primary}
-            keyboardType="phone-pad"
             autoCorrect={false}
             autoComplete="off"
             importantForAutofill="no"
@@ -199,53 +206,57 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
             accessibilityLabel="Phone number. Long press to paste."
             style={[styles.number, { color: invalid ? theme.danger : theme.text }]}
           />
-          <View style={styles.statusSlot}>{statusLine}</View>
+          </NumberMotion>
+          <View style={styles.statusSlot}>
+            {statusLine ? <Animated.View key={statusKind} entering={FadeInDown.duration(200)} exiting={FadeOut.duration(120)}>{statusLine}</Animated.View> : null}
+          </View>
         </View>
 
         <View style={styles.pad}>
-          {KEYS.map((k) => {
+          {KEYS.map((k, i) => {
             const disabled = DISABLED_KEYS.includes(k.digit);
             return (
-              <View key={k.digit} style={styles.cell}>
-                <Pressable
+              <Animated.View key={k.digit} entering={FadeInDown.delay(40 + i * 30).duration(280)} style={styles.cell}>
+                <MotionPressable
                   disabled={disabled}
                   onPress={() => { tap(); edit(insertDigit(input, k.digit)); }}
-                  accessibilityRole="button"
                   accessibilityLabel={k.digit}
-                  android_ripple={{ color: theme.backgroundSelected, borderless: true, radius: KEY_SIZE / 2 }}
-                  style={({ pressed }) => [styles.key, Platform.OS !== 'android' && pressed && { backgroundColor: theme.backgroundSelected }]}>
+                  glowColor={theme.backgroundSelected}
+                  style={styles.key}>
                   <ThemedText style={[styles.keyDigit, disabled && { color: theme.textMuted }]}>{k.digit}</ThemedText>
                   <ThemedText style={[styles.keyLetters, { color: theme.textSecondary }]}>{k.letters ?? ' '}</ThemedText>
-                </Pressable>
-              </View>
+                </MotionPressable>
+              </Animated.View>
             );
           })}
 
           <View style={styles.cell} />
+          <Animated.View entering={FadeInDown.delay(40 + 12 * 30).duration(320)} style={styles.cell}>
+            <EnableFade enabled={valid && !busy}>
+              <MotionPressable
+                onPress={call}
+                disabled={!valid || busy}
+                accessibilityLabel="Call"
+                glowColor="rgba(255,255,255,0.28)"
+                scaleTo={0.9}
+                style={[styles.callBtn, { backgroundColor: theme.success }]}>
+                {busy ? <Animated.View entering={FadeIn.duration(150)}><ActivityIndicator color="#ffffff" /></Animated.View> : <Ionicons name="call" size={28} color="#ffffff" />}
+              </MotionPressable>
+            </EnableFade>
+          </Animated.View>
           <View style={styles.cell}>
-            <Pressable
-              onPress={call}
-              disabled={!valid || busy}
-              accessibilityRole="button"
-              accessibilityLabel="Call"
-              android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: true, radius: CALL_SIZE / 2 }}
-              style={[styles.callBtn, { backgroundColor: theme.success }, (!valid || busy) && styles.callDisabled]}>
-              {busy ? <ActivityIndicator color="#ffffff" /> : <Ionicons name="call" size={28} color="#ffffff" />}
-            </Pressable>
-          </View>
-          <View style={styles.cell}>
-            {len > 0 ? (
-              <Pressable
+            <PresenceScale show={len > 0}>
+              <MotionPressable
                 onPress={() => { tap(); edit(deleteBack(input)); }}
                 onLongPress={() => { tap(); edit({ digits: '', start: 0, end: 0 }); }}
-                accessibilityRole="button"
                 accessibilityLabel="Delete. Long press to clear."
-                android_ripple={{ color: theme.backgroundSelected, borderless: true, radius: 28 }}
+                glowColor={theme.backgroundSelected}
+                scaleTo={0.85}
                 hitSlop={Spacing.two}
                 style={styles.backspace}>
                 <Ionicons name="backspace-outline" size={28} color={theme.textSecondary} />
-              </Pressable>
-            ) : null}
+              </MotionPressable>
+            </PresenceScale>
           </View>
         </View>
       </View>
@@ -274,6 +285,5 @@ const styles = StyleSheet.create({
   keyDigit: { fontSize: 32, lineHeight: 38, fontWeight: '400' },
   keyLetters: { fontSize: 10, lineHeight: 12, letterSpacing: 1.5, fontWeight: '500' },
   callBtn: { width: CALL_SIZE, height: CALL_SIZE, borderRadius: CALL_SIZE / 2, alignItems: 'center', justifyContent: 'center' },
-  callDisabled: { opacity: 0.4 },
   backspace: { width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
 });

@@ -58,7 +58,7 @@ export default function OvertimeScreen() {
     try {
       setRequests(await fetchMyOvertime());
     } catch {
-      setLoadError('Failed to load overtime requests.');
+      setLoadError("Couldn't load overtime requests. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -109,7 +109,7 @@ export default function OvertimeScreen() {
       setActualModal(null);
       load();
     } catch (err: unknown) {
-      showToast('error', getErrorMessage(err, 'Failed to update.'));
+      showToast('error', getErrorMessage(err, "Couldn't update. Try again."));
     } finally {
       setActualLoading(false);
     }

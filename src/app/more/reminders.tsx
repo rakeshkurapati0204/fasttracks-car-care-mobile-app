@@ -123,7 +123,7 @@ export default function RemindersScreen() {
       }
       setNow(Date.now());
     } catch (e) {
-      setError(getErrorMessage(e, 'Failed to load reminders.'));
+      setError(getErrorMessage(e, "Couldn't load reminders. Check your connection and try again."));
     } finally {
       setLoading(false);
     }

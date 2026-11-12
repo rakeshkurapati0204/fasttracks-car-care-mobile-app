@@ -73,7 +73,7 @@ export default function PurchaseScreen() {
       const all = await fetchLedgers(showInactive, partyTypeFilter || undefined);
       setLedgers(showInactive ? all.filter((l) => !l.isActive) : all);
     } catch (e: unknown) {
-      setError(getErrorMessage(e, 'Failed to load ledgers.'));
+      setError(getErrorMessage(e, "Couldn't load ledgers. Check your connection and try again."));
     } finally {
       setLoading(false);
     }
@@ -102,7 +102,7 @@ export default function PurchaseScreen() {
     try {
       if (!(await shareCsv(`accounting-ledgers-${new Date().toISOString().slice(0, 10)}.csv`, rows))) setError('Sharing isn’t available on this device.');
     } catch (e: unknown) {
-      setError(e instanceof Error && e.message ? e.message : 'Failed to export CSV.');
+      setError(e instanceof Error && e.message ? e.message : "Couldn't export CSV. Try again.");
     }
   };
 

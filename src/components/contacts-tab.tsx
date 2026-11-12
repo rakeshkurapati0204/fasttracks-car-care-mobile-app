@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
+import { SkeletonList } from '@/components/ui/skeleton';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Layout, MaxContentWidth, Spacing } from '@/constants/theme';
@@ -131,7 +132,7 @@ export function ContactsTab({ onCall, newPhone = '' }: { onCall: (digits: string
               <Pressable onPress={load} accessibilityRole="button" style={[styles.btn, { backgroundColor: theme.backgroundElement }]}><ThemedText>Retry</ThemedText></Pressable>
             </View>
           ) : list === null ? (
-            <ActivityIndicator style={styles.spinner} />
+            <View style={styles.spinner}><SkeletonList items={6} /></View>
           ) : list.length === 0 ? (
             <ThemedText type="small" themeColor="textSecondary">No contacts yet. Tap Add contact to save your first customer.</ThemedText>
           ) : shown.length === 0 ? (
@@ -170,7 +171,7 @@ const styles = StyleSheet.create({
   btn: { flex: 1, flexDirection: 'row', gap: Spacing.one, alignItems: 'center', justifyContent: 'center', borderRadius: Spacing.two, minHeight: Layout.minTouchTarget },
   btnLabel: { color: '#ffffff', fontWeight: '600' },
   gap: { gap: Spacing.two },
-  spinner: { marginTop: Spacing.three },
+  spinner: { marginTop: Spacing.three, paddingHorizontal: Spacing.three },
   count: { marginBottom: Spacing.one },
   item: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two, minHeight: Layout.minTouchTarget, borderBottomWidth: StyleSheet.hairlineWidth },
 });

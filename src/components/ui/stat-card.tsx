@@ -3,6 +3,7 @@ import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Fonts, FontWeights, Radii, Spacing, withAlpha } from '@/constants/theme';
+import { useCountUp } from '@/hooks/use-count-up';
 import { useTheme } from '@/hooks/use-theme';
 import { SkeletonCard } from '@/components/ui/skeleton';
 
@@ -27,6 +28,7 @@ export type StatCardProps = {
 // tinted icon tile, trend in success/danger/muted.
 export function StatCard({ label, value, subtitle, icon, color = 'primary', trend, trendValue, valueColor, loading = false, style }: StatCardProps) {
   const theme = useTheme();
+  const counted = useCountUp(value);
   if (loading) return <SkeletonCard style={style} />;
 
   const accent = theme[color];
@@ -43,7 +45,7 @@ export function StatCard({ label, value, subtitle, icon, color = 'primary', tren
         ) : null}
       </View>
       <View style={styles.valueRow}>
-        <ThemedText style={[styles.value, valueColor ? { color: valueColor } : null]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{value}</ThemedText>
+        <ThemedText style={[styles.value, valueColor ? { color: valueColor } : null]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{counted}</ThemedText>
         {trend && trendValue ? (
           <View style={styles.trend}>
             {trend !== 'neutral' ? <Ionicons name={trend === 'up' ? 'arrow-up' : 'arrow-down'} size={14} color={trendColor} /> : null}
