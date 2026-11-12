@@ -1,13 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { AppState, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CallRow } from '@/components/call-row';
 import { CustomerPhoneSearch } from '@/components/customer-phone-search';
 import { ContactsTab } from '@/components/contacts-tab';
 import { DialerPad } from '@/components/dialer-pad';
+import { SkeletonList } from '@/components/ui/skeleton';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
@@ -149,7 +150,7 @@ export default function CallsScreen() {
           <ThemedText type="smallBold">Retry</ThemedText>
         </Pressable>
       ) : calls === null ? (
-        <ActivityIndicator style={styles.spinner} />
+        <View style={styles.spinner}><SkeletonList items={6} /></View>
       ) : (
         <ScrollView
           contentContainerStyle={[styles.content, { paddingBottom: Spacing.three }]}
@@ -238,7 +239,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.three },
   section: { gap: Spacing.two },
   error: { color: '#B83030', marginHorizontal: Spacing.three, marginTop: Spacing.two },
-  spinner: { marginTop: Spacing.three },
+  spinner: { marginTop: Spacing.three, paddingHorizontal: Spacing.three },
   input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },
   chip: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one, borderRadius: 999, marginRight: Spacing.one },
   retry: { alignSelf: 'center', marginTop: Spacing.three, paddingHorizontal: Spacing.four, paddingVertical: Spacing.two },

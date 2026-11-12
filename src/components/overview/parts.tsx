@@ -1,3 +1,4 @@
+import { useCountUp } from '@/hooks/use-count-up';
 import { Children, createContext, useContext, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -115,6 +116,7 @@ const styles = StyleSheet.create({
 // Card with a 12px muted label, 24px bold mono value, and a 12px muted sub line.
 export function OverviewStat({ label, value, sub, color, compact }: { label: string; value: string | number; sub?: string; color?: string; compact?: boolean }) {
   const theme = useTheme();
+  const counted = useCountUp(value);
   return (
     <Card padding={compact ? 'sm' : 'md'} style={statStyles.card}>
       <ThemedText themeColor="textMuted" style={compact ? statStyles.labelCompact : statStyles.label} numberOfLines={1}>{label}</ThemedText>
@@ -123,7 +125,7 @@ export function OverviewStat({ label, value, sub, color, compact }: { label: str
         adjustsFontSizeToFit
         minimumFontScale={0.7}
         style={[compact ? statStyles.valueCompact : statStyles.value, { color: color ?? theme.text }]}>
-        {value}
+        {counted}
       </ThemedText>
       {sub ? <ThemedText themeColor="textMuted" style={compact ? statStyles.subCompact : statStyles.sub} numberOfLines={2}>{sub}</ThemedText> : null}
     </Card>
