@@ -58,15 +58,14 @@ export default function LoginScreen() {
   const cardY = useRef(0);
   const fieldY = useRef({ username: 0, password: 0 });
   const passwordRef = useRef<TextInput>(null);
-  // A wrong password or empty field makes the card shake once, so the failure is felt as well as read.
-  useEffect(() => { if (error) nudge(shake); }, [error, shake]);
-  const scrollTo = useCallback((key: 'username' | 'password') => {
+    const scrollTo = useCallback((key: 'username' | 'password') => {
     setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, cardY.current + fieldY.current[key] - 24), animated: true }), 150);
   }, []);
 
+  const fail = (msg: string) => { setError(msg); nudge(shake); }; // the card shakes on every failure, even a repeat of the same message
   const onSubmit = async () => {
     if (!username.trim() || !password.trim()) {
-      setError('Please enter both username and password.');
+      fail('Please enter both username and password.');
       return;
     }
     Keyboard.dismiss();
@@ -80,10 +79,10 @@ export default function LoginScreen() {
       } catch { /* remembering is a convenience only */ }
     } catch (err: unknown) {
       const e = err as { response?: { status?: number; data?: { message?: string; error?: string } } };
-      if (e?.response?.status === 429) setError('Too many login attempts. Please wait a few minutes before trying again.');
-      else if (e?.response?.status === 401) setError('Invalid username or password. Please try again.');
-      else if (e?.response?.data?.message ?? e?.response?.data?.error) setError((e.response!.data!.message ?? e.response!.data!.error) as string);
-      else setError('Unable to connect. Please check your connection and try again.');
+      if (e?.response?.status === 429) fail('Too many login attempts. Please wait a few minutes before trying again.');
+      else if (e?.response?.status === 401) fail('Invalid username or password. Please try again.');
+      else if (e?.response?.data?.message ?? e?.response?.data?.error) fail((e.response!.data!.message ?? e.response!.data!.error) as string);
+      else fail('Unable to connect. Please check your connection and try again.');
     } finally {
       setLoading(false);
     }

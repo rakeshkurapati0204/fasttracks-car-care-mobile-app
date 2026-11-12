@@ -89,7 +89,13 @@ export function PresenceScale({ show, children, style }: { show: boolean; childr
     level.value = withSpring(show ? 1 : 0, { damping: 16, stiffness: 300, mass: 0.6 });
   }, [show, level]);
   const anim = useAnimatedStyle(() => ({ opacity: Math.min(1, Math.max(0, level.value)), transform: [{ scale: 0.6 + 0.4 * level.value }, { translateX: (1 - level.value) * 10 }] }));
-  return <Animated.View style={[style, anim]} pointerEvents={show ? 'auto' : 'none'}>{children}</Animated.View>;
+  return <Animated.View
+      style={[style, anim]}
+      pointerEvents={show ? 'auto' : 'none'}
+      accessibilityElementsHidden={!show}
+      importantForAccessibility={show ? 'auto' : 'no-hide-descendants'}>
+      {children}
+    </Animated.View>;
 }
 
 function nudge(x: SharedValue<number>) {
