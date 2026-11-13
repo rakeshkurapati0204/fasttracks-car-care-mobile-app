@@ -39,8 +39,8 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#FFFFFF",
-          "image": "./assets/images/splash-blank.png",
-          "imageWidth": 90
+          "image": "./assets/images/brand-logo-icon.png",
+          "imageWidth": 100
         }
       ],
       "expo-secure-store",
@@ -62,6 +62,12 @@
       "expo-sharing",
       "@react-native-community/datetimepicker",
       "expo-audio",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Fasttracks copies your phone contacts into the app so you can call them from here. The owner can see the contacts you save."
+        }
+      ],
       "./plugins/with-exotel-voice",
       "./plugins/with-fasttracks-dialer"
     ],

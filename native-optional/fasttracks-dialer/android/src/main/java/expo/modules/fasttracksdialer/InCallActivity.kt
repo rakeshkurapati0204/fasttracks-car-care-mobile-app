@@ -23,7 +23,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * The call screen of a modern phone app, black with round controls: who you are talking to, a running timer, Mute / Keypad / Speaker / Hold and a red End
+ * The call screen of a modern phone app, a deep blue-teal gradient with a green-ringed avatar and round controls: who you are talking to, a running timer, Mute / Keypad / Speaker / Hold and a red End
  * button; Decline / Accept while a call rings. The Keypad sends real DTMF tones (menus, extensions). Plain views on purpose: it must open instantly on a
  * locked screen without waiting for React Native. Closes itself when no call is left.
  * For a click-to-call (Exotel) call the Android call is with the company line, so the title shows the customer the salesman dialled (CallRegistry.exotelLabel).
@@ -93,11 +93,25 @@ class InCallActivity : Activity() {
     super.onCreate(savedInstanceState)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) { setShowWhenLocked(true); setTurnScreenOn(true) }
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // on speaker the salesman looks at the screen; the proximity lock below turns it off at the ear
-    window.statusBarColor = Color.BLACK
-    window.navigationBarColor = Color.BLACK
-    val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setBackgroundColor(Color.BLACK); setPadding(dp(20), dp(80), dp(20), dp(44)) }
+    window.statusBarColor = BG_TOP
+    window.navigationBarColor = BG_BOTTOM
+    val root = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(20), dp(64), dp(20), dp(44))
+      background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(BG_TOP, BG_MID, BG_BOTTOM))
+    }
 
-    title = TextView(this).apply { setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f); gravity = Gravity.CENTER; maxLines = 2 }
+    // The person on the other end: a round avatar with a green ring, above the name.
+    val personIcon = ImageView(this).apply {
+      setImageResource(R.drawable.ft_ic_person); setColorFilter(Color.parseColor("#9FD8FF"))
+      layoutParams = FrameLayout.LayoutParams(dp(60), dp(60), Gravity.CENTER)
+    }
+    val avatar = FrameLayout(this).apply {
+      background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#12324A")); setStroke(dp(4), GREEN) }
+      addView(personIcon)
+    }
+    root.addView(avatar, LinearLayout.LayoutParams(dp(116), dp(116)).apply { bottomMargin = dp(20) })
+
+    title = TextView(this).apply { setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f); gravity = Gravity.CENTER; maxLines = 2 }
     status = TextView(this).apply { setTextColor(Color.parseColor("#C7C7CC")); setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f); gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }
     subtitle = TextView(this).apply { setTextColor(Color.parseColor("#8E8E93")); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) }
     for (v in listOf(title, status, subtitle)) root.addView(v, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -117,8 +131,7 @@ class InCallActivity : Activity() {
     keypad = buildKeypad()
     root.addView(keypad, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-    val end = control(R.drawable.ft_ic_call_end, "", 72, RED) { CallRegistry.current()?.disconnect() }
-    end.label.visibility = View.GONE
+    val end = control(R.drawable.ft_ic_call_end, "End Call", 72, RED) { CallRegistry.current()?.disconnect() }
     endRow = row(end.box).apply { setPadding(0, dp(20), 0, 0) }
     root.addView(endRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -231,7 +244,10 @@ class InCallActivity : Activity() {
   }
 
   private companion object {
-    val OFF: Int = Color.parseColor("#2C2C2E")
+    val OFF: Int = Color.parseColor("#1F4561")
+    val BG_TOP: Int = Color.parseColor("#0F4C63")
+    val BG_MID: Int = Color.parseColor("#0A2A40")
+    val BG_BOTTOM: Int = Color.parseColor("#071827")
     val RED: Int = Color.parseColor("#FF3B30")
     val GREEN: Int = Color.parseColor("#34C759")
   }
