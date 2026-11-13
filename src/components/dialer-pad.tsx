@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { ActivityIndicator, AppState, Keyboard, Platform, Pressable, StyleSheet, TextInput, Vibration, View } from 'react-native';
@@ -14,7 +15,7 @@ import { loadDialContacts } from '@/lib/dial-contacts';
 import { dialBlockedReason, newDialKey, toE164India } from '@/lib/dial';
 import { askForPhoneAppRole, confirmCall, placeCall, warmAutoAnswerHint } from '@/lib/dial-flow';
 import { getCallCapabilities, peekCallCapabilities } from '@/lib/call-caps';
-import { applyFieldText, deleteBack, insertDigit, MAX_DIGITS, spaced, toDigit, toField, type DialInput } from '@/lib/dial-input.ts';
+import { applyFieldText, deleteBack, digitsFromClipboard, insertDigit, MAX_DIGITS, spaced, toDigit, toField, type DialInput } from '@/lib/dial-input.ts';
 import { getVoipEngine, voipApi, voipCcmApi } from '@/lib/voip';
 import { useVoipCall } from '@/lib/voip/use-voip-call.ts';
 import type { CallCapabilities } from '@/types/api';
@@ -124,6 +125,19 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
   const invalid = digits.length === MAX_DIGITS && !valid;
   const tap = () => { if (Platform.OS === 'android') Vibration.vibrate(8); };
   const edit = (next: DialInput) => { setResult(null); setInput(next); };
+  // The system keyboard never opens here, so the phone's own Paste/Copy popup is unreliable on a few phones: these two buttons always work.
+  const pasteNumber = async () => {
+    tap();
+    const text = await Clipboard.getStringAsync().catch(() => '');
+    const d = digitsFromClipboard(text);
+    if (d) edit({ digits: d, start: d.length, end: d.length });
+    else setResult({ ok: false, text: 'There is no number to paste.' });
+  };
+  const copyNumber = async () => {
+    tap();
+    await Clipboard.setStringAsync(digits).catch(() => {});
+    setResult({ ok: true, text: 'Number copied.' });
+  };
 
   const call = async () => {
     const e164 = toE164India(digits);
@@ -223,6 +237,15 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
             style={[styles.number, { color: invalid ? theme.danger : theme.text }]}
           />
           </NumberMotion>
+          <Pressable
+            onPress={digits.length > 0 ? copyNumber : pasteNumber}
+            accessibilityRole="button"
+            accessibilityLabel={digits.length > 0 ? 'Copy number' : 'Paste number'}
+            hitSlop={Spacing.two}
+            style={styles.clipboard}>
+            <Ionicons name={digits.length > 0 ? 'copy-outline' : 'clipboard-outline'} size={16} color={theme.primary} />
+            <ThemedText type="small" style={{ color: theme.primary }}>{digits.length > 0 ? 'Copy' : 'Paste'}</ThemedText>
+          </Pressable>
           {autoOn && isPhoneApp ? (
             <ThemedText type="small" style={[styles.setupLink, { color: theme.success, textAlign: 'center' }]}>Instant calling is on</ThemedText>
           ) : null}
@@ -298,6 +321,7 @@ const styles = StyleSheet.create({
   display: { flex: 1, alignItems: 'stretch', justifyContent: 'flex-end', paddingBottom: Spacing.three },
   // Fixed size: 10 digits + one space always fit a phone's width.
   number: { fontSize: 36, lineHeight: 46, fontWeight: '400', letterSpacing: 1, textAlign: 'center', paddingVertical: Spacing.two, borderWidth: 0, outlineWidth: 0 },
+  clipboard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.one, minHeight: 44, paddingHorizontal: Spacing.three },
   setupLink: { alignItems: 'center', paddingBottom: Spacing.one },
   statusSlot: { minHeight: 24, alignItems: 'center', justifyContent: 'center' },
   status: { textAlign: 'center', paddingHorizontal: Spacing.three },

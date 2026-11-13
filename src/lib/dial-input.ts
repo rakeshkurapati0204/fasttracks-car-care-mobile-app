@@ -58,6 +58,14 @@ export function mobileFromPaste(text: string): string | null {
   return /^[6-9]\d{9}$/.test(d) ? d : null;
 }
 
+/** What the Paste button puts in the field: the mobile number found in the copied text, else its digits (up to 10); null when it holds no digit. */
+export function digitsFromClipboard(text: string): string | null {
+  const full = mobileFromPaste(text);
+  if (full) return full;
+  const d = text.replace(INVISIBLE, '').replace(/\D/g, '').slice(0, MAX_DIGITS);
+  return d.length > 0 ? d : null;
+}
+
 /**
  * The field's text changed by Android itself (Paste, Cut, a hardware keyboard). `prev` is the state before, `text` what the field now holds.
  * A pasted full mobile number replaces whatever was there (like the phone's dialer); otherwise the field keeps its digits, up to 10.

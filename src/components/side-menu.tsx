@@ -147,7 +147,6 @@ function SidebarContent({ onNavigate, compact = false, onToggle }: { onNavigate?
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user, signOut } = useAuth();
-  const { setMenuStyle } = useDrawer();
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -273,16 +272,6 @@ function SidebarContent({ onNavigate, compact = false, onToggle }: { onNavigate?
             </View>
           )}
         </View>
-
-        {/* Pinned sidebar -> slide-out menu (the default): the person's own choice (layout-mode.ts). */}
-        <Pressable
-          onPress={() => setMenuStyle('slide')}
-          accessibilityRole="button"
-          accessibilityLabel="Use the slide-out menu"
-          style={({ pressed }) => [compact ? styles.rowCompact : styles.row, pressed && { backgroundColor: theme.background }]}>
-          <Ionicons name="swap-horizontal-outline" size={20} color={theme.textSecondary} />
-          {compact ? null : <ThemedText style={[styles.rowLabel, { color: theme.textSecondary }]}>Slide-out menu</ThemedText>}
-        </Pressable>
 
         {/* The app is light-only today (use-color-scheme.ts returns 'light' on purpose), so
             there is no theme to switch yet. The row is here to match the dashboard. */}

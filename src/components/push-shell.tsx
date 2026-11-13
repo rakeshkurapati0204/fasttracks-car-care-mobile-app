@@ -15,7 +15,7 @@ import { useAuth } from '@/lib/auth-context';
 import { avatarColor } from '@/lib/call-format';
 import { initials } from '@/lib/call-tracker-format';
 import { useDrawer, useIsDocked } from '@/lib/drawer-context';
-import { canPin, slideDistance } from '@/lib/layout-mode';
+import { slideDistance } from '@/lib/layout-mode';
 import { ROLE_LABELS } from '@/lib/labels';
 import { follow, glide } from '@/lib/motion';
 
@@ -114,8 +114,6 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
   const insets = useSafeAreaInsets();
   const { user, signOut } = useAuth();
   const { nodes, activeId, go } = useMenuModel('', onClose, NAV_DELAY_MS);
-  const { setMenuStyle } = useDrawer();
-  const { width } = useWindowDimensions();
   const name = user?.name || 'User';
   const role = user?.role ? (ROLE_LABELS[user.role] ?? user.role) : '';
   let n = 0; // running index, so the entries arrive one after another
@@ -176,12 +174,6 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
       </ScrollView>
 
       <View style={[styles.bottom, { paddingBottom: insets.bottom + 16 }]}>
-        {canPin(width) ? (
-          <Pressable onPress={() => { onClose(); setMenuStyle('pinned'); }} accessibilityRole="button" accessibilityLabel="Pin the sidebar" style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
-            <Ionicons name="swap-horizontal-outline" size={20} color="#ffffff" />
-            <ThemedText style={styles.rowLabel}>Pin sidebar</ThemedText>
-          </Pressable>
-        ) : null}
         <Pressable onPress={() => { onClose(); signOut(); }} accessibilityRole="button" accessibilityLabel="Logout" style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
           <MenuIcon id="sign-out" color="#ffffff" size={20} />
           <ThemedText style={styles.rowLabel}>Logout</ThemedText>

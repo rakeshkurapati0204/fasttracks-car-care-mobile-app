@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyFieldText, deleteBack, insertDigit, mobileFromPaste, spaced, toDigit, toField, type DialInput } from './dial-input.ts';
+import { applyFieldText, deleteBack, digitsFromClipboard, insertDigit, mobileFromPaste, spaced, toDigit, toField, type DialInput } from './dial-input.ts';
 
 const S = (digits: string, start = digits.length, end = start): DialInput => ({ digits, start, end });
 
@@ -49,4 +49,13 @@ test('cut and typing through the field keep the digits', () => {
   assert.deepEqual(applyFieldText(S('9848012345', 0, 10), ''), S(''));
   assert.deepEqual(applyFieldText(S('98480'), '984801'), S('984801'));
   assert.deepEqual(applyFieldText(S('98480', 2), '987480'), S('987480', 3));
+});
+
+test('Paste takes the mobile number out of copied text, or its digits, or nothing', () => {
+  assert.equal(digitsFromClipboard('+91 98480 12345'), '9848012345');
+  assert.equal(digitsFromClipboard('Call Rohit on 09848012345 today'), '9848012345');
+  assert.equal(digitsFromClipboard('98480 123'), '98480123');
+  assert.equal(digitsFromClipboard('12345678901234'), '1234567890');
+  assert.equal(digitsFromClipboard('no number here'), null);
+  assert.equal(digitsFromClipboard(''), null);
 });

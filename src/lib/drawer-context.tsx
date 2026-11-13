@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 
-import { isPinned, parseMenuStyle, type MenuStyle } from '@/lib/layout-mode';
+import { isPinned, type MenuStyle } from '@/lib/layout-mode';
 import { fitWidth, parseSavedWidth, SIDEBAR_DEFAULT, SIDEBAR_RAIL, toggledWidth } from '@/lib/sidebar-width';
 
 interface DrawerContextValue {
@@ -17,7 +17,6 @@ interface DrawerContextValue {
   toggleSidebar: () => void;
   /** Slide-out menu (the default, any window size) or a pinned sidebar (the person's choice, when the window has room). */
   menuStyle: MenuStyle;
-  setMenuStyle: (style: MenuStyle) => void;
 }
 
 // Is the sidebar pinned beside the content, or a slide-out menu? The slide-out menu is the default at every size; the person can pin the sidebar when the window has room (layout-mode.ts).
@@ -59,7 +58,6 @@ export function useContentWidth() {
 }
 
 const WIDTH_KEY = 'ft_sidebar_width';
-const STYLE_KEY = 'ft_menu_style';
 
 // Small preference, so the device's secure store on the phone and localStorage on the web. Any failure just means the default width next time.
 async function loadWidth(): Promise<number> {
@@ -79,25 +77,9 @@ async function saveWidth(w: number): Promise<void> {
   }
 }
 
-async function loadStyle(): Promise<MenuStyle> {
-  try {
-    return parseMenuStyle(Platform.OS === 'web' ? window.localStorage.getItem(STYLE_KEY) : await SecureStore.getItemAsync(STYLE_KEY));
-  } catch {
-    return 'slide';
-  }
-}
-async function saveStyle(style: MenuStyle): Promise<void> {
-  try {
-    if (Platform.OS === 'web') window.localStorage.setItem(STYLE_KEY, style);
-    else await SecureStore.setItemAsync(STYLE_KEY, style);
-  } catch {
-    /* not saved: the next start uses the slide-out menu */
-  }
-}
-
 export function DrawerProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [menuStyle, setStyle] = useState<MenuStyle>('slide');
+  const menuStyle: MenuStyle = 'slide'; // the slide-out menu is the only menu (an earlier build's pinned-sidebar choice is ignored)
   const [sidebarWidth, setWidth] = useState(SIDEBAR_DEFAULT);
   const lastExpanded = useRef(SIDEBAR_DEFAULT);
 
@@ -108,13 +90,7 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
       if (w !== SIDEBAR_RAIL) lastExpanded.current = w;
       setWidth(w);
     });
-    loadStyle().then((st) => { if (alive) setStyle(st); });
     return () => { alive = false; };
-  }, []);
-
-  const setMenuStyle = useCallback((st: MenuStyle) => {
-    setStyle(st);
-    void saveStyle(st);
   }, []);
 
   const setSidebarWidth = useCallback((w: number) => {
@@ -142,9 +118,8 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
       setSidebarWidth,
       toggleSidebar,
       menuStyle,
-      setMenuStyle,
     }),
-    [isOpen, sidebarWidth, setSidebarWidth, toggleSidebar, menuStyle, setMenuStyle]
+    [isOpen, sidebarWidth, setSidebarWidth, toggleSidebar, menuStyle]
   );
 
   return <DrawerContext.Provider value={value}>{children}</DrawerContext.Provider>;
