@@ -1,5 +1,5 @@
 import { useCountUp } from '@/hooks/use-count-up';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Stack } from 'expo-router';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { FlatList, Linking, Pressable, RefreshControl, StyleSheet, TextInput, View } from 'react-native';

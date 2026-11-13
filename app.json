@@ -69,7 +69,8 @@
         }
       ],
       "./plugins/with-exotel-voice",
-      "./plugins/with-fasttracks-dialer"
+      "./plugins/with-fasttracks-dialer",
+      "./plugins/with-phone-abis"
     ],
     "experiments": {
       "typedRoutes": true,

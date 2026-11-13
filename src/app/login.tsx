@@ -3,7 +3,7 @@ import Animated, { FadeInDown, useAnimatedStyle, useSharedValue } from 'react-na
 
 import { shake as shakeCard } from '@/lib/motion';
 import { BrandLoading } from '@/components/brand-loading';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Keyboard, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';

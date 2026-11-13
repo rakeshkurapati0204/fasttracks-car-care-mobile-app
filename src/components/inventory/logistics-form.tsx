@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';

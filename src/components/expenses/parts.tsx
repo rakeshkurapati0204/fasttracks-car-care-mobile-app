@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, TextInput, useColorScheme, View } from 'react-native';

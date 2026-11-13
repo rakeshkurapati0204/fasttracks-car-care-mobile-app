@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Avatar, FadeIn, PRESSED_OPACITY, SectionTitle } from '@/components/call-tracker/primitives';
