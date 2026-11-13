@@ -1,5 +1,7 @@
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { createLatest } from '@/lib/latest';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -36,36 +38,46 @@ export default function CrmScreen() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
 
+  // The search box sends one request when typing pauses, and a slow old answer can never overwrite a newer one.
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [latest] = useState(createLatest);
+
   const load = useCallback(async (p: number, s: string, append: boolean) => {
+    const ticket = append ? latest.current() : latest.next(); // a new list replaces everything; a next page only adds to the current list
     setError(null);
     try {
       const res = await fetchCrmCustomers(p, PAGE_SIZE, s || undefined);
+      if (!latest.isCurrent(ticket)) return;
       setCustomers((prev) => (append && prev ? [...prev, ...res.customers] : res.customers));
       setHasMore(p * PAGE_SIZE < res.total);
     } catch (err: any) {
+      if (!latest.isCurrent(ticket)) return;
       setError(getErrorMessage(err, 'Could not load customers.'));
       if (!append) setCustomers([]);
     }
-  }, []);
+  }, [latest]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
-    load(1, search, false);
+    load(1, debouncedSearch, false);
     setPage(1);
-  }, [load, search]);
+  }, [load, debouncedSearch]);
 
   const onRefresh = async () => {
     setIsRefreshing(true);
-    await load(1, search, false);
+    await load(1, debouncedSearch, false);
     setPage(1);
     setIsRefreshing(false);
   };
 
+  // The list can ask for the next page several times while one is still loading: only one is in flight at a time.
+  const loadingMore = useRef(false);
   const loadMore = () => {
-    if (!hasMore) return;
+    if (!hasMore || loadingMore.current) return;
+    loadingMore.current = true;
     const next = page + 1;
     setPage(next);
-    load(next, search, true);
+    void load(next, debouncedSearch, true).finally(() => { loadingMore.current = false; });
   };
 
   return (

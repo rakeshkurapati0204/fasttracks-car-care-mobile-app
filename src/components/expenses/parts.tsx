@@ -271,6 +271,7 @@ export function SmallBtn({ label, onPress, disabled, tone }: { label: string; on
     <Pressable
       onPress={onPress}
       disabled={disabled}
+      hitSlop={6}
       accessibilityRole="button"
       style={[styles.small, { backgroundColor: base.bg, borderColor: tone === 'plain' || !tone ? theme.border : 'transparent', borderWidth: tone && tone !== 'plain' ? 0 : 1, opacity: disabled ? 0.5 : 1 }]}>
       <ThemedText style={[styles.smallText, { color: base.fg }]}>{label}</ThemedText>

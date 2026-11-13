@@ -4,10 +4,11 @@ import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import {
-  ActivityIndicator, Alert, AppState, FlatList, Keyboard, Platform, Pressable, Share, StyleSheet, TextInput, View,
+  ActivityIndicator, Alert, FlatList, Keyboard, Platform, Pressable, Share, StyleSheet, TextInput, View,
 } from 'react-native';
 
 import { Sheet } from '@/components/customers/sheet';
+import { usePolling } from '@/hooks/use-polling';
 import { SuccessBanner } from '@/components/onboarding/form-parts';
 import { ErrorBanner } from '@/components/overview/parts';
 import { ThemedText } from '@/components/themed-text';
@@ -152,12 +153,7 @@ export function ChatThread({
     loadPins();
   }, [loadNewest, loadPins]);
 
-  useEffect(() => {
-    const t = setInterval(() => {
-      if (AppState.currentState === 'active') { loadNewest(false); loadPins(); }
-    }, THREAD_POLL_MS);
-    return () => clearInterval(t);
-  }, [loadNewest, loadPins]);
+  usePolling(async () => { loadPins(); await loadNewest(false); }, THREAD_POLL_MS);
 
   useEffect(() => () => { if (hlTimer.current) clearTimeout(hlTimer.current); }, []);
 

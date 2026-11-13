@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, AppState, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Sheet } from '@/components/customers/sheet';
@@ -10,8 +10,11 @@ import { FontWeights } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import {
   assignConversation, fetchConversation, fetchEmployees, flagConversationHighValue, getErrorMessage,
-  initiateConversationCall, sendConversationMessage, updateConversationStatus,
+  initiateConversationCall, sendConversationMedia, sendConversationMessage, updateConversationStatus, uploadConversationFile,
 } from '@/lib/api';
+import { pickFromCamera, pickFromGallery } from '@/lib/upload';
+import { tokenStorage } from '@/lib/token-storage';
+import { usePolling } from '@/hooks/use-polling';
 import { useAuth } from '@/lib/auth-context';
 import type { Conversation, ConversationMessage } from '@/types/api';
 
@@ -26,10 +29,11 @@ const CALL_ROLES = ['OWNER', 'STORE_MANAGER', 'SALES'];
 
 type Item = { msg: ConversationMessage; divider: string | null };
 
-function Bubble({ item }: { item: Item }) {
+function Bubble({ item, token }: { item: Item; token: string | null }) {
   const theme = useTheme();
   const { msg, divider } = item;
   const mine = msg.senderType === 'EMPLOYEE';
+  const isImage = !!msg.mediaUrl && (msg.messageType === 'image' || (msg.mediaType ?? '').startsWith('image/'));
   return (
     <View>
       {divider ? (
@@ -51,7 +55,17 @@ function Bubble({ item }: { item: Item }) {
                 ? { backgroundColor: theme.primary, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 18, borderBottomRightRadius: 4 }
                 : { backgroundColor: theme.backgroundElement, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderBottomLeftRadius: 4, borderBottomRightRadius: 18 },
             ]}>
-            <ThemedText style={[styles.bubbleText, { color: mine ? '#ffffff' : theme.text }]}>{msg.content}</ThemedText>
+            {isImage ? (
+              <Image
+                source={{ uri: msg.mediaUrl as string, headers: token && (msg.mediaUrl as string).includes('/conversations/media/') ? { Authorization: `Bearer ${token}` } : undefined }}
+                style={styles.photo}
+                resizeMode="cover"
+                accessibilityLabel="Photo"
+              />
+            ) : null}
+            {isImage && !(msg.caption ?? '').trim() ? null : (
+              <ThemedText style={[styles.bubbleText, { color: mine ? '#ffffff' : theme.text }]}>{isImage ? msg.caption : msg.content}</ThemedText>
+            )}
           </View>
           <ThemedText themeColor="textMuted" style={[styles.stamp, { textAlign: mine ? 'right' : 'left' }]}>{formatTime(msg.createdAt)}</ThemedText>
           {mine && msg.deliveryStatus === 'FAILED' ? (
@@ -84,6 +98,8 @@ export function ChatPanel({
   const [assignee, setAssignee] = useState(conv.assignedTo?.name ?? '');
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  useEffect(() => { tokenStorage.get().then(setToken).catch(() => setToken(null)); }, []);
   const [error, setError] = useState('');
   // A call conversation opens on its Calls tab, as on the dashboard.
   const [detailTab, setDetailTab] = useState<'whatsapp' | 'calls'>(conv.category === 'CALL' ? 'calls' : 'whatsapp');
@@ -119,9 +135,8 @@ export function ChatPanel({
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load the full thread on open
     refresh();
-    const t = setInterval(() => { if (AppState.currentState === 'active') refresh(); }, POLL_MS);
-    return () => clearInterval(t);
   }, [refresh]);
+  usePolling(refresh, POLL_MS);
 
   const items = useMemo<Item[]>(() => {
     const asc = messages.map((msg, i) => {
@@ -148,6 +163,34 @@ export function ChatPanel({
     } finally {
       setSending(false);
     }
+  };
+
+  // Photo: pick from the camera or the gallery, upload it, and send it to the customer (the text typed so far goes along as its caption).
+  const sendPhoto = async (pick: () => Promise<Awaited<ReturnType<typeof pickFromGallery>>>) => {
+    if (sending) return;
+    const picked = await pick();
+    if (!picked) return;
+    setSending(true);
+    setError('');
+    try {
+      const up = await uploadConversationFile({ uri: picked.uri, name: picked.name, mimeType: picked.mimeType });
+      const msg = await sendConversationMedia(conv.id, { mediaUrl: up.url, mediaType: up.mimeType, fileName: up.fileName, caption: reply.trim() || undefined });
+      merge([msg]);
+      setStatus('ACTIVE');
+      setReply('');
+      onUpdated?.({ id: conv.id, status: 'ACTIVE', lastMessageAt: msg.createdAt });
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, 'Could not send that photo.'));
+    } finally {
+      setSending(false);
+    }
+  };
+  const addPhoto = () => {
+    Alert.alert('Send a photo', undefined, [
+      { text: 'Take a photo', onPress: () => { void sendPhoto(() => pickFromCamera()); } },
+      { text: 'Choose from gallery', onPress: () => { void sendPhoto(() => pickFromGallery()); } },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const changeStatus = async (next: string) => {
@@ -296,7 +339,7 @@ export function ChatPanel({
             inverted
             data={items}
             keyExtractor={(i) => i.msg.id}
-            renderItem={({ item }) => <Bubble item={item} />}
+            renderItem={({ item }) => <Bubble item={item} token={token} />}
             contentContainerStyle={styles.thread}
             ListEmptyComponent={
               <View style={styles.invertFix}>
@@ -306,6 +349,14 @@ export function ChatPanel({
             keyboardShouldPersistTaps="handled"
           />
           <View style={[styles.composer, { borderTopColor: theme.border, paddingBottom: Math.max(8, insets.bottom) }]}>
+            <Pressable
+              onPress={addPhoto}
+              disabled={sending}
+              accessibilityRole="button"
+              accessibilityLabel="Send a photo"
+              style={[styles.send, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              <Ionicons name="image-outline" size={20} color={sending ? theme.textMuted : theme.text} />
+            </Pressable>
             <TextInput
               value={reply}
               onChangeText={setReply}
@@ -380,6 +431,7 @@ const styles = StyleSheet.create({
   sender: { fontSize: 10, lineHeight: 14, paddingHorizontal: 4, marginBottom: 2 },
   bubble: { paddingHorizontal: 14, paddingVertical: 8 },
   bubbleText: { fontSize: 14, lineHeight: 20 },
+  photo: { width: 220, height: 220, borderRadius: 12, marginBottom: 6, backgroundColor: '#00000010' },
   stamp: { fontSize: 9, lineHeight: 12, paddingHorizontal: 4, marginTop: 2 },
   failed: { fontSize: 9, lineHeight: 12, paddingHorizontal: 4, marginTop: 2, fontFamily: FontWeights.medium, textAlign: 'right' },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 12, paddingTop: 8, borderTopWidth: 1 },

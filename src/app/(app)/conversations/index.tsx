@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AppState, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ChatPanel } from '@/components/conversations/chat';
@@ -14,6 +14,7 @@ import { Button, Card, Skeleton } from '@/components/ui';
 import { FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { fetchAssignableEmployees, fetchConversationList, fetchConversationStats, fetchStaffPhoneNumbers, getErrorMessage } from '@/lib/api';
+import { usePolling } from '@/hooks/use-polling';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
 import type { Conversation, ConversationCategory, ConversationStats, StaffPhoneNumberRow } from '@/types/api';
@@ -28,6 +29,9 @@ const TABS: { key: ConversationCategory; label: string; description: string }[] 
   { key: 'EMPLOYEE', label: 'Employee Messages', description: 'System messages sent to staff' },
   { key: 'OWNER', label: 'Founder', description: 'AI alerts, summaries & flags' },
 ];
+
+// A salesman only ever gets their own customer chats and calls from the server; the other tabs are for managers.
+const tabsFor = (role: string | undefined) => (role === 'SALES' ? TABS.filter((t) => t.key === 'CUSTOMER_WHATSAPP' || t.key === 'CALL') : TABS);
 
 const STATUS_FILTERS = [
   { key: 'ALL', label: 'All' },
@@ -60,8 +64,12 @@ export default function ConversationsScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { status: permStatus, hasTab } = usePermissions();
-  const canAccess = user?.role === 'OWNER' || user?.role === 'STORE_MANAGER' || hasTab('conversations');
+  // SALES is let in by role: the server already limits them to the WhatsApp/call conversations assigned to them (lib/conversationAccess.ts), so a salesman
+  // can read and answer their own customers but never anyone else's.
+  const canAccess = user?.role === 'OWNER' || user?.role === 'STORE_MANAGER' || user?.role === 'SALES' || hasTab('conversations');
   const isOwner = user?.role === 'OWNER';
+  const isSales = user?.role === 'SALES';
+  // Starting a new conversation is for managers (the server refuses a salesman).
 
   const [width, setWidth] = useState(0);
   const [activeTab, setActiveTab] = useState<ConversationCategory>('CUSTOMER_WHATSAPP');
@@ -142,13 +150,7 @@ export default function ConversationsScreen() {
   }, [canAccess, loadStats]);
 
   // Live updates: re-read the list quietly while the app is in the foreground.
-  useEffect(() => {
-    if (!canAccess || isInstagram) return;
-    const t = setInterval(() => {
-      if (AppState.currentState === 'active') { load(true); loadStats(); }
-    }, LIST_POLL_MS);
-    return () => clearInterval(t);
-  }, [canAccess, isInstagram, load, loadStats]);
+  usePolling(async () => { await Promise.all([load(true), loadStats()]); }, LIST_POLL_MS, canAccess && !isInstagram);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -200,7 +202,7 @@ export default function ConversationsScreen() {
         </View>
         <View style={styles.topBtns}>
           {isOwner ? <Button variant="outline" size="sm" onPress={() => setShowManage(true)}>Manage Numbers</Button> : null}
-          <Button size="sm" icon="add" onPress={() => setShowNew(true)}>New conversation</Button>
+          {isSales ? null : <Button size="sm" icon="add" onPress={() => setShowNew(true)}>New conversation</Button>}
         </View>
       </View>
       {wide ? (
@@ -219,7 +221,7 @@ export default function ConversationsScreen() {
   const tabsBar = (
     <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tabs, { borderBottomColor: theme.border }]}>
-        {TABS.map((tab) => {
+        {tabsFor(user?.role).map((tab) => {
           const on = activeTab === tab.key;
           const n = stats.byCategory[tab.key] ?? 0;
           return (

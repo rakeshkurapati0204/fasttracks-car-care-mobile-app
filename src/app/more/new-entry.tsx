@@ -80,7 +80,7 @@ function Section({ title, hint, optional, right, children }: { title: string; hi
   return (
     <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
       <View style={styles.between}>
-        <View style={styles.flex1}>
+        <View style={right ? styles.titleFixed : styles.flex1}>
           <ThemedText themeColor="textMuted" style={styles.sectionTitle}>
             {title}
             {optional ? <ThemedText themeColor="textMuted" style={styles.optional}>{' (optional)'}</ThemedText> : null}
@@ -496,7 +496,9 @@ const styles = StyleSheet.create({
   roleBtn: { flexGrow: 1, flexBasis: '45%', minHeight: 44, paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radii.md, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   roleText: { fontSize: 14, lineHeight: 20, fontFamily: FontWeights.semiBold, textAlign: 'center' },
   driverBox: { borderWidth: 1, borderStyle: 'dashed', borderRadius: Radii.md, padding: 16, gap: 12 },
-  toggle: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
+  // The section title keeps its natural width; the long text beside a toggle is what wraps, never the title.
+  titleFixed: { flexShrink: 0 },
+  toggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flex: 1 },
   toggleText: { flexShrink: 1 },
   noVehicle: { borderWidth: 1, borderStyle: 'dashed', borderRadius: Radii.md, paddingVertical: 12, paddingHorizontal: 16 },
   drop: { borderWidth: 2, borderStyle: 'dashed', borderRadius: Radii.md, minHeight: 120, alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 24 },

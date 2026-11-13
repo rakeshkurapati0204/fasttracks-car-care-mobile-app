@@ -357,14 +357,31 @@ api.interceptors.response.use(
   }
 );
 
-export async function login(username: string, password: string) {
-  const { data } = await api.post<ApiEnvelope<LoginResponse>>('/auth/login', { username, password });
+// `signal` lets the sign-in screen cancel a request that is taking too long.
+export async function login(username: string, password: string, signal?: AbortSignal) {
+  const { data } = await api.post<ApiEnvelope<LoginResponse>>('/auth/login', { username, password }, { signal });
   return data.data;
 }
 
-export async function fetchProfile() {
-  const { data } = await api.get<ApiEnvelope<LoginResponse['user']>>('/auth/me');
-  return data.data;
+// GET /auth/me answers two questions: who is this (fetchProfile) and what may they open (fetchMyPermissions). Both are asked as the app starts; they share ONE
+// request while it is in flight instead of sending the same one twice.
+type MeResponse = LoginResponse['user'] & {
+  permissions?: Record<string, boolean> | null;
+  permissionModes?: Record<string, string> | null;
+  hasLegalAccess?: boolean;
+  hasAdsAccess?: boolean;
+};
+let meInFlight: Promise<MeResponse> | null = null;
+function fetchMe(opts?: { timeout?: number }): Promise<MeResponse> {
+  // A call with its own time limit (the start of the app, nothing stored to show yet) is never merged with another one.
+  if (opts?.timeout) return api.get<ApiEnvelope<MeResponse>>('/auth/me', { timeout: opts.timeout }).then((r) => r.data.data);
+  meInFlight ??= api.get<ApiEnvelope<MeResponse>>('/auth/me').then((r) => r.data.data).finally(() => { meInFlight = null; });
+  return meInFlight;
+}
+
+// `timeout` (ms) is for the start of the app when there is nothing stored to show yet: it must not wait the full default for a slow server.
+export async function fetchProfile(opts?: { timeout?: number }) {
+  return fetchMe(opts);
 }
 
 // GET /auth/me already computes { permissions, permissionModes, hasLegalAccess }
@@ -373,17 +390,12 @@ export async function fetchProfile() {
 // not a re-derivation. This is the sole source for PermissionsProvider
 // (src/lib/permissions-context.tsx); see MOBILE_PERMISSIONS_PATTERN.md.
 export async function fetchMyPermissions(): Promise<ResolvedPermissions> {
-  const { data } = await api.get<ApiEnvelope<{
-    permissions?: Record<string, boolean> | null;
-    permissionModes?: Record<string, string> | null;
-    hasLegalAccess?: boolean;
-    hasAdsAccess?: boolean;
-  }>>('/auth/me');
+  const me = await fetchMe();
   return {
-    tabs: data.data.permissions ?? {},
-    tabModes: data.data.permissionModes ?? {},
-    hasLegalAccess: data.data.hasLegalAccess === true,
-    hasAdsAccess: data.data.hasAdsAccess === true,
+    tabs: me.permissions ?? {},
+    tabModes: me.permissionModes ?? {},
+    hasLegalAccess: me.hasLegalAccess === true,
+    hasAdsAccess: me.hasAdsAccess === true,
   };
 }
 
@@ -526,6 +538,22 @@ export async function sendConversationMessage(id: string, content: string) {
   const { data } = await api.post<ApiEnvelope<ConversationMessage>>(`/conversations/${id}/messages`, {
     content,
   });
+  return data.data;
+}
+
+// A photo for a customer's WhatsApp chat: first the file goes to POST /conversations/upload, then it is sent as a message with the stored URL.
+export async function uploadConversationFile(file: { uri: string; name: string; mimeType: string }) {
+  const form = new FormData();
+  form.append('file', { uri: file.uri, name: file.name, type: file.mimeType } as any);
+  const { data } = await api.post<ApiEnvelope<{ url: string; type: string; mimeType: string; fileName: string; size: number }>>('/conversations/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  });
+  return data.data;
+}
+
+export async function sendConversationMedia(id: string, media: { mediaUrl: string; mediaType: string; fileName?: string; caption?: string }) {
+  const { data } = await api.post<ApiEnvelope<ConversationMessage>>(`/conversations/${id}/messages`, media);
   return data.data;
 }
 

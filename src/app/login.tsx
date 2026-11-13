@@ -1,4 +1,7 @@
-import Animated, { cancelAnimation, FadeInDown, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
+import { isCancel } from 'axios';
+import Animated, { FadeInDown, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+
+import { shake as shakeCard } from '@/lib/motion';
 import { BrandLoading } from '@/components/brand-loading';
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -20,12 +23,6 @@ import { tokenStorage } from '@/lib/token-storage';
 // error strip (also the session-expired message), Sign In, Forgot Password?, and the footer line. Not carried over
 // because they are web-only: the radial background glow and the install-app banner.
 const SESSION_EXPIRED = 'Your session expired. Please log in again.';
-
-function nudge(x: { value: number }) {
-  'worklet';
-  cancelAnimation(x as never);
-  x.value = withSequence(withTiming(-9, { duration: 50 }), withTiming(9, { duration: 70 }), withTiming(-6, { duration: 70 }), withTiming(4, { duration: 60 }), withTiming(0, { duration: 50 }));
-}
 
 export default function LoginScreen() {
   const { signIn, sessionExpired } = useAuth();
@@ -62,7 +59,12 @@ export default function LoginScreen() {
     setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, cardY.current + fieldY.current[key] - 24), animated: true }), 150);
   }, []);
 
-  const fail = (msg: string) => { setError(msg); nudge(shake); }; // the card shakes on every failure, even a repeat of the same message
+  const fail = (msg: string) => { setError(msg); shakeCard(shake); }; // the card shakes on every failure, even a repeat of the same message
+  // A sign-in that is taking too long can be cancelled from the loading screen; the request is really aborted, not just hidden.
+  const attempt = useRef<AbortController | null>(null);
+  const cancelSignIn = () => attempt.current?.abort();
+  useEffect(() => () => attempt.current?.abort(), []);
+
   const onSubmit = async () => {
     if (!username.trim() || !password.trim()) {
       fail('Please enter both username and password.');
@@ -72,12 +74,14 @@ export default function LoginScreen() {
     setLoading(true);
     setError('');
     try {
-      await signIn(username.trim(), password);
+      attempt.current = new AbortController();
+      await signIn(username.trim(), password, attempt.current.signal);
       try {
         if (rememberMe) await tokenStorage.setRememberedUsername(username.trim());
         else await tokenStorage.clearRememberedUsername();
       } catch { /* remembering is a convenience only */ }
     } catch (err: unknown) {
+      if (isCancel(err)) { setError('Sign in cancelled.'); return; }
       const e = err as { response?: { status?: number; data?: { message?: string; error?: string } } };
       if (e?.response?.status === 429) fail('Too many login attempts. Please wait a few minutes before trying again.');
       else if (e?.response?.status === 401) fail('Invalid username or password. Please try again.');
@@ -90,7 +94,7 @@ export default function LoginScreen() {
 
   return (
     <ThemedView style={[styles.flex1, { paddingBottom: keyboardH }]}>
-      {loading ? <BrandLoading /> : null}
+      {loading ? <BrandLoading onCancel={cancelSignIn} /> : null}
       <ScrollView
         ref={scrollRef}
         keyboardShouldPersistTaps="handled"

@@ -8,7 +8,7 @@ import {
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type Theme } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, View } from 'react-native';
+import { View } from 'react-native';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -16,14 +16,15 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { BrandSplash } from '@/components/brand-splash';
 import { MenuButton } from '@/components/menu-button';
+import { PushShell } from '@/components/push-shell';
 import { SideMenu } from '@/components/side-menu';
 import { Colors } from '@/constants/theme';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { DrawerProvider, useIsDocked } from '@/lib/drawer-context';
 import { PermissionsProvider } from '@/lib/permissions-context';
-import { runContactSync } from '@/lib/contact-sync-runner';
-import { stackAnimation } from '@/lib/side-nav';
-import { subscribeToNotificationTaps } from '@/lib/push-notifications';
+import { topLevelAnimation } from '@/lib/side-nav';
+import { startPostLoginTasks } from '@/lib/post-login-start';
+import { launchedFromNotification, subscribeToNotificationTaps } from '@/lib/push-notifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -54,42 +55,45 @@ const FasttracksDarkTheme: Theme = {
 function RootNavigator() {
   const { isReady, isAuthenticated, user } = useAuth();
   const docked = useIsDocked();
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
   });
 
-  const [splashDone, setSplashDone] = useState(false);
+  // Opened from a notification tap: straight to the screen that was asked for, no opening animation.
+  // A font that fails to load must not leave the app on the splash screen for ever: the system font is used instead.
+  const fontsReady = fontsLoaded || !!fontError;
+  const [splashDone, setSplashDone] = useState(() => launchedFromNotification());
   const finishSplash = useCallback(() => setSplashDone(true), []);
 
   useEffect(() => {
-    if (isReady && fontsLoaded) SplashScreen.hideAsync();
-  }, [isReady, fontsLoaded]);
+    if (isReady && fontsReady) SplashScreen.hideAsync();
+  }, [isReady, fontsReady]);
 
   useEffect(() => {
     return subscribeToNotificationTaps();
   }, []);
 
-  // Copies the phone's contacts into the app after login (asks once), then again whenever the app is opened (at most every 10 minutes), so a
-  // contact saved in the phone's own app reaches Fasttracks soon. See contact-sync-runner.ts.
+  // After sign-in: register for notifications, then copy the phone's contacts (asks once, then looks for new contacts once a day). They start only when the screen
+  // has been drawn and the opening animation is over, run one at a time so two dialogs are never on screen together, and stop when the person signs out.
+  const userId = user?.id;
+  const userRole = user?.role;
   useEffect(() => {
-    if (!user) return;
-    void runContactSync(user);
-    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') void runContactSync(user); });
-    return () => sub.remove();
-  }, [user]);
+    if (!userId || !userRole || !splashDone) return;
+    return startPostLoginTasks({ id: userId, role: userRole });
+  }, [userId, userRole, splashDone]);
 
-  if (!isReady || !fontsLoaded) return null;
+  if (!isReady || !fontsReady) return null;
 
   return (
     <View style={{ flex: 1, flexDirection: 'row' }}>
       {/* Wide screens: the sidebar is docked on the left and the screens sit to its right. */}
-      {isAuthenticated && docked ? <SideMenu variant="docked" /> : null}
+      {isAuthenticated && docked ? <SideMenu /> : null}
       {/* overflow hidden: whatever a screen draws while it transitions can never spill over the sidebar. */}
       <View style={{ flex: 1, overflow: 'hidden' }}>
-    <Stack screenOptions={{ animation: stackAnimation(docked) }}>
+    <Stack screenOptions={{ animation: topLevelAnimation(docked) }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       {/* Forgot Password is public and not guarded either way, so it never blocks a signed-in user. */}
       <Stack.Screen name="forgot-password" options={{ headerShown: false }} />
@@ -128,8 +132,9 @@ export default function RootLayout() {
         <AuthProvider>
           <PermissionsProvider>
             <DrawerProvider>
-              <RootNavigator />
-              <SideMenu variant="overlay" />
+              <PushShell>
+                <RootNavigator />
+              </PushShell>
             </DrawerProvider>
           </PermissionsProvider>
         </AuthProvider>

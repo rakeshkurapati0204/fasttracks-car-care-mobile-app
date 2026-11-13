@@ -150,14 +150,16 @@ export function ChatList({ list, myId, activeId, onOpen, onDropped, onEditNick, 
     const title = isGroup ? item.chat.name || 'Group Chat' : displayName(item.emp);
     const preview = last ? previewText(last) : null;
     const prefix = last ? (last.sender.id === myId ? 'You: ' : isGroup ? `${last.sender.name}: ` : '') : '';
+    // The row is a plain View with TWO separate pressables (open the chat / set a display name): a button inside a button is invalid and, on the web, a warning.
     return (
+      <View style={[styles.row, { backgroundColor: isActive ? theme.backgroundElement : 'transparent' }]}>
       <Pressable
         onPress={() => (isGroup ? onOpen(item.chat.id) : openPerson(item.emp, item.chat))}
         onLongPress={chat ? () => setMenu(chat) : undefined}
         delayLongPress={500}
         accessibilityRole="button"
         accessibilityLabel={title}
-        style={[styles.row, { backgroundColor: isActive ? theme.backgroundElement : 'transparent' }]}>
+        style={styles.rowMain}>
         <Avatar name={title} group={isGroup} dim={isGroup ? 0.8 : 0.75} />
         <View style={styles.flex1}>
           <View style={styles.rowTop}>
@@ -186,17 +188,18 @@ export function ChatList({ list, myId, activeId, onOpen, onDropped, onEditNick, 
         <View style={styles.rowEnd}>
           {last ? <ThemedText themeColor="textMuted" style={styles.time}>{fmtTime(last.sentAt)}</ThemedText> : null}
           <UnreadBadge count={unread} />
-          {!isGroup ? (
-            <Pressable
-              onPress={() => onEditNick(item.emp)}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={`Set display name for ${item.emp.name}`}>
-              <Ionicons name="pencil" size={14} color={theme.textMuted} style={{ opacity: 0.6 }} />
-            </Pressable>
-          ) : null}
         </View>
       </Pressable>
+      {!isGroup ? (
+        <Pressable
+          onPress={() => onEditNick(item.emp)}
+          hitSlop={14}
+          accessibilityRole="button"
+          accessibilityLabel={`Set display name for ${item.emp.name}`}>
+          <Ionicons name="pencil" size={14} color={theme.textMuted} style={{ opacity: 0.6 }} />
+        </Pressable>
+      ) : null}
+      </View>
     );
   };
 
@@ -298,12 +301,12 @@ const styles = StyleSheet.create({
   pane: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
   h1: { fontSize: 16, lineHeight: 24, fontFamily: FontWeights.bold },
-  groupBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, borderWidth: 1, minHeight: 32 },
+  groupBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, minHeight: 40 },
   groupBtnText: { fontSize: 12, lineHeight: 16 },
   searchWrap: { paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1 },
   search: { minHeight: 40, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, fontSize: 13 },
   tabs: { flexDirection: 'row', gap: 4, marginTop: 8 },
-  tab: { flex: 1, paddingVertical: 6, borderRadius: 8, borderWidth: 1, alignItems: 'center', minHeight: 32, justifyContent: 'center' },
+  tab: { flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 1, alignItems: 'center', minHeight: 40, justifyContent: 'center' },
   tabText: { fontSize: 11, lineHeight: 16, fontFamily: FontWeights.medium },
   banner: { padding: 12 },
   skels: { padding: 12, gap: 8 },
@@ -316,6 +319,7 @@ const styles = StyleSheet.create({
   preview: { fontSize: 12, lineHeight: 16 },
   nick: { paddingHorizontal: 4, borderRadius: 4, borderWidth: 1 },
   nickText: { fontSize: 9, lineHeight: 13 },
+  rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   rowEnd: { alignItems: 'flex-end', gap: 2 },
   time: { fontSize: 10, lineHeight: 14 },
   empty: { fontSize: 12, textAlign: 'center', paddingVertical: 32 },

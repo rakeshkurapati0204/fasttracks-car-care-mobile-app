@@ -48,6 +48,12 @@ export interface ConversationMessage {
   createdAt: string;
   deliveryStatus?: string | null;
   deliveryError?: string | null;
+  /** A photo/file message: where to load it, what it is, and the caption typed with it. */
+  messageType?: string | null;
+  mediaUrl?: string | null;
+  mediaType?: string | null;
+  caption?: string | null;
+  fileName?: string | null;
 }
 
 export interface Conversation {

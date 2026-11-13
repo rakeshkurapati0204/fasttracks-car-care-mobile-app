@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppState, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { AppState, FlatList, Pressable, RefreshControl, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CallRow } from '@/components/call-row';
@@ -9,6 +9,7 @@ import { CustomerPhoneSearch } from '@/components/customer-phone-search';
 import { ContactsTab } from '@/components/contacts-tab';
 import { DialerPad } from '@/components/dialer-pad';
 import { SkeletonList } from '@/components/ui/skeleton';
+import { MenuButton } from '@/components/menu-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
@@ -43,11 +44,13 @@ export default function CallsScreen() {
   const insets = useSafeAreaInsets();
   const docked = useIsDocked();
   const theme = useTheme();
-  const router = useRouter();
   const [tab, setTab] = useState<CallsTab>('dialer');
   const [dialSeed, setDialSeed] = useState<{ n: number; digits: string }>({ n: 0, digits: '' }); // a tapped contact: the dial pad is rebuilt with its number
   const [newContact, setNewContact] = useState<{ n: number; phone: string }>({ n: 0, phone: '' }); // "Add to contacts" on the dial pad
   const [padDigits, setPadDigits] = useState(''); // what is typed on the dial pad survives a visit to another tab
+  // Calls is a top-level screen reached from the menu, like the others: the menu button, never a back arrow (beside a pinned sidebar there is none).
+  // The options object is built once, not on every render: a new one each time makes the navigator rebuild the header (and the menu button in it).
+  const headerOptions = useMemo(() => ({ title: 'Calls', headerLeft: docked ? () => null : () => <MenuButton /> }), [docked]);
   const { user } = useAuth();
   const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
 
@@ -124,24 +127,9 @@ export default function CallsScreen() {
 
   return (
     <ThemedView style={styles.flex1}>
-      <Stack.Screen
-        options={{
-          title: 'Calls',
-          // Beside the docked sidebar Calls is a top-level screen (like the others), so there is no back arrow.
-          headerLeft: docked ? () => null : () => (
-            <Pressable
-              onPress={() => (router.canGoBack() ? router.back() : router.replace('/' as never))}
-              accessibilityLabel="Go back"
-              accessibilityRole="button"
-              hitSlop={Spacing.two}
-              style={styles.backButton}>
-              <Ionicons name="arrow-back" size={24} color={theme.text} />
-            </Pressable>
-          ),
-        }}
-      />
+      <Stack.Screen options={headerOptions} />
       <View style={styles.flex1}>
-      {tab === 'dialer' && <DialerPad key={dialSeed.n} initialDigits={padDigits} onDigitsChange={setPadDigits} onAddContact={(phone) => { setNewContact((c) => ({ n: c.n + 1, phone })); setTab('contacts'); }} />}
+      {tab === 'dialer' && <DialerPad key={dialSeed.n} initialDigits={padDigits} onLeave={setPadDigits} onAddContact={(phone) => { setNewContact((c) => ({ n: c.n + 1, phone })); setTab('contacts'); }} />}
       {tab === 'contacts' && <ContactsTab key={newContact.n} newPhone={newContact.phone} onCall={(digits) => { setPadDigits(digits); setDialSeed((s) => ({ n: s.n + 1, digits })); setTab('dialer'); }} />}
       {tab === 'search' && <CustomerPhoneSearch />}
       {tab === 'recents' && error && <ThemedText style={styles.error}>{error}</ThemedText>}
@@ -152,10 +140,22 @@ export default function CallsScreen() {
       ) : calls === null ? (
         <View style={styles.spinner}><SkeletonList items={6} /></View>
       ) : (
-        <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: Spacing.three }]}
-          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
-        >
+        <FlatList
+          data={filteredCalls}
+          keyExtractor={(call) => call.id}
+          renderItem={({ item: call, index: i }) => {
+            // Headings only make sense when sorted by date.
+            const label = sortKey === 'date' ? groupLabel(call.startedAt) : null;
+            const showHeading = label !== null && (i === 0 || groupLabel(filteredCalls[i - 1].startedAt) !== label);
+            return (
+              <View>
+                {showHeading && <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupHeading}>{label}</ThemedText>}
+                <CallRow call={call} />
+              </View>
+            );
+          }}
+          ListHeaderComponent={
+            <View style={styles.callsHeader}>
           {capabilities && !capabilities.callingEnabled && (
             <ThemedView type="backgroundElement" style={styles.banner}>
               <ThemedText type="small" style={styles.bannerText}>
@@ -183,30 +183,22 @@ export default function CallsScreen() {
               </Pressable>
             ))}
           </View>
-
-          <View style={styles.section}>
+              <View style={styles.section}>
             <ThemedText type="smallBold">Call Log ({filteredCalls.length})</ThemedText>
             {filteredCalls.length === 0 ? (
               <ThemedText type="small" themeColor="textSecondary">{calls && calls.length === 0 ? 'No calls yet. Calls you make and get show up here.' : 'No calls match your search.'}</ThemedText>
-            ) : (
-              <View>
-                {filteredCalls.map((call, i) => {
-                  // Headings only make sense when sorted by date.
-                  const label = sortKey === 'date' ? groupLabel(call.startedAt) : null;
-                  const showHeading = label !== null && (i === 0 || groupLabel(filteredCalls[i - 1].startedAt) !== label);
-                  return (
-                    <View key={call.id}>
-                      {showHeading && (
-                        <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupHeading}>{label}</ThemedText>
-                      )}
-                      <CallRow call={call} />
-                    </View>
-                  );
-                })}
+            ) : null}
               </View>
-            )}
-          </View>
-        </ScrollView>
+            </View>
+          }
+          contentContainerStyle={[styles.content, { paddingBottom: Spacing.three }]}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
+          // The call log can hold hundreds of calls: rows are virtualised (only the ones on screen are built), never mapped all at once.
+          initialNumToRender={12}
+          maxToRenderPerBatch={10}
+          windowSize={7}
+          removeClippedSubviews
+        />
       )}
       </View>
       <View
@@ -238,6 +230,7 @@ const styles = StyleSheet.create({
   content: { padding: Spacing.three, gap: Spacing.four, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.three },
   section: { gap: Spacing.two },
+  callsHeader: { gap: Spacing.four },
   error: { color: '#B83030', marginHorizontal: Spacing.three, marginTop: Spacing.two },
   spinner: { marginTop: Spacing.three, paddingHorizontal: Spacing.three },
   input: { height: 46, borderRadius: Spacing.two, paddingHorizontal: Spacing.three, fontSize: 15 },

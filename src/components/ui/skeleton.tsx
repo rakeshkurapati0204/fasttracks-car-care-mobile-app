@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { StyleSheet, View, type DimensionValue, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { cancelAnimation, Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { makeMutable, useAnimatedStyle, useReducedMotion, useSharedValue } from 'react-native-reanimated';
 
 import { Radii, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { follow, loop, stopLoop } from '@/lib/motion';
 
 export type SkeletonProps = {
   width?: DimensionValue;
@@ -13,29 +14,34 @@ export type SkeletonProps = {
   style?: StyleProp<ViewStyle>;
 };
 
-// A soft light band sweeps across each block (the dashboard's .skeleton shimmer). The band is three stacked translucent strips so its edges
-// fade instead of cutting off. With "Reduce motion" on, the blocks just stay still.
+// A soft light band sweeps across the blocks (the dashboard's .skeleton shimmer). ONE loop drives every block on the screen, so a list of thirty placeholders costs the
+// same as one and they all shimmer in step; it runs only while at least one block is mounted. The band is three stacked translucent strips so its edges fade
+// instead of cutting off. With "Reduce motion" on, the blocks just stay still.
+const sweep = makeMutable(0);
+let live = 0;
+function acquire() { if (live++ === 0) loop(sweep, 1300); }
+function release() { if (--live === 0) stopLoop(sweep); }
+
 export function Skeleton({ width = '100%', height = 16, circle = false, style }: SkeletonProps) {
   const theme = useTheme();
   const reduce = useReducedMotion();
-  const [w, setW] = useState(0);
-  const sweep = useSharedValue(0);
+  const w = useSharedValue(0);
 
   useEffect(() => {
     if (reduce) return;
-    sweep.value = withRepeat(withTiming(1, { duration: 1300, easing: Easing.inOut(Easing.quad) }), -1, false);
-    return () => cancelAnimation(sweep);
-  }, [reduce, sweep]);
+    acquire();
+    return release;
+  }, [reduce]);
 
-  const band = useAnimatedStyle(() => ({ transform: [{ translateX: -w * 0.6 + sweep.value * w * 1.9 }] }));
-  const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
+  const band = useAnimatedStyle(() => ({ width: w.value * 0.6, transform: [{ translateX: -w.value * 0.6 + sweep.value * w.value * 1.9 }] }));
+  const onLayout = (e: LayoutChangeEvent) => follow(w, e.nativeEvent.layout.width);
 
   return (
     <View
       onLayout={onLayout}
       style={[{ width, height, backgroundColor: theme.border, borderRadius: circle ? height / 2 : 6, overflow: 'hidden' }, style]}>
-      {reduce || w === 0 ? null : (
-        <Animated.View style={[styles.band, { width: w * 0.6 }, band]} pointerEvents="none">
+      {reduce ? null : (
+        <Animated.View style={[styles.band, band]} pointerEvents="none">
           <View style={[styles.strip, { opacity: 0.18 }]} />
           <View style={[styles.strip, { opacity: 0.4, flex: 2 }]} />
           <View style={[styles.strip, { opacity: 0.18 }]} />

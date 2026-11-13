@@ -100,3 +100,12 @@ export function subscribeToNotificationTaps(): () => void {
   });
   return () => sub.remove();
 }
+
+/** True when this launch came from tapping a notification: the person asked for a specific screen, so nothing (the opening animation) should stand in front of it. */
+export function launchedFromNotification(): boolean {
+  try {
+    return Notifications.getLastNotificationResponse() != null;
+  } catch {
+    return false; // an older native build without the call: show the animation as usual
+  }
+}

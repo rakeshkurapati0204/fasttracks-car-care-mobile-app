@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { SkeletonList } from '@/components/ui/skeleton';
 import { ThemedText } from '@/components/themed-text';
@@ -88,10 +88,11 @@ export function ContactsTab({ onCall, newPhone = '' }: { onCall: (digits: string
 
   const field = [styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }];
 
-  return (
-    <ThemedView style={styles.flex1}>
-      <KeyboardAvoidingView style={styles.flex1} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+  const rowsReady = !loadError && list !== null && list.length > 0 && shown.length > 0;
+  // Everything above the contact rows: the form, the buttons, the search box and the loading / empty / error states.
+  const header = (
+    <View style={styles.headerBlock}>
+
           {adding ? (
             <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
               <ThemedText type="smallBold">New contact</ThemedText>
@@ -138,25 +139,39 @@ export function ContactsTab({ onCall, newPhone = '' }: { onCall: (digits: string
           ) : shown.length === 0 ? (
             <ThemedText type="small" themeColor="textSecondary">No contact matches.</ThemedText>
           ) : (
-            <View>
-              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.count}>{shown.length} contact{shown.length === 1 ? '' : 's'}</ThemedText>
-              {shown.map((c) => (
-                <Pressable
-                  key={c.id}
-                  onPress={() => onCall(c.phone.replace(/^\+91/, ''))}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Call ${c.name ?? c.phone}`}
-                  style={({ pressed }) => [styles.item, { borderBottomColor: theme.border, opacity: pressed ? 0.6 : 1 }]}>
-                  <View style={styles.flex1}>
-                    <ThemedText type="smallBold" numberOfLines={1}>{c.name ?? c.phone}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{showPhone(c.phone)}{c.reason ? ` · ${c.reason}` : ''}</ThemedText>
-                  </View>
-                  <Ionicons name="call" size={20} color={theme.primary} />
-                </Pressable>
-              ))}
-            </View>
+            <ThemedText type="smallBold" themeColor="textSecondary" style={styles.count}>{shown.length} contact{shown.length === 1 ? '' : 's'}</ThemedText>
           )}
-        </ScrollView>
+    </View>
+  );
+
+  return (
+    <ThemedView style={styles.flex1}>
+      <KeyboardAvoidingView style={styles.flex1} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {/* A phone book can hold thousands of contacts: the rows are virtualised (only the ones on screen are built), never mapped all at once. */}
+        <FlatList
+          data={rowsReady ? shown : []}
+          keyExtractor={(c) => c.id}
+          renderItem={({ item: c }) => (
+            <Pressable
+              onPress={() => onCall(c.phone.replace(/^\+91/, ''))}
+              accessibilityRole="button"
+              accessibilityLabel={`Call ${c.name ?? c.phone}`}
+              style={({ pressed }) => [styles.item, { borderBottomColor: theme.border, opacity: pressed ? 0.6 : 1 }]}>
+              <View style={styles.flex1}>
+                <ThemedText type="smallBold" numberOfLines={1}>{c.name ?? c.phone}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{showPhone(c.phone)}{c.reason ? ` · ${c.reason}` : ''}</ThemedText>
+              </View>
+              <Ionicons name="call" size={20} color={theme.primary} />
+            </Pressable>
+          )}
+          ListHeaderComponent={header}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.content}
+          initialNumToRender={14}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          removeClippedSubviews
+        />
       </KeyboardAvoidingView>
     </ThemedView>
   );
@@ -171,6 +186,7 @@ const styles = StyleSheet.create({
   btn: { flex: 1, flexDirection: 'row', gap: Spacing.one, alignItems: 'center', justifyContent: 'center', borderRadius: Spacing.two, minHeight: Layout.minTouchTarget },
   btnLabel: { color: '#ffffff', fontWeight: '600' },
   gap: { gap: Spacing.two },
+  headerBlock: { gap: Spacing.three },
   spinner: { marginTop: Spacing.three, paddingHorizontal: Spacing.three },
   count: { marginBottom: Spacing.one },
   item: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two, minHeight: Layout.minTouchTarget, borderBottomWidth: StyleSheet.hairlineWidth },

@@ -1,24 +1,25 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { sideNavAction, stackAnimation } from './side-nav.ts';
+import { detailAnimation, sideNavAction, topLevelAnimation } from './side-nav.ts';
 
 test('tapping the screen you are on does nothing, with or without a trailing slash', () => {
-  assert.equal(sideNavAction('/more/calls', '/more/calls', true), 'none');
-  assert.equal(sideNavAction('/more/calls/', '/more/calls', false), 'none');
-  assert.equal(sideNavAction('/', '/', true), 'none');
+  assert.equal(sideNavAction('/more/calls', '/more/calls'), 'none');
+  assert.equal(sideNavAction('/more/calls/', '/more/calls'), 'none');
+  assert.equal(sideNavAction('/', '/'), 'none');
 });
 
-test('docked sidebar replaces the screen, the phone menu pushes it', () => {
-  assert.equal(sideNavAction('/more/calls', '/customers', true), 'replace');
-  assert.equal(sideNavAction('/more/calls', '/customers', false), 'push');
+test('every menu entry replaces the screen, so the stack never grows and no old screen is left beside the new one', () => {
+  assert.equal(sideNavAction('/more/calls', '/customers'), 'replace');
+  assert.equal(sideNavAction('/more/overview', '/more/calls'), 'replace');
 });
 
 test('a detail screen inside a section still navigates when its section is tapped', () => {
-  assert.equal(sideNavAction('/customers/123', '/customers', true), 'replace');
-  assert.equal(sideNavAction('/customers/123', '/customers', false), 'push');
+  assert.equal(sideNavAction('/customers/123', '/customers'), 'replace');
 });
 
-test('no slide transition beside a docked sidebar, default everywhere else', () => {
-  assert.equal(stackAnimation(true), 'none');
-  assert.equal(stackAnimation(false), undefined);
+test('top-level screens swap with a fade (instantly beside a pinned sidebar); detail screens keep the platform slide', () => {
+  assert.equal(topLevelAnimation(false), 'fade');
+  assert.equal(topLevelAnimation(true), 'none');
+  assert.equal(detailAnimation(false), undefined);
+  assert.equal(detailAnimation(true), 'none');
 });

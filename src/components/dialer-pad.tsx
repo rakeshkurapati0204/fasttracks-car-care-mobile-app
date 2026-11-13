@@ -3,17 +3,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { ActivityIndicator, AppState, Keyboard, Platform, Pressable, StyleSheet, TextInput, Vibration, View } from 'react-native';
 
-import { EnableFade, MotionPressable, NumberMotion, PresenceScale } from '@/components/dialer-motion';
+import { EnableFade, MotionPressable, NumberMotion, PresenceScale, usePadIntro } from '@/components/dialer-motion';
 import { InCallModal } from '@/components/call/in-call-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { fetchCallCapabilities } from '@/lib/api';
 import { matchDialContacts, type DialContact } from '@/lib/contacts';
 import { loadDialContacts } from '@/lib/dial-contacts';
 import { dialBlockedReason, newDialKey, toE164India } from '@/lib/dial';
-import { confirmCall, placeCall } from '@/lib/dial-flow';
+import { askForPhoneAppRole, confirmCall, placeCall, warmAutoAnswerHint } from '@/lib/dial-flow';
+import { getCallCapabilities, peekCallCapabilities } from '@/lib/call-caps';
 import { applyFieldText, deleteBack, insertDigit, MAX_DIGITS, spaced, toDigit, toField, type DialInput } from '@/lib/dial-input.ts';
 import { getVoipEngine, voipApi, voipCcmApi } from '@/lib/voip';
 import { useVoipCall } from '@/lib/voip/use-voip-call.ts';
@@ -44,12 +44,13 @@ const formatNumber = (digits: string) => `+91 ${spaced(digits)}`.trimEnd();
 // the typed number, recording the call. Rendered by the Dialer tab of the Calls screen (calls.tsx), which already enforces the role check.
 // Looks and behaves like the phone's own dialer: a real cursor in the number (tap to move it, Delete works there), Android's long-press menu for
 // Paste / Copy, no on-screen keyboard (the keypad is the keyboard), and "Add to contacts" once a full number is typed.
-export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: { initialDigits?: string; onAddContact?: (digits: string) => void; onDigitsChange?: (digits: string) => void } = {}) {
+export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initialDigits?: string; onAddContact?: (digits: string) => void; onLeave?: (digits: string) => void } = {}) {
   const theme = useTheme();
+  const intro = usePadIntro();
   const first = initialDigits.replace(/\D/g, '').slice(0, MAX_DIGITS);
   const [input, setInput] = useState<DialInput>({ digits: first, start: first.length, end: first.length });
   const digits = input.digits;
-  const [caps, setCaps] = useState<CallCapabilities | null>(null);
+  const [caps, setCaps] = useState<CallCapabilities | null>(() => peekCallCapabilities());
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const voipEngine = getVoipEngine();
@@ -61,13 +62,27 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
   const pendingKey = useRef<string | null>(null); // kept after a network failure so a retry cannot place a second call
   const field = useRef<TextInput>(null);
   const inFlight = useRef(false); // set synchronously: a fast double tap on Call cannot start two calls
-  useEffect(() => { onDigitsChange?.(input.digits); }, [input.digits, onDigitsChange]);
+  // The parent is told what was typed only when the pad goes away (another tab), not on every key: a parent that re-renders on each digit re-renders the whole
+  // Calls screen (header included) while the person is typing.
+  const typedRef = useRef(first);
+  useEffect(() => { typedRef.current = input.digits; }, [input.digits]);
+  useEffect(() => () => onLeave?.(typedRef.current), [onLeave]);
 
   useEffect(() => {
-    fetchCallCapabilities()
+    getCallCapabilities()
       .then(setCaps)
       .catch(() => setCaps(null));
   }, []);
+
+  // A new phone: ask for the phone-app role as soon as the dial pad is open (once a day at most), so pressing Call never waits for that question.
+  const autoOn = !!caps?.c2cAutoAnswerEnabled && !!dialerNative;
+  useEffect(() => { if (autoOn) void warmAutoAnswerHint(); }, [autoOn]); // so the first Call can arm before it sends
+  useEffect(() => {
+    if (!autoOn) return;
+    let alive = true;
+    askForPhoneAppRole(dialerNative, autoOn, isPhoneApp).then((became) => { if (alive && became) setIsPhoneApp(true); });
+    return () => { alive = false; };
+  }, [autoOn, dialerNative, isPhoneApp]);
 
   useEffect(() => {
     if (!dialerNative) return;
@@ -104,6 +119,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
   }, []);
   const match = useMemo(() => matchDialContacts(book, input.digits), [book, input.digits]);
 
+  const turnOnAutoAnswer = async () => { if (await askForPhoneAppRole(dialerNative, true, false, true)) setIsPhoneApp(true); };
   const valid = isValidMobile(digits);
   const invalid = digits.length === MAX_DIGITS && !valid;
   const tap = () => { if (Platform.OS === 'android') Vibration.vibrate(8); };
@@ -119,7 +135,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
       // The capabilities may still be loading, or have failed while offline: ask again now instead of refusing the call.
       let c = caps;
       if (!c) {
-        c = await fetchCallCapabilities().catch(() => null);
+        c = await getCallCapabilities().catch(() => null);
         if (c) setCaps(c);
       }
       // In-app VoIP: the app dials Exotel and Exotel rings the CUSTOMER. Nobody calls the salesman. Only when the server says it is set up AND this build
@@ -136,11 +152,11 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
       pendingKey.current ??= newDialKey();
       const out = await placeCall({
         target: { phone: e164 }, display: formatNumber(digits), key: pendingKey.current,
-        native: dialerNative, autoOn: !!c?.c2cAutoAnswerEnabled && !!dialerNative, isPhoneApp, onBecamePhoneApp: () => setIsPhoneApp(true), confirm: false,
+        native: dialerNative, autoOn: !!c?.c2cAutoAnswerEnabled && !!dialerNative, isPhoneApp, confirm: false,
       });
       if (out.kind === 'placed') {
         pendingKey.current = null;
-        setResult({ ok: true, text: out.autoAnswered ? 'Calling...' : 'Answer your phone to connect.' });
+        setResult({ ok: true, text: out.autoAnswered ? 'Calling...' : `Answer your phone to connect.${out.note ? ` ${out.note}` : ''}` });
       } else if (out.kind === 'failed') {
         if (!out.keepKey) pendingKey.current = null;
         setResult({ ok: false, text: out.text });
@@ -207,6 +223,14 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
             style={[styles.number, { color: invalid ? theme.danger : theme.text }]}
           />
           </NumberMotion>
+          {autoOn && isPhoneApp ? (
+            <ThemedText type="small" style={[styles.setupLink, { color: theme.success, textAlign: 'center' }]}>Instant calling is on</ThemedText>
+          ) : null}
+          {autoOn && !isPhoneApp ? (
+            <Pressable onPress={turnOnAutoAnswer} accessibilityRole="button" accessibilityLabel="Enable instant calling" hitSlop={Spacing.two} style={styles.setupLink}>
+              <ThemedText type="small" style={{ color: theme.primary }}>Enable instant calling</ThemedText>
+            </Pressable>
+          ) : null}
           <View style={styles.statusSlot}>
             {statusLine ? <Animated.View key={statusKind} entering={FadeInDown.duration(200)} exiting={FadeOut.duration(120)}>{statusLine}</Animated.View> : null}
           </View>
@@ -216,7 +240,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
           {KEYS.map((k, i) => {
             const disabled = DISABLED_KEYS.includes(k.digit);
             return (
-              <Animated.View key={k.digit} entering={FadeInDown.delay(40 + i * 30).duration(280)} style={styles.cell}>
+              <Animated.View key={k.digit} entering={intro ? FadeInDown.delay(40 + i * 30).duration(280) : undefined} style={styles.cell}>
                 <MotionPressable
                   disabled={disabled}
                   onPress={() => { tap(); edit(insertDigit(input, k.digit)); }}
@@ -231,7 +255,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onDigitsChange }: 
           })}
 
           <View style={styles.cell} />
-          <Animated.View entering={FadeInDown.delay(40 + 12 * 30).duration(320)} style={styles.cell}>
+          <Animated.View entering={intro ? FadeInDown.delay(40 + 12 * 30).duration(320) : undefined} style={styles.cell}>
             <EnableFade enabled={valid && !busy}>
               <MotionPressable
                 onPress={call}
@@ -274,6 +298,7 @@ const styles = StyleSheet.create({
   display: { flex: 1, alignItems: 'stretch', justifyContent: 'flex-end', paddingBottom: Spacing.three },
   // Fixed size: 10 digits + one space always fit a phone's width.
   number: { fontSize: 36, lineHeight: 46, fontWeight: '400', letterSpacing: 1, textAlign: 'center', paddingVertical: Spacing.two, borderWidth: 0, outlineWidth: 0 },
+  setupLink: { alignItems: 'center', paddingBottom: Spacing.one },
   statusSlot: { minHeight: 24, alignItems: 'center', justifyContent: 'center' },
   status: { textAlign: 'center', paddingHorizontal: Spacing.three },
   suggestion: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, maxWidth: '100%', paddingHorizontal: Spacing.three },

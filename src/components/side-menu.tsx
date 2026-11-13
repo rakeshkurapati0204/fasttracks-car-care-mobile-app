@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router, usePathname } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Keyboard, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,14 +22,12 @@ import { sideNavAction } from '@/lib/side-nav';
 import { fitWidth, isRail, liveWidth, maxFor, nudgeWidth, settleWidth, SIDEBAR_DEFAULT } from '@/lib/sidebar-width';
 
 // The docked width is chosen by the person (drag the edge, or fold to a rail) and lives in drawer-context; screens subtract it from their own width.
-const OVERLAY_WIDTH = 256;
-
 // Dashboard navItems: the collapsible "Templates" group and the NEW badge.
 const NAV_GROUP_OF: Record<string, string> = { competencies: 'templates', 'onboarding-templates': 'templates' };
 const NAV_GROUP_LABELS: Record<string, string> = { templates: 'Templates' };
 const NAV_BADGES: Record<string, string> = { 'new-entry': 'NEW' };
 
-type NavNode = { type: 'item'; item: ScreenMeta } | { type: 'group'; key: string; label: string; items: ScreenMeta[] };
+export type NavNode = { type: 'item'; item: ScreenMeta } | { type: 'group'; key: string; label: string; items: ScreenMeta[] };
 
 // Folds items sharing a group into one block at the position of the group's
 // first member; everything else stays a top-level item (dashboard groupNavItems).
@@ -67,13 +65,6 @@ if (__DEV__) {
   }
 }
 
-// Module-level worklet helpers: they keep the shared-value writes out of the
-// component body, where the React compiler lint rule rejects them.
-function setProgress(p: SharedValue<number>, value: number) {
-  'worklet';
-  p.value = value;
-}
-
 // The sidebar drag, as module-level worklets for the same reason.
 function beginDrag(live: SharedValue<number>, start: SharedValue<number>) {
   'worklet';
@@ -98,26 +89,28 @@ function animateTo(p: SharedValue<number>, to: number, onDone?: () => void) {
   });
 }
 
-// The sidebar itself: solid panel, logo, search, nav, fixed user / theme / logout block.
-// compact = the icon-only rail. onToggle = fold / unfold button (only the docked sidebar has one).
-function SidebarContent({ onNavigate, compact = false, onToggle }: { onNavigate?: () => void; compact?: boolean; onToggle?: () => void }) {
-  const theme = useTheme();
-  const insets = useSafeAreaInsets();
+/**
+ * What the menu shows and where a tap goes: the entries this person may see (by role, or by the backend's own access check, fail-closed until permissions
+ * have loaded), grouped like the dashboard, the one active entry, and the navigation. Shared by the docked sidebar and the phone's push menu.
+ */
+export function useMenuModel(query: string, onNavigate?: () => void, navigateDelayMs = 0) {
   const pathname = usePathname();
-  const { user, signOut } = useAuth();
-  const { hasAdsAccess, hasTab } = usePermissions();
-  const [query, setQuery] = useState('');
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const { user } = useAuth();
+  const role = user?.role ?? '';
+  const { hasAdsAccess, hasLegalAccess, hasTab } = usePermissions();
+  const pending = useRef(false); // one navigation at a time: a second tap while the first is on its way does nothing
 
-  // Role-gated entries by role; per-user-grant entries (requiresAccess) by the
-  // backend's own access check, fail-closed until permissions have loaded.
   const items = useMemo(
     () => SCREEN_REGISTRY.filter((s) => {
+      if (s.id === 'install-app') return Platform.OS === 'web'; // installing the app is a web page's job: inside the app it only offers to download itself
+      if (s.id === 'legal') return hasLegalAccess; // a per-person grant: no entry that only leads to "Access restricted"
+      if (s.id === 'quotations') return role === 'OWNER' || hasTab('quotations');
+      if (s.id === 'employee-documents') return ['OWNER', 'HR', 'STORE_MANAGER'].includes(role) || hasTab('employee_documents');
       if (s.requiresAccess === 'ads') return hasAdsAccess;
-      if (s.requiresAccess === 'settings_company') return ['OWNER', 'STORE_MANAGER'].includes(user?.role ?? '') || hasTab('settings_company');
-      return !s.visibleToRoles || s.visibleToRoles.includes(user?.role ?? '');
+      if (s.requiresAccess === 'settings_company') return ['OWNER', 'STORE_MANAGER'].includes(role) || hasTab('settings_company');
+      return !s.visibleToRoles || s.visibleToRoles.includes(role);
     }),
-    [hasAdsAccess, hasTab, user?.role],
+    [hasAdsAccess, hasLegalAccess, hasTab, role],
   );
 
   const q = query.trim().toLowerCase();
@@ -135,15 +128,30 @@ function SidebarContent({ onNavigate, compact = false, onToggle }: { onNavigate?
     return best?.id ?? null;
   }, [items, pathname]);
 
-  const docked = useIsDocked();
   const go = (item: ScreenMeta) => {
-    onNavigate?.();
+    if (pending.current) return;
     const href = routeOf(item);
-    const action = sideNavAction(pathname, href, docked);
-    if (action === 'none') return; // already on this screen: a second copy would only pile up in the back stack
-    if (action === 'replace') router.replace(href as never);
-    else router.push(href as never);
+    if (sideNavAction(pathname, href) === 'none') { onNavigate?.(); return; } // already on this screen: just close the menu
+    pending.current = true;
+    onNavigate?.(); // starts the menu's closing motion first...
+    // ...and the screen swaps a moment later, so the closing motion is never held up by the new screen being built.
+    setTimeout(() => { pending.current = false; router.replace(href as never); }, navigateDelayMs);
   };
+
+  return { items, filtered, nodes, activeId, go };
+}
+
+// The sidebar itself: solid panel, logo, search, nav, fixed user / theme / logout block.
+// compact = the icon-only rail. onToggle = fold / unfold button (only the docked sidebar has one).
+function SidebarContent({ onNavigate, compact = false, onToggle }: { onNavigate?: () => void; compact?: boolean; onToggle?: () => void }) {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const { user, signOut } = useAuth();
+  const { setMenuStyle } = useDrawer();
+  const [query, setQuery] = useState('');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  const { filtered, nodes, activeId, go } = useMenuModel(query, onNavigate);
 
   const renderItem = (item: ScreenMeta, indent = false) => {
     const active = item.id === activeId;
@@ -266,6 +274,16 @@ function SidebarContent({ onNavigate, compact = false, onToggle }: { onNavigate?
           )}
         </View>
 
+        {/* Pinned sidebar -> slide-out menu (the default): the person's own choice (layout-mode.ts). */}
+        <Pressable
+          onPress={() => setMenuStyle('slide')}
+          accessibilityRole="button"
+          accessibilityLabel="Use the slide-out menu"
+          style={({ pressed }) => [compact ? styles.rowCompact : styles.row, pressed && { backgroundColor: theme.background }]}>
+          <Ionicons name="swap-horizontal-outline" size={20} color={theme.textSecondary} />
+          {compact ? null : <ThemedText style={[styles.rowLabel, { color: theme.textSecondary }]}>Slide-out menu</ThemedText>}
+        </Pressable>
+
         {/* The app is light-only today (use-color-scheme.ts returns 'light' on purpose), so
             there is no theme to switch yet. The row is here to match the dashboard. */}
         <Pressable
@@ -293,17 +311,11 @@ function SidebarContent({ onNavigate, compact = false, onToggle }: { onNavigate?
   );
 }
 
-// variant="docked": always-on sidebar for wide screens, laid out beside the
-// content by the root layout. variant="overlay": the slide-in panel for
-// everything narrower, mounted only while open or animating, so a closed
-// menu can never sit over (or catch taps meant for) the screen.
-export function SideMenu({ variant }: { variant: 'docked' | 'overlay' }) {
+// The always-on sidebar for wide screens, laid out beside the content by the root layout. Phones get the push menu instead (push-shell.tsx).
+export function SideMenu() {
   const docked = useIsDocked();
   const { user } = useAuth();
-
-  if (!user) return null;
-  if (variant === 'docked') return docked ? <DockedSidebar /> : null;
-  return docked ? null : <OverlaySidebar />;
+  return user && docked ? <DockedSidebar /> : null;
 }
 
 // The always-visible sidebar beside the content. Its right edge is a drag handle: wider, narrower, or fold it into an icon-only rail. The width is
@@ -360,59 +372,7 @@ function DockedSidebar() {
   );
 }
 
-function OverlaySidebar() {
-  const { isOpen, close } = useDrawer();
-  const { width } = useWindowDimensions();
-  const panelWidth = Math.min(OVERLAY_WIDTH, width * 0.85);
-  const progress = useSharedValue(0);
-  const [mounted, setMounted] = useState(false);
-
-  const onClosed = useCallback(() => setMounted(false), []);
-
-  useEffect(() => {
-    if (isOpen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- mount before animating in
-      setMounted(true);
-      animateTo(progress, 1);
-    } else {
-      Keyboard.dismiss();
-      animateTo(progress, 0, onClosed);
-    }
-  }, [isOpen, progress, onClosed]);
-
-  const panelStyle = useAnimatedStyle(() => ({ transform: [{ translateX: (progress.value - 1) * panelWidth }] }));
-  const backdropStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
-
-  const pan = Gesture.Pan()
-    .activeOffsetX([-20, 20])
-    .onUpdate((e) => {
-      if (e.translationX < 0) setProgress(progress, Math.max(0, 1 + e.translationX / panelWidth));
-    })
-    .onEnd((e) => {
-      const shouldClose = e.translationX < -panelWidth / 3 || e.velocityX < -800;
-      animateTo(progress, shouldClose ? 0 : 1);
-      if (shouldClose) runOnJS(close)();
-    });
-
-  if (!mounted) return null;
-
-  return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close menu" />
-      </Animated.View>
-      <GestureDetector gesture={pan}>
-        <Animated.View style={[styles.overlayPanel, { width: panelWidth }, panelStyle]}>
-          <SidebarContent onNavigate={close} />
-        </Animated.View>
-      </GestureDetector>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  backdrop: { backgroundColor: 'rgba(0,0,0,0.6)' },
-  overlayPanel: { position: 'absolute', left: 0, top: 0, bottom: 0 },
   docked: { zIndex: 1, overflow: 'hidden' },
   // 12 dp wide strip on the sidebar's right edge (inside it: a child outside its parent is not touchable on Android).
   resizeHandle: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 12, alignItems: 'center', justifyContent: 'center', zIndex: 5, ...Platform.select({ web: { cursor: 'col-resize' } as object, default: {} }) },

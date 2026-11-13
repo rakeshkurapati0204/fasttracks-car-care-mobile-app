@@ -1,6 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, Pressable, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+
+import { squish } from '@/lib/motion';
 
 import { ThemedText } from '@/components/themed-text';
 import { FontWeights, Radii } from '@/constants/theme';
@@ -32,11 +34,6 @@ const SIZES = {
 } as const;
 
 const APressable = Animated.createAnimatedComponent(Pressable);
-
-function squish(scale: { value: number }, to: number) {
-  'worklet';
-  scale.value = withSpring(to, { damping: 14, stiffness: 420, mass: 0.6 });
-}
 
 export function Button({
   children,

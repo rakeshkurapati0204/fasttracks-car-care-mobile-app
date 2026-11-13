@@ -43,9 +43,9 @@ export function pastedMobile(text: string): string | null {
 type PhoneBookEntry = { name?: string | null; phoneNumbers?: { number?: string | null }[] | null };
 
 // The phone's address book -> rows for POST /contacts/mine/bulk. One row per valid Indian mobile; a contact with several numbers gives several
-// rows with the same name; entries without a name or a valid number are dropped; a number repeated across entries is kept once.
-export function phoneBookRows(entries: PhoneBookEntry[]): { name: string; phone: string }[] {
-  const seen = new Set<string>();
+// rows with the same name; entries without a name or a valid number are dropped; a number repeated across entries is kept once (pass the same `seen` set
+// for every page of a long address book so a number repeated across pages is kept once too).
+export function phoneBookRows(entries: PhoneBookEntry[], seen: Set<string> = new Set()): { name: string; phone: string }[] {
   const rows: { name: string; phone: string }[] = [];
   for (const e of entries) {
     const name = (e.name ?? '').trim();
@@ -62,17 +62,46 @@ export function phoneBookRows(entries: PhoneBookEntry[]): { name: string; phone:
 
 export type DialContact = { name: string; phone: string }; // phone: 10 digits
 
+// The address book is prepared ONCE per list (duplicates dropped, names lower-cased for comparing), not on every key: matchDialContacts runs on each digit
+// typed, and a phone book can hold thousands of contacts.
+type Indexed = { c: DialContact; key: string };
+const indexCache = new WeakMap<DialContact[], Indexed[]>();
+function indexOf(list: DialContact[]): Indexed[] {
+  let idx = indexCache.get(list);
+  if (!idx) {
+    const seen = new Set<string>();
+    idx = [];
+    for (const c of list) {
+      if (seen.has(c.phone)) continue;
+      seen.add(c.phone);
+      idx.push({ c, key: c.name.toLowerCase() });
+    }
+    indexCache.set(list, idx);
+  }
+  return idx;
+}
+
 /**
  * What the dial pad shows while a number is typed, like the phone's own dialer: the contact whose number it is (exact), else the best contacts whose
  * number contains what was typed (from 3 digits on). Same number in both lists (phone book and app) is kept once; the phone book's name wins.
+ * One pass over the list, keeping only the best `max` hits (numbers starting with what was typed first, then by name): no sorting of every hit.
  */
 export function matchDialContacts(list: DialContact[], typed: string, max = 3): { exact: DialContact | null; suggestions: DialContact[] } {
   if (typed.length < 3) return { exact: null, suggestions: [] };
-  const seen = new Set<string>();
-  const unique = list.filter((c) => (seen.has(c.phone) ? false : (seen.add(c.phone), true)));
-  const exact = typed.length === 10 ? unique.find((c) => c.phone === typed) ?? null : null;
-  if (exact) return { exact, suggestions: [] };
-  const hits = unique.filter((c) => c.phone.includes(typed));
-  hits.sort((a, b) => Number(!a.phone.startsWith(typed)) - Number(!b.phone.startsWith(typed)) || a.name.localeCompare(b.name));
-  return { exact: null, suggestions: hits.slice(0, max) };
+  const idx = indexOf(list);
+  const best: { e: Indexed; starts: boolean }[] = [];
+  const before = (a: { e: Indexed; starts: boolean }, b: { e: Indexed; starts: boolean }) => (a.starts !== b.starts ? a.starts : a.e.key < b.e.key);
+  for (const e of idx) {
+    const at = e.c.phone.indexOf(typed);
+    if (at < 0) continue;
+    if (typed.length === 10 && e.c.phone === typed) return { exact: e.c, suggestions: [] };
+    const hit = { e, starts: at === 0 };
+    let i = best.length;
+    while (i > 0 && before(hit, best[i - 1])) i--;
+    if (i < max) {
+      best.splice(i, 0, hit);
+      if (best.length > max) best.pop();
+    }
+  }
+  return { exact: null, suggestions: best.map((h) => h.e.c) };
 }

@@ -353,7 +353,7 @@ export default function CustomersScreen() {
     <View style={[styles.headerWrap, { paddingHorizontal: halfGap }]}>
       <View style={styles.header}>
         <MenuButton />
-        <ThemedText style={styles.title}>Customers & Jobs</ThemedText>
+        <ThemedText style={styles.title} numberOfLines={2}>Customers & Jobs</ThemedText>
         <Button icon="add" onPress={() => router.push('/more/new-entry' as never)}>New Entry</Button>
       </View>
 

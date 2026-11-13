@@ -6,7 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { avatarColor, formatCallDuration, formatCallTime, isMissedCall } from '@/lib/call-format';
-import { fetchCallCapabilities } from '@/lib/api';
+import { getCallCapabilities } from '@/lib/call-caps';
 import { formatPhone } from '@/lib/call-intelligence';
 import { dialBlockedReason, newDialKey } from '@/lib/dial';
 import { placeCall } from '@/lib/dial-flow';
@@ -37,7 +37,7 @@ export function CallRow({ call }: { call: CallLogEntry }) {
     inFlight.current = true;
     setBusy(true);
     try {
-      const caps = await fetchCallCapabilities().catch(() => null);
+      const caps = await getCallCapabilities().catch(() => null);
       const blocked = dialBlockedReason(caps, { callBack: true });
       if (blocked) { Alert.alert('Cannot call', blocked); return; }
       let isPhoneApp = false;

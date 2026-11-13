@@ -2,10 +2,14 @@ import * as SecureStore from 'expo-secure-store';
 import { Alert, Platform } from 'react-native';
 
 import { importMyContacts } from '@/lib/api';
+import { phoneBookRows } from '@/lib/contacts';
 import { canSyncContacts, nextSyncStep, parseSyncState, syncKey, type ContactSyncState } from '@/lib/contact-sync';
-import { phoneBookPermission, readPhoneBook } from '@/lib/phone-contacts';
+import { phoneBookPages, phoneBookPermission } from '@/lib/phone-contacts';
 
 let running = false;
+
+// Between pages the screen gets a frame to draw and respond to touches: a big address book must never freeze the app.
+const breathe = () => new Promise<void>((resolve) => setTimeout(resolve, 32));
 
 async function loadState(userId: string): Promise<ContactSyncState> {
   try { return parseSyncState(await SecureStore.getItemAsync(syncKey(userId))); } catch { return parseSyncState(null); }
@@ -43,8 +47,13 @@ export async function runContactSync(user: { id: string; role: string }): Promis
       return;
     }
 
-    const rows = await readPhoneBook();
-    for (let i = 0; i < rows.length; i += 500) await importMyContacts(rows.slice(i, i + 500));
+    // Page by page: read a page, send what is new in it, let the screen breathe, then the next.
+    const seen = new Set<string>();
+    for await (const page of phoneBookPages()) {
+      const rows = phoneBookRows(page, seen);
+      if (rows.length > 0) await importMyContacts(rows);
+      await breathe();
+    }
     await saveState(user.id, { asked: true, agreed: true, lastSyncAt: new Date().toISOString() });
   } catch {
     // offline, server error, permission revoked: try again next launch

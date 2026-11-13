@@ -29,17 +29,37 @@ export async function phoneBookPermission(ask: boolean): Promise<'granted' | 'de
   }
 }
 
-/** Every Indian mobile in the address book with its name (one row per number). Empty without permission. */
-export async function readPhoneBook(): Promise<DialContact[]> {
+/**
+ * The address book one page at a time (`pageSize` contacts), so a book with thousands of entries is never crossed over to JavaScript and processed in one go:
+ * the caller handles a page, lets the screen breathe, then asks for the next. Empty without permission.
+ */
+export async function* phoneBookPages(pageSize = 300): AsyncGenerator<{ name?: string; phoneNumbers?: { number?: string }[] }[]> {
   const C = await api();
-  if (!C) return [];
+  if (!C) return;
   try {
-    if (!(await C.getPermissionsAsync()).granted) return [];
-    const { data } = await C.getContactsAsync({ fields: [C.Fields.PhoneNumbers, C.Fields.Name] });
-    return phoneBookRows(data.map((c) => ({ name: c.name, phoneNumbers: c.phoneNumbers?.map((p) => ({ number: p.number })) })));
+    if (!(await C.getPermissionsAsync()).granted) return;
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, hasNextPage } = await C.getContactsAsync({ fields: [C.Fields.PhoneNumbers, C.Fields.Name], pageSize, pageOffset: offset });
+      yield data.map((c) => ({ name: c.name, phoneNumbers: c.phoneNumbers?.map((p) => ({ number: p.number })) }));
+      if (!hasNextPage) return;
+    }
   } catch {
-    return [];
+    /* a read that fails part way just ends: what was handled so far stands */
   }
+}
+
+/**
+ * Every Indian mobile in the address book with its name (one row per number). Empty without permission. Read a page at a time with a breath between pages, so
+ * a book of thousands of contacts never freezes the screen the person is typing on.
+ */
+export async function readPhoneBook(): Promise<DialContact[]> {
+  const rows: DialContact[] = [];
+  const seen = new Set<string>();
+  for await (const page of phoneBookPages()) {
+    rows.push(...phoneBookRows(page, seen));
+    await new Promise<void>((resolve) => setTimeout(resolve, 16));
+  }
+  return rows;
 }
 
 /**
