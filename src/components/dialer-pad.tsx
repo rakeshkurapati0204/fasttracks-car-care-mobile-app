@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
-import { ActivityIndicator, AppState, Keyboard, Platform, Pressable, StyleSheet, TextInput, Vibration, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, Vibration, View } from 'react-native';
 
 import { EnableFade, MotionPressable, NumberMotion, PresenceScale, usePadIntro } from '@/components/dialer-motion';
 import { InCallModal } from '@/components/call/in-call-modal';
@@ -15,7 +15,7 @@ import { loadDialContacts } from '@/lib/dial-contacts';
 import { dialBlockedReason, newDialKey, toE164India } from '@/lib/dial';
 import { askForPhoneAppRole, confirmCall, placeCall, warmAutoAnswerHint } from '@/lib/dial-flow';
 import { getCallCapabilities, peekCallCapabilities } from '@/lib/call-caps';
-import { applyFieldText, deleteBack, digitsFromClipboard, insertDigit, MAX_DIGITS, spaced, toDigit, toField, type DialInput } from '@/lib/dial-input.ts';
+import { deleteBack, digitsFromClipboard, insertDigit, MAX_DIGITS, spaced, type DialInput } from '@/lib/dial-input.ts';
 import { getVoipEngine, voipApi, voipCcmApi } from '@/lib/voip';
 import { useVoipCall } from '@/lib/voip/use-voip-call.ts';
 import type { CallCapabilities } from '@/types/api';
@@ -61,7 +61,6 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
   const dialerNative = FasttracksDialer ?? null;
   const [isPhoneApp, setIsPhoneApp] = useState(() => { try { return !!dialerNative?.isDefaultDialer(); } catch { return false; } });
   const pendingKey = useRef<string | null>(null); // kept after a network failure so a retry cannot place a second call
-  const field = useRef<TextInput>(null);
   const inFlight = useRef(false); // set synchronously: a fast double tap on Call cannot start two calls
   // The parent is told what was typed only when the pad goes away (another tab), not on every key: a parent that re-renders on each digit re-renders the whole
   // Calls screen (header included) while the person is typing.
@@ -211,31 +210,15 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
       <View style={styles.inner}>
         <View style={styles.display}>
           <NumberMotion shake={invalid} token={digits}>
-          <TextInput
-            ref={field}
-            value={spaced(digits)}
-            selection={{ start: toField(input.start, len), end: toField(input.end, len) }}
-            onSelectionChange={(e) => {
-              const { start, end } = e.nativeEvent.selection;
-              setInput((cur) => ({ ...cur, start: toDigit(start, cur.digits.length), end: toDigit(end, cur.digits.length) }));
-            }}
-            onChangeText={(text) => edit(applyFieldText(input, text))}
-            // The on-screen keypad is the keyboard: the system keyboard must never open over it (it covered the keypad, the Call button and
-            // the tabs). inputMode "none" + showSoftInputOnFocus keep it closed; onFocus dismisses it if a device opens it anyway.
-            inputMode="none"
-            showSoftInputOnFocus={false}
-            onFocus={() => Keyboard.dismiss()}
-            autoFocus
-            caretHidden={false}
-            cursorColor={theme.primary}
-            selectionColor={theme.primary}
-            autoCorrect={false}
-            autoComplete="off"
-            importantForAutofill="no"
-            underlineColorAndroid="transparent"
-            accessibilityLabel="Phone number. Long press to paste."
-            style={[styles.number, { color: invalid ? theme.danger : theme.text }]}
-          />
+          {/* The number is drawn, not typed into: the keypad is the only input. A native text field here brought Android's own editing layer with it
+              (focus, caret, selection handles and the floating Paste/Select toolbar), which opened over the pad while typing. Paste is the Paste button. */}
+          <Text
+            accessibilityRole="text"
+            accessibilityLabel={digits ? `Phone number ${spaced(digits)}` : 'Phone number, empty'}
+            numberOfLines={1}
+            style={[styles.number, { color: invalid ? theme.danger : theme.text }]}>
+            {spaced(digits)}
+          </Text>
           </NumberMotion>
           <Pressable
             onPress={digits.length > 0 ? copyNumber : pasteNumber}

@@ -11,17 +11,6 @@ export function spaced(digits: string): string {
   return digits.length > 5 ? `${digits.slice(0, 5)} ${digits.slice(5)}` : digits;
 }
 
-/** Digit index -> field index. */
-export function toField(i: number, len: number): number {
-  return len > 5 && i > 5 ? i + 1 : i;
-}
-
-/** Field index -> digit index (a cursor right after the space counts as after the 5th digit). */
-export function toDigit(p: number, len: number): number {
-  const d = len > 5 && p > 5 ? p - 1 : p;
-  return Math.max(0, Math.min(len, d));
-}
-
 const clamp = (s: DialInput): DialInput => {
   const start = Math.max(0, Math.min(s.digits.length, s.start));
   return { digits: s.digits, start, end: Math.max(start, Math.min(s.digits.length, s.end)) };
@@ -66,29 +55,3 @@ export function digitsFromClipboard(text: string): string | null {
   return d.length > 0 ? d : null;
 }
 
-/**
- * The field's text changed by Android itself (Paste, Cut, a hardware keyboard). `prev` is the state before, `text` what the field now holds.
- * A pasted full mobile number replaces whatever was there (like the phone's dialer); otherwise the field keeps its digits, up to 10.
- */
-export function applyFieldText(prev: DialInput, text: string): DialInput {
-  const shown = spaced(prev.digits);
-  const fs = toField(prev.start, prev.digits.length);
-  const fe = toField(prev.end, prev.digits.length);
-  const before = shown.slice(0, fs);
-  const after = shown.slice(fe);
-  if (text.length >= before.length + after.length && text.startsWith(before) && text.endsWith(after)) {
-    const inserted = text.slice(before.length, text.length - after.length);
-    const full = mobileFromPaste(inserted);
-    if (full && inserted.replace(/\D/g, '').length >= 10) return { digits: full, start: 10, end: 10 };
-    const add = inserted.replace(/\D/g, '');
-    const b = prev.digits.slice(0, prev.start);
-    const a = prev.digits.slice(prev.end);
-    const digits = (b + add + a).slice(0, MAX_DIGITS);
-    const at = Math.min(b.length + add.length, digits.length);
-    return { digits, start: at, end: at };
-  }
-  const full = mobileFromPaste(text);
-  if (full && text.replace(/\D/g, '').length > MAX_DIGITS) return { digits: full, start: 10, end: 10 };
-  const digits = text.replace(/\D/g, '').slice(0, MAX_DIGITS);
-  return { digits, start: digits.length, end: digits.length };
-}
