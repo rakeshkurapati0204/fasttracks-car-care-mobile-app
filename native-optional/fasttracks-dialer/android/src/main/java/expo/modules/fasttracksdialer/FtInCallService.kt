@@ -81,7 +81,8 @@ class FtInCallService : InCallService() {
         try { getSystemService(TelecomManager::class.java).silenceRinger() } catch (_: SecurityException) { /* answering anyway */ }
         call.answer(VideoProfile.STATE_AUDIO_ONLY)
         CallRegistry.emit("auto_answered", true, "answering")
-        showCallScreen() // the same call screen as any phone app: customer, timer, Mute / Speaker / Hold / End
+        // No call screen pops up: the salesman pressed Call in the app, so the answer happens behind the scenes and they are already looking at the app. The
+        // ongoing-call notification (Hang up, tap to open the call screen) is the only sign.
         refreshNotification()
       }
       Decision.LEARN_ONLY -> {
