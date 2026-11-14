@@ -29,7 +29,10 @@ class FasttracksDialerModule : Module() {
     Events("onCallEvent")
 
     OnCreate { CallRegistry.sink = { event -> sendEvent("onCallEvent", event) } }
-    OnDestroy { CallRegistry.sink = null }
+    OnDestroy { CallRegistry.sink = null; KeyTones.release() }
+
+    // The key sound of the dial pad (DTMF, like the phone's own dialer; follows the phone's "dial pad tones" setting).
+    Function("playKeyTone") { key: String -> KeyTones.play(context, key) }
 
     Function("isDefaultDialer") { isDefault() }
 

@@ -19,6 +19,7 @@ export type FasttracksDialerNative = {
   armAutoAnswer(callerIds: string[], windowSeconds: number): boolean;
   disarmAutoAnswer(): void;
   setCallLabel?(label: string): void;
+  playKeyTone?(key: string): void;
   showCallScreen?(label: string): void;
   dismissCallScreen?(): void;
   setLearnMode(on: boolean): void;

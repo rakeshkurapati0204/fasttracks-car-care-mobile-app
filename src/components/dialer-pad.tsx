@@ -123,6 +123,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
   const valid = isValidMobile(digits);
   const invalid = digits.length === MAX_DIGITS && !valid;
   const tap = () => { if (Platform.OS === 'android') Vibration.vibrate(8); };
+  const keyTone = (key: string) => { try { dialerNative?.playKeyTone?.(key); } catch { /* no sound is better than a failed key press */ } };
   const edit = (next: DialInput) => { setResult(null); setInput(next); };
   // The system keyboard never opens here, so the phone's own Paste/Copy popup is unreliable on a few phones: these two buttons always work.
   const pasteNumber = async () => {
@@ -246,7 +247,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
               <Animated.View key={k.digit} entering={intro ? FadeInDown.delay(40 + i * 30).duration(280) : undefined} style={styles.cell}>
                 <MotionPressable
                   disabled={disabled}
-                  onPress={() => { tap(); edit(insertDigit(input, k.digit)); }}
+                  onPress={() => { tap(); keyTone(k.digit); edit(insertDigit(input, k.digit)); }}
                   accessibilityLabel={k.digit}
                   glowColor={theme.backgroundSelected}
                   style={styles.key}>

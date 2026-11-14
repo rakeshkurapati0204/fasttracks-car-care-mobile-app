@@ -15,6 +15,8 @@ export type DialerNative = {
   /** The customer shown on the call screen of the click-to-call call. Optional so an older native build without it still works. */
   setCallLabel?(label: string): void;
   /** Opens the call screen ("Calling...", End Call) the moment Call is pressed; dismissCallScreen closes it if no call is coming. Optional: an older native build has neither. */
+  /** The dial pad key sound (DTMF). Optional: an older native build, or the web, has none. */
+  playKeyTone?(key: string): void;
   showCallScreen?(label: string): void;
   dismissCallScreen?(): void;
 };
