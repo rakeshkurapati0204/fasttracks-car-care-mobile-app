@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { deleteBack, digitsFromClipboard, insertDigit, mobileFromPaste, spaced, type DialInput } from './dial-input.ts';
+import { deleteBack, digitsFromClipboard, displayNumber, insertDigit, mobileFromPaste, spaced, startPlus, type DialInput } from './dial-input.ts';
 
 const S = (digits: string, start = digits.length, end = start): DialInput => ({ digits, start, end });
 
@@ -41,4 +41,20 @@ test('Paste takes the mobile number out of copied text, or its digits, or nothin
   assert.equal(digitsFromClipboard('012345 67890'), '1234567890');
   assert.equal(digitsFromClipboard('no number here'), null);
   assert.equal(digitsFromClipboard(''), null);
+});
+
+test('the + key starts +91 on an empty number, once, and Delete at the start takes it away', () => {
+  const plus = startPlus(S(''));
+  assert.equal(plus.plus, true);
+  assert.equal(displayNumber(plus), '+91 ');
+  assert.equal(startPlus(plus).plus, true); // a second press changes nothing
+  assert.equal(startPlus(S('98480')).plus, undefined); // a + in the middle of a number is ignored
+  const typed = insertDigit(insertDigit(plus, '9'), '8');
+  assert.equal(typed.plus, true);
+  assert.equal(displayNumber(typed), '+91 98');
+  assert.equal(displayNumber(insertDigit(S('9848012', 0, 7), '7')), '7');
+  assert.equal(deleteBack(S('', 0, 0)).plus, undefined);
+  assert.equal(deleteBack({ digits: '', start: 0, end: 0, plus: true }).plus, undefined); // Delete removes the +
+  assert.equal(deleteBack({ digits: '98', start: 2, end: 2, plus: true }).plus, true); // Delete on a digit keeps it
+  assert.equal(displayNumber(S('9848012345')), '98480 12345');
 });

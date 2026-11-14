@@ -5,16 +5,30 @@ import { pastedMobile } from './contacts.ts';
 
 export const MAX_DIGITS = 10;
 
-export type DialInput = { digits: string; start: number; end: number };
+/** `plus`: a "+91" was started with the 0 key (long press). It is shown before the number and is never one of the 10 digits. */
+export type DialInput = { digits: string; start: number; end: number; plus?: boolean };
 
 export function spaced(digits: string): string {
   return digits.length > 5 ? `${digits.slice(0, 5)} ${digits.slice(5)}` : digits;
 }
 
+const keep = (s: DialInput) => (s.plus ? { plus: true as const } : {});
+
 const clamp = (s: DialInput): DialInput => {
   const start = Math.max(0, Math.min(s.digits.length, s.start));
-  return { digits: s.digits, start, end: Math.max(start, Math.min(s.digits.length, s.end)) };
+  return { digits: s.digits, start, end: Math.max(start, Math.min(s.digits.length, s.end)), ...keep(s) };
 };
+
+/** What the number field shows: "+91 " first when the + key was used, then the digits grouped like a phone. */
+export function displayNumber(s: DialInput): string {
+  return `${s.plus ? '+91 ' : ''}${spaced(s.digits)}`;
+}
+
+/** The + key (long press on 0): only at the start of an empty number, and only once. */
+export function startPlus(s: DialInput): DialInput {
+  const c = clamp(s);
+  return c.digits.length === 0 && !c.plus ? { digits: '', start: 0, end: 0, plus: true } : c;
+}
 
 /** A keypad press: replaces the selection, or inserts at the cursor. Ignored when the number is full and nothing is selected. */
 export function insertDigit(s: DialInput, d: string): DialInput {
@@ -22,15 +36,15 @@ export function insertDigit(s: DialInput, d: string): DialInput {
   if (c.start === c.end && c.digits.length >= MAX_DIGITS) return c;
   const digits = (c.digits.slice(0, c.start) + d + c.digits.slice(c.end)).slice(0, MAX_DIGITS);
   const at = Math.min(c.start + 1, digits.length);
-  return { digits, start: at, end: at };
+  return { digits, start: at, end: at, ...keep(c) };
 }
 
 /** Delete: removes the selection, or the digit before the cursor. */
 export function deleteBack(s: DialInput): DialInput {
   const c = clamp(s);
-  if (c.start !== c.end) return { digits: c.digits.slice(0, c.start) + c.digits.slice(c.end), start: c.start, end: c.start };
-  if (c.start === 0) return c;
-  return { digits: c.digits.slice(0, c.start - 1) + c.digits.slice(c.start), start: c.start - 1, end: c.start - 1 };
+  if (c.start !== c.end) return { digits: c.digits.slice(0, c.start) + c.digits.slice(c.end), start: c.start, end: c.start, ...keep(c) };
+  if (c.start === 0) return { digits: c.digits, start: 0, end: 0 }; // at the very start, Delete takes away the + (when there is one)
+  return { digits: c.digits.slice(0, c.start - 1) + c.digits.slice(c.start), start: c.start - 1, end: c.start - 1, ...keep(c) };
 }
 
 // Copied numbers often carry invisible characters: direction marks from contacts/WhatsApp, non-breaking spaces, brackets. They are removed first.

@@ -15,7 +15,7 @@ import { loadDialContacts } from '@/lib/dial-contacts';
 import { dialBlockedReason, newDialKey, toE164India } from '@/lib/dial';
 import { askForPhoneAppRole, confirmCall, placeCall, warmAutoAnswerHint } from '@/lib/dial-flow';
 import { getCallCapabilities, peekCallCapabilities } from '@/lib/call-caps';
-import { deleteBack, digitsFromClipboard, insertDigit, MAX_DIGITS, spaced, type DialInput } from '@/lib/dial-input.ts';
+import { deleteBack, digitsFromClipboard, displayNumber, insertDigit, MAX_DIGITS, spaced, startPlus, type DialInput } from '@/lib/dial-input.ts';
 import { getVoipEngine, voipApi, voipCcmApi } from '@/lib/voip';
 import { useVoipCall } from '@/lib/voip/use-voip-call.ts';
 import type { CallCapabilities } from '@/types/api';
@@ -215,10 +215,10 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
               (focus, caret, selection handles and the floating Paste/Select toolbar), which opened over the pad while typing. Paste is the Paste button. */}
           <Text
             accessibilityRole="text"
-            accessibilityLabel={digits ? `Phone number ${spaced(digits)}` : 'Phone number, empty'}
+            accessibilityLabel={digits || input.plus ? `Phone number ${displayNumber(input)}` : 'Phone number, empty'}
             numberOfLines={1}
             style={[styles.number, { color: invalid ? theme.danger : theme.text }]}>
-            {spaced(digits)}
+            {displayNumber(input)}
           </Text>
           </NumberMotion>
           <Pressable
@@ -248,6 +248,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
                 <MotionPressable
                   disabled={disabled}
                   onPress={() => { tap(); keyTone(k.digit); edit(insertDigit(input, k.digit)); }}
+                  onLongPress={k.digit === '0' ? () => { tap(); edit(startPlus(input)); } : undefined}
                   accessibilityLabel={k.digit}
                   glowColor={theme.backgroundSelected}
                   style={styles.key}>
