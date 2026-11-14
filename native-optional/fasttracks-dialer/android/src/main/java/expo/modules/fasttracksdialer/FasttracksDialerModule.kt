@@ -9,6 +9,7 @@ import android.telecom.TelecomManager
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import android.util.Log
 
 /**
  * JS name "FasttracksDialer". The React Native side can: ask the user to make Fasttracks the phone app (Android shows its own approval dialog), arm ONE
@@ -75,14 +76,16 @@ class FasttracksDialerModule : Module() {
       if (!isDefault() || tails.isEmpty()) return@Function false
       val windowMs = (windowSeconds.coerceIn(1, 180)) * 1000L
       PendingStore.register(context, tails, System.currentTimeMillis() + windowMs, learn)
+      Log.i("FtDialer", "armed: ${tails.size} caller id(s), window ${windowMs / 1000}s")
       FtInCallService.instance?.answerRingingIfArmed() // a callback that already rang before this arm is answered now
       true
     }
 
-    Function("disarmAutoAnswer") { PendingStore.clear(context) }
+    Function("disarmAutoAnswer") { Log.i("FtDialer", "disarmed by the app"); PendingStore.clear(context) }
 
     // Opens the call screen the moment Call is pressed ("Calling..." with End Call); it follows Exotel's call when that arrives. dismissCallScreen closes it when no call is coming.
     Function("showCallScreen") { label: String ->
+      Log.i("FtDialer", "call pressed: calling screen requested")
       CallRegistry.startConnecting(label.take(64).ifBlank { null })
       context.startActivity(Intent(context, InCallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
     }

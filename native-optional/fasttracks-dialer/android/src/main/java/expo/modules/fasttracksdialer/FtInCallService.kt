@@ -10,6 +10,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.InCallService
@@ -25,6 +26,7 @@ import android.telecom.VideoProfile
 @TargetApi(Build.VERSION_CODES.Q) // the phone-app role exists from Android 10; the app's minSdk is 24, where this service is never bound
 class FtInCallService : InCallService() {
   companion object {
+    private const val TAG = "FtDialer"
     const val CHANNEL_INCOMING = "ft_dialer_incoming"
     const val CHANNEL_ONGOING = "ft_dialer_ongoing"
     const val NOTIF_ID = 7201
@@ -75,6 +77,8 @@ class FtInCallService : InCallService() {
     val number = call.details?.handle?.schemeSpecificPart
     val attempt = PendingStore.peek(this)
     val decision = AutoAnswerPolicy.decide(number, attempt, System.currentTimeMillis(), otherActive)
+    // The reason a call was or was not answered. Never the number: only whether it was armed, for how long, and what the policy decided.
+    Log.i(TAG, "ringing call: decision=$decision armed=${attempt != null} expiresInMs=${attempt?.let { it.expiresAtMs - System.currentTimeMillis() }} otherActive=$otherActive dialIntent=${CallRegistry.dialIntentActive()} calls=${CallRegistry.all().size}")
     if (decision == Decision.EXPIRED || decision == Decision.ANSWER) PendingStore.clear(this) // single use, and expired attempts never linger
     when (decision) {
       Decision.ANSWER -> answerAutomatically(call)
@@ -122,6 +126,7 @@ class FtInCallService : InCallService() {
   fun answerRingingIfArmed() {
     Handler(Looper.getMainLooper()).post {
       val attempt = PendingStore.peek(this) ?: return@post
+      Log.i(TAG, "armed while ${CallRegistry.all().size} call(s) known: checking ringing ones")
       for (call in CallRegistry.all()) {
         if (CallRegistry.stateOf(call) != Call.STATE_RINGING) continue
         val otherActive = CallRegistry.all().any { it !== call && CallRegistry.isLive(it) }
@@ -138,6 +143,7 @@ class FtInCallService : InCallService() {
   override fun onCallRemoved(call: Call) {
     call.unregisterCallback(callback)
     val exotel = autoAnswered.remove(call)
+    Log.i(TAG, "call removed: autoAnswered=$exotel left=${CallRegistry.all().size - 1}")
     CallRegistry.remove(call)
     CallRegistry.emit("ended", exotel, "disconnected")
     refreshNotification()
