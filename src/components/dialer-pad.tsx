@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, Vibration, View } from 'react-native';
 
+import { stallMonitor } from '@/lib/stall-monitor';
 import { EnableFade, MotionPressable, NumberMotion, PresenceScale, usePadIntro } from '@/components/dialer-motion';
 import { InCallModal } from '@/components/call/in-call-modal';
 import { ThemedText } from '@/components/themed-text';
@@ -126,7 +127,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
   const invalid = digits.length === MAX_DIGITS && !valid;
   const tap = () => { if (Platform.OS === 'android') Vibration.vibrate(8); };
   const keyTone = (key: string) => { try { dialerNative?.playKeyTone?.(key); } catch { /* no sound is better than a failed key press */ } };
-  const edit = (next: DialInput) => { setResult(null); setInput(next); };
+  const edit = (next: DialInput) => { stallMonitor.note(`dial ${next.digits.length} digits`); setResult(null); setInput(next); };
   // The system keyboard never opens here, so the phone's own Paste/Copy popup is unreliable on a few phones: these two buttons always work.
   const pasteNumber = async () => {
     tap();

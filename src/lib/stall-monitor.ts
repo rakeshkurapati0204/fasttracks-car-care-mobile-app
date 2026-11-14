@@ -13,6 +13,8 @@ export type StallMonitor = {
   clear(): void;
   /** Text for the speed log: newest first. */
   format(): string;
+  /** Remember a moment (menu opened, key pressed) so it shows beside the slow moments. */
+  note(what: string): void;
   /** One timer step. Public so a test can drive it with a fake clock. */
   tick(): void;
 };
@@ -28,6 +30,7 @@ export function createStallMonitor(o: Options = {}): StallMonitor {
   let last = 0;
   let where = 'start';
   const stalls: Stall[] = [];
+  const notes: { at: number; what: string }[] = [];
 
   const tick = () => {
     const t = now();
@@ -50,12 +53,15 @@ export function createStallMonitor(o: Options = {}): StallMonitor {
     resume() { last = now(); },
     setWhere(w) { where = w; },
     list: () => [...stalls],
-    clear() { stalls.length = 0; },
+    note(what) { notes.push({ at: now(), what }); if (notes.length > 60) notes.shift(); },
+    clear() { stalls.length = 0; notes.length = 0; },
     format() {
-      if (stalls.length === 0) return 'No slow moments since the app opened.';
+      const events = [...notes].reverse().slice(0, 15).map((n) => `${clock(n.at)}  ${n.what}`);
+      const tail = events.length ? ['', 'Latest events:', ...events] : [];
+      if (stalls.length === 0) return ['No slow moments since the app opened.', ...tail].join('\n');
       const worst = Math.max(...stalls.map((s) => s.ms));
       const lines = [...stalls].reverse().slice(0, 12).map((s) => `${clock(s.at)}  ${seconds(s.ms)}  ${s.where}`);
-      return [`${stalls.length} slow moments, worst ${seconds(worst)}`, '', ...lines].join('\n');
+      return [`${stalls.length} slow moments, worst ${seconds(worst)}`, '', ...lines, ...tail].join('\n');
     },
     tick,
   };

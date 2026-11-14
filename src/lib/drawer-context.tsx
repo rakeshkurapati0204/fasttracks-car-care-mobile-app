@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { useWindowDimensions } from 'react-native';
+import { stallMonitor } from '@/lib/stall-monitor';
 
 // Whether the slide-out menu is open. The menu is the only menu, at every window size (see push-shell.tsx).
 interface DrawerContextValue {
@@ -22,9 +23,9 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
   const value = useMemo<DrawerContextValue>(
     () => ({
       isOpen,
-      open: () => setIsOpen(true),
-      close: () => setIsOpen(false),
-      toggle: () => setIsOpen((v) => !v),
+      open: () => { stallMonitor.note('menu open'); setIsOpen(true); },
+      close: () => { stallMonitor.note('menu close'); setIsOpen(false); },
+      toggle: () => setIsOpen((v) => { stallMonitor.note(v ? 'menu close' : 'menu open'); return !v; }),
     }),
     [isOpen]
   );
