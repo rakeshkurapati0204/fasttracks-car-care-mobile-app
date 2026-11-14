@@ -17,9 +17,7 @@ test('a detail screen inside a section still navigates when its section is tappe
   assert.equal(sideNavAction('/customers/123', '/customers'), 'replace');
 });
 
-test('top-level screens swap with a fade (instantly beside a pinned sidebar); detail screens keep the platform slide', () => {
-  assert.equal(topLevelAnimation(false), 'fade');
-  assert.equal(topLevelAnimation(true), 'none');
-  assert.equal(detailAnimation(false), undefined);
-  assert.equal(detailAnimation(true), 'none');
+test('top-level screens swap with a fade; detail screens keep the platform slide', () => {
+  assert.equal(topLevelAnimation, 'fade');
+  assert.equal(detailAnimation, undefined);
 });

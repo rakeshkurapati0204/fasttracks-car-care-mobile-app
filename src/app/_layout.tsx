@@ -17,11 +17,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BrandSplash } from '@/components/brand-splash';
 import { MenuButton } from '@/components/menu-button';
 import { PushShell } from '@/components/push-shell';
-import { SideMenu } from '@/components/side-menu';
 import { StallWatcher } from '@/components/stall-watcher';
 import { Colors } from '@/constants/theme';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
-import { DrawerProvider, useIsDocked } from '@/lib/drawer-context';
+import { DrawerProvider } from '@/lib/drawer-context';
 import { PermissionsProvider } from '@/lib/permissions-context';
 import { topLevelAnimation } from '@/lib/side-nav';
 import { startPostLoginTasks } from '@/lib/post-login-start';
@@ -55,7 +54,6 @@ const FasttracksDarkTheme: Theme = {
 
 function RootNavigator() {
   const { isReady, isAuthenticated, user } = useAuth();
-  const docked = useIsDocked();
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -90,11 +88,9 @@ function RootNavigator() {
 
   return (
     <View style={{ flex: 1, flexDirection: 'row' }}>
-      {/* Wide screens: the sidebar is docked on the left and the screens sit to its right. */}
-      {isAuthenticated && docked ? <SideMenu /> : null}
       {/* overflow hidden: whatever a screen draws while it transitions can never spill over the sidebar. */}
       <View style={{ flex: 1, overflow: 'hidden' }}>
-    <Stack screenOptions={{ animation: topLevelAnimation(docked) }}>
+    <Stack screenOptions={{ animation: topLevelAnimation }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       {/* Forgot Password is public and not guarded either way, so it never blocks a signed-in user. */}
       <Stack.Screen name="forgot-password" options={{ headerShown: false }} />

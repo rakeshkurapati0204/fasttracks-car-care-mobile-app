@@ -2,7 +2,7 @@
 //
 // Every menu entry is a TOP-LEVEL destination, like a tab: tapping one REPLACES the current screen. The stack does not grow (Back never walks through every
 // menu visit) and the old screen is never left sitting beside the new one. The menu's own motion (the page card sliding back) is the transition, so the
-// screens swap with a short fade, or instantly beside a pinned sidebar. Drilling into a record (a customer, a chat) still pushes and slides as usual.
+// screens swap with a short fade. Drilling into a record (a customer, a chat) still pushes and slides as usual.
 
 export type NavAction = 'none' | 'replace';
 
@@ -13,12 +13,8 @@ export function sideNavAction(pathname: string, href: string): NavAction {
   return strip(pathname) === strip(href) ? 'none' : 'replace';
 }
 
-/** The `animation` option for the stacks that hold top-level destinations: none beside a pinned sidebar, a short fade otherwise. */
-export function topLevelAnimation(docked: boolean): 'none' | 'fade' {
-  return docked ? 'none' : 'fade';
-}
+/** The `animation` option for the stacks that hold top-level destinations: a short fade, because the menu's own motion is the real transition. */
+export const topLevelAnimation = 'fade' as const;
 
-/** The `animation` option for stacks that hold detail screens (a customer, a chat): none beside a pinned sidebar, the platform's slide otherwise. */
-export function detailAnimation(docked: boolean): 'none' | undefined {
-  return docked ? 'none' : undefined;
-}
+/** The `animation` option for stacks that hold detail screens (a customer, a chat): the platform's own slide. */
+export const detailAnimation = undefined;

@@ -14,7 +14,6 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing, Layout } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { useIsDocked } from '@/lib/drawer-context';
 import { fetchCallCapabilities, fetchCallLog, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { groupLabel } from '@/lib/call-format';
@@ -42,7 +41,6 @@ const TABS: { key: CallsTab; label: string; icon: 'keypad' | 'time' | 'people' |
 
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
-  const docked = useIsDocked();
   const theme = useTheme();
   const [tab, setTab] = useState<CallsTab>('dialer');
   const [dialSeed, setDialSeed] = useState<{ n: number; digits: string }>({ n: 0, digits: '' }); // a tapped contact: the dial pad is rebuilt with its number
@@ -50,7 +48,7 @@ export default function CallsScreen() {
   const [padDigits, setPadDigits] = useState(''); // what is typed on the dial pad survives a visit to another tab
   // Calls is a top-level screen reached from the menu, like the others: the menu button, never a back arrow (beside a pinned sidebar there is none).
   // The options object is built once, not on every render: a new one each time makes the navigator rebuild the header (and the menu button in it).
-  const headerOptions = useMemo(() => ({ title: 'Calls', headerLeft: docked ? () => null : () => <MenuButton /> }), [docked]);
+  const headerOptions = useMemo(() => ({ title: 'Calls', headerLeft: () => <MenuButton /> }), []);
   const { user } = useAuth();
   const isAuthorized = VIEW_ROLES.includes(user?.role ?? '');
 

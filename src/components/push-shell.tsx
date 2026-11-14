@@ -8,15 +8,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { MenuIcon } from '@/components/menu-icon';
-import { useMenuModel, type NavNode } from '@/components/side-menu';
 import { ThemedText } from '@/components/themed-text';
 import type { ScreenMeta } from '@/constants/screen-registry';
 import { FontWeights } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
 import { avatarColor } from '@/lib/call-format';
 import { initials } from '@/lib/call-tracker-format';
-import { useDrawer, useIsDocked } from '@/lib/drawer-context';
+import { useDrawer } from '@/lib/drawer-context';
 import { slideDistance } from '@/lib/layout-mode';
+import { useMenuModel, type NavNode } from '@/lib/menu-model';
 import { ROLE_LABELS } from '@/lib/labels';
 import { stallMonitor } from '@/lib/stall-monitor';
 import { follow, glide } from '@/lib/motion';
@@ -37,13 +37,12 @@ const MAROON_BOTTOM = '#36090F';
 
 export function PushShell({ children }: { children: ReactNode }) {
   const { isOpen, close } = useDrawer();
-  const docked = useIsDocked();
   const { user } = useAuth();
   const { width } = useWindowDimensions();
   const slide = slideDistance(width); // from the window as it is now: right on a phone, a tablet or a wide desktop window
   const reduce = useReducedMotion();
   const progress = useSharedValue(0);
-  const enabled = !!user && !docked;
+  const enabled = !!user;
   const open = enabled && isOpen;
   // The menu is only built the first time it is opened: a phone that never opens it pays nothing.
   const [built, setBuilt] = useState(false);
@@ -52,11 +51,6 @@ export function PushShell({ children }: { children: ReactNode }) {
     if (open) setBuilt(true); // eslint-disable-line react-hooks/set-state-in-effect -- build the menu once, on the first open
     glide(progress, open ? 1 : 0, reduce ? 1 : open ? OPEN_MS : CLOSE_MS);
   }, [open, reduce, progress]);
-
-  // The window grew (rotation, split screen, unfolding) and the sidebar is now pinned: a slide-out menu left open would reopen later by itself.
-  useEffect(() => {
-    if (docked && isOpen) close();
-  }, [docked, isOpen, close]);
 
   // Android's Back button closes the menu first instead of leaving the screen.
   useEffect(() => {

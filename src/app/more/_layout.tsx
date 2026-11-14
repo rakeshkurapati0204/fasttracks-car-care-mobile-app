@@ -1,7 +1,6 @@
 import { Stack } from 'expo-router';
 
 import { MenuButton } from '@/components/menu-button';
-import { useIsDocked } from '@/lib/drawer-context';
 import { topLevelAnimation } from '@/lib/side-nav';
 
 // "index" is no longer reachable from a tab (the flat More list is replaced
@@ -12,7 +11,7 @@ import { topLevelAnimation } from '@/lib/side-nav';
 // hamburger since they're reached from the side menu, not a tab bar.
 export default function MoreLayout() {
   return (
-    <Stack screenOptions={{ headerLeft: () => <MenuButton />, animation: topLevelAnimation(useIsDocked()) }}>
+    <Stack screenOptions={{ headerLeft: () => <MenuButton />, animation: topLevelAnimation }}>
       <Stack.Screen name="index" options={{ title: 'More' }} />
       <Stack.Screen name="[id]" options={{ title: '' }} />
       <Stack.Screen name="reminders" options={{ title: 'Reminders' }} />
