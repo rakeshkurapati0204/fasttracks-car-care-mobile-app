@@ -37,6 +37,16 @@ export const SCREEN_REGISTRY: ScreenMeta[] = [
     route: '/more/overview',
   },
   {
+    id: 'assistant',
+    title: 'Ask AI',
+    dashboardRoute: '/dashboard',
+    purpose: 'Owner Assistant: ask about jobs, stuck jobs, pipeline, follow-ups, attendance, stock and missed calls in English, Hindi or Telugu, or tap Today\'s brief.',
+    endpoints: ['POST /owner-assistant/chat'],
+    note: 'Owner only (requireOwner on the route; visibleToRoles hides the entry for everyone else). Read-only: the server answers from existing owner endpoints and refuses payment, invoice, salary, bank, ledger and loan questions before any model call. The dashboard shows the same assistant behind an "Ask AI" button on the Overview.',
+    visibleToRoles: ['OWNER'],
+    route: '/more/assistant',
+  },
+  {
     id: 'customers',
     title: 'Customers & Jobs',
     dashboardRoute: '/dashboard/customers',

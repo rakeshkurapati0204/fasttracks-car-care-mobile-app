@@ -14,6 +14,7 @@ export default function MoreLayout() {
     <Stack screenOptions={{ headerLeft: () => <MenuButton />, animation: topLevelAnimation }}>
       <Stack.Screen name="index" options={{ title: 'More' }} />
       <Stack.Screen name="[id]" options={{ title: '' }} />
+      <Stack.Screen name="assistant" options={{ title: 'Ask AI' }} />
       <Stack.Screen name="reminders" options={{ title: 'Reminders' }} />
       <Stack.Screen name="my-timesheet" options={{ title: 'My Timesheet' }} />
       <Stack.Screen name="my-salary" options={{ title: 'My Salary' }} />

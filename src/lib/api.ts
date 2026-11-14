@@ -4734,3 +4734,10 @@ export async function requestPasswordReset(username: string) {
   const { data } = await api.post<{ success: boolean; message: string; noContact?: boolean }>('/auth/forgot-password', { username });
   return data;
 }
+
+// Owner Assistant (More > Ask AI): POST /owner-assistant/chat, owner only, read-only on the server. Stateless: the whole chat is sent each time
+// (see lib/assistant-chat.ts). A reply takes a few seconds, the daily brief up to ten, so this call waits longer than the default.
+export async function askOwnerAssistant(messages: import('@/lib/assistant-chat').ChatMessage[]): Promise<string> {
+  const { data } = await api.post<ApiEnvelope<{ reply: string }>>('/owner-assistant/chat', { messages }, { timeout: 45000 });
+  return data.data.reply;
+}
