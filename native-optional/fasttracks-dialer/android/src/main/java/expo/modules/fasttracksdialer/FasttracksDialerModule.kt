@@ -72,10 +72,18 @@ class FasttracksDialerModule : Module() {
       if (!isDefault() || tails.isEmpty()) return@Function false
       val windowMs = (windowSeconds.coerceIn(1, 180)) * 1000L
       PendingStore.register(context, tails, System.currentTimeMillis() + windowMs, learn)
+      FtInCallService.instance?.answerRingingIfArmed() // a callback that already rang before this arm is answered now
       true
     }
 
     Function("disarmAutoAnswer") { PendingStore.clear(context) }
+
+    // Opens the call screen the moment Call is pressed ("Calling..." with End Call); it follows Exotel's call when that arrives. dismissCallScreen closes it when no call is coming.
+    Function("showCallScreen") { label: String ->
+      CallRegistry.startConnecting(label.take(64).ifBlank { null })
+      context.startActivity(Intent(context, InCallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+    }
+    Function("dismissCallScreen") { CallRegistry.stopConnecting() }
 
     // The customer's number or name for the call screen of the click-to-call call that is about to arrive. Cleared when that call ends.
     Function("setCallLabel") { label: String -> CallRegistry.exotelLabel = label.take(64).ifBlank { null } }

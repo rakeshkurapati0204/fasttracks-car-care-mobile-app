@@ -8,6 +8,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.InCallService
@@ -75,16 +77,7 @@ class FtInCallService : InCallService() {
     val decision = AutoAnswerPolicy.decide(number, attempt, System.currentTimeMillis(), otherActive)
     if (decision == Decision.EXPIRED || decision == Decision.ANSWER) PendingStore.clear(this) // single use, and expired attempts never linger
     when (decision) {
-      Decision.ANSWER -> {
-        autoAnswered.add(call)
-        CallRegistry.markExotel(call)
-        try { getSystemService(TelecomManager::class.java).silenceRinger() } catch (_: SecurityException) { /* answering anyway */ }
-        call.answer(VideoProfile.STATE_AUDIO_ONLY)
-        CallRegistry.emit("auto_answered", true, "answering")
-        // No call screen pops up: the salesman pressed Call in the app, so the answer happens behind the scenes and they are already looking at the app. The
-        // ongoing-call notification (Hang up, tap to open the call screen) is the only sign.
-        refreshNotification()
-      }
+      Decision.ANSWER -> answerAutomatically(call)
       Decision.LEARN_ONLY -> {
         CallRegistry.emit("learn", false, "ringing", number) // report what Exotel shows; the call is NOT answered
         showIncoming(call)
@@ -92,6 +85,38 @@ class FtInCallService : InCallService() {
       else -> {
         CallRegistry.emit("incoming", false, "ringing")
         showIncoming(call)
+      }
+    }
+  }
+
+  /** Answers a verified Exotel click-to-call call. No incoming-call screen or ringtone is ever shown for it; the call screen (customer, timer, End Call) is. */
+  private fun answerAutomatically(call: Call) {
+    autoAnswered.add(call)
+    CallRegistry.markExotel(call)
+    try { getSystemService(TelecomManager::class.java).silenceRinger() } catch (_: SecurityException) { /* answering anyway */ }
+    call.answer(VideoProfile.STATE_AUDIO_ONLY)
+    CallRegistry.emit("auto_answered", true, "answering")
+    showCallScreen() // the screen opened when Call was pressed stays; if it was closed, it comes back
+    refreshNotification()
+  }
+
+  /**
+   * Called right after the app arms an attempt. Exotel can ring the phone BEFORE the server's reply reaches the app (a slow connection, the first call after
+   * install), so the call arrived with nothing armed and showed the incoming screen. The same rules (AutoAnswerPolicy) are applied to a call that is already
+   * ringing: a verified Exotel call is answered now and the incoming notification is replaced; any other call is left alone.
+   */
+  fun answerRingingIfArmed() {
+    Handler(Looper.getMainLooper()).post {
+      val attempt = PendingStore.peek(this) ?: return@post
+      for (call in CallRegistry.all()) {
+        if (CallRegistry.stateOf(call) != Call.STATE_RINGING) continue
+        val otherActive = CallRegistry.all().any { it !== call && CallRegistry.isLive(it) }
+        val number = call.details?.handle?.schemeSpecificPart
+        if (AutoAnswerPolicy.decide(number, attempt, System.currentTimeMillis(), otherActive) == Decision.ANSWER) {
+          PendingStore.clear(this)
+          answerAutomatically(call)
+          return@post
+        }
       }
     }
   }

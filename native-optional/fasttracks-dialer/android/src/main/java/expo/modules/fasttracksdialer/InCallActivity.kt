@@ -131,7 +131,11 @@ class InCallActivity : Activity() {
     keypad = buildKeypad()
     root.addView(keypad, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-    val end = control(R.drawable.ft_ic_call_end, "End Call", 72, RED) { CallRegistry.current()?.disconnect() }
+    val end = control(R.drawable.ft_ic_call_end, "End Call", 72, RED) {
+      val live = CallRegistry.current()
+      if (live != null) live.disconnect()
+      else { CallRegistry.stopConnecting(); PendingStore.clear(this@InCallActivity); finish() } // still waiting for Exotel's call: cancel it
+    }
     endRow = row(end.box).apply { setPadding(0, dp(20), 0, 0) }
     root.addView(endRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -213,9 +217,24 @@ class InCallActivity : Activity() {
     return String.format("%02d:%02d", s / 60, s % 60)
   }
 
+  /** Call was pressed in the app and Exotel's call has not arrived yet: the same screen, "Calling...", with only End Call. */
+  private fun renderConnecting() {
+    title.text = CallRegistry.exotelLabel ?: "Calling..."
+    subtitle.text = "Fasttracks call · recorded"
+    status.text = "Calling..."
+    ringingRow.visibility = View.GONE
+    endRow.visibility = View.VISIBLE
+    grid.visibility = View.GONE
+    keypad.visibility = View.GONE
+    syncProximity(false)
+  }
+
   private fun render() {
     val call = CallRegistry.current()
-    if (call == null) { finish(); return }
+    if (call == null) {
+      if (CallRegistry.isConnecting()) renderConnecting() else finish()
+      return
+    }
     val state = CallRegistry.stateOf(call)
     val number = call.details?.handle?.schemeSpecificPart
     val label = CallRegistry.exotelLabel

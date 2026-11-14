@@ -12,7 +12,14 @@ object CallRegistry {
   @Volatile var exotelLabel: String? = null
   private val exotel = HashSet<Call>()
 
-  @Synchronized fun add(c: Call) { calls.add(c); onChanged?.invoke() }
+  /** Set when the app opens the call screen the moment Call is pressed. The screen shows "Calling..." until Exotel's call arrives, the salesman ends it, or CONNECT_WAIT_MS passes. */
+  @Volatile private var connectingSinceMs: Long = 0L
+  const val CONNECT_WAIT_MS = 60_000L
+  fun isConnecting(): Boolean = connectingSinceMs > 0 && System.currentTimeMillis() - connectingSinceMs < CONNECT_WAIT_MS
+  fun startConnecting(label: String?) { exotelLabel = label; connectingSinceMs = System.currentTimeMillis(); onChanged?.invoke() }
+  fun stopConnecting() { connectingSinceMs = 0L; onChanged?.invoke() }
+
+  @Synchronized fun add(c: Call) { calls.add(c); connectingSinceMs = 0L; onChanged?.invoke() } // a call exists now: the screen follows it
   @Synchronized fun remove(c: Call) { calls.remove(c); exotel.remove(c); if (exotel.isEmpty()) exotelLabel = null; onChanged?.invoke() }
   @Synchronized fun markExotel(c: Call) { exotel.add(c) }
   @Synchronized fun isExotel(c: Call): Boolean = exotel.contains(c)

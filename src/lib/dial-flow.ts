@@ -5,14 +5,14 @@ import { Alert, Platform } from 'react-native';
 
 import { dialErrorText } from '@/lib/dial';
 import { dialNumber } from '@/lib/api';
-import { armAutoAnswer, disarmAutoAnswer, enableAutoAnswer, sanitizeHint, type ArmResult, type DialerNative } from '@/lib/auto-answer/arm.ts';
+import { armAutoAnswer, disarmAutoAnswer, enableAutoAnswer, sanitizeHint, type DialerNative } from '@/lib/auto-answer/arm.ts';
 import { shouldAskForRole } from '@/lib/auto-answer/setup.ts';
 
 export type DialTarget = { phone: string } | { fromCallId: string };
 
 export type DialOutcome =
   /** autoAnswerOff: auto-answer is available on this build but this phone is not set up for it, so the salesman has to pick up. */
-  | { kind: 'placed'; autoAnswered: boolean; autoAnswerOff: boolean; /** Why the call is NOT answered automatically, in words the salesman can act on. */ note?: string }
+  | { kind: 'placed'; autoAnswered: boolean; autoAnswerOff: boolean }
   | { kind: 'cancelled' }
   | { kind: 'failed'; text: string; keepKey: boolean };
 
@@ -72,18 +72,6 @@ function rememberCallerIds(ids: string[]): void {
 
 const PRE_ARM_SECONDS = 60;
 
-/** What to tell the salesman when the call will NOT be answered by the app. */
-function noteFor(armed: ArmResult | null, autoOn: boolean): string | undefined {
-  if (!autoOn || !armed || armed.armed) return undefined;
-  switch (armed.reason) {
-    case 'not_default_dialer': return 'Instant calling is off on this phone: turn it on above.';
-    case 'no_hint': return 'The server did not enable instant calling for this call.';
-    case 'invalid_hint': return 'The server sent an unusable caller ID for instant calling.';
-    case 'native_refused': return 'This phone did not accept instant calling for this call.';
-    default: return undefined;
-  }
-}
-
 export type PlaceCallOptions = {
   target: DialTarget;
   /** What the salesman sees on the confirmation and on the call screen: the typed number, or the customer's name/number from the history. */
@@ -100,6 +88,9 @@ export type PlaceCallOptions = {
 export async function placeCall(o: PlaceCallOptions): Promise<DialOutcome> {
   // Nothing is awaited before the request except the optional "Call X?" of a one-tap call back: the dial pad's Call goes out the moment it is pressed.
   if (o.confirm !== false && !(await confirmCall(`Call ${o.display}?`))) return { kind: 'cancelled' };
+  // The call screen opens the moment Call is pressed ("Calling...", End Call) and follows Exotel's call when it arrives. Only when this phone can answer that call itself.
+  const screen = o.autoOn && o.isPhoneApp;
+  if (screen) { try { o.native?.showCallScreen?.(o.display); } catch { /* an older native build: no early screen */ } }
   // Ready to answer BEFORE the request leaves (the call can ring before the reply arrives). Needs the phone app role and the caller IDs the server gave last time.
   if (o.autoOn && o.isPhoneApp && knownCallerIds) armAutoAnswer(o.native, { callerIds: knownCallerIds, windowSeconds: PRE_ARM_SECONDS });
   try {
@@ -108,9 +99,10 @@ export async function placeCall(o: PlaceCallOptions): Promise<DialOutcome> {
     if (hint) rememberCallerIds(hint.callerIds);
     const armed = o.autoOn ? armAutoAnswer(o.native, r.autoAnswer) : null; // refreshed from this reply (one attempt, only for a NEW call: a repeat carries no hint)
     if (armed?.armed) { try { o.native?.setCallLabel?.(o.display); } catch { /* the call screen then shows the number */ } }
-    return { kind: 'placed', autoAnswered: !!armed?.armed, autoAnswerOff: o.autoOn && !o.isPhoneApp, note: noteFor(armed, o.autoOn) };
+    return { kind: 'placed', autoAnswered: !!armed?.armed, autoAnswerOff: o.autoOn && !o.isPhoneApp };
   } catch (err) {
     if (o.autoOn) disarmAutoAnswer(o.native); // no call is coming: leave no answer window open
+    if (screen) { try { o.native?.dismissCallScreen?.(); } catch { /* nothing to close */ } }
     const e = dialErrorText(err as Parameters<typeof dialErrorText>[0]);
     return { kind: 'failed', text: e.text, keepKey: e.keepKey };
   }

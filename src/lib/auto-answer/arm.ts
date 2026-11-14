@@ -14,6 +14,9 @@ export type DialerNative = {
   disarmAutoAnswer(): void;
   /** The customer shown on the call screen of the click-to-call call. Optional so an older native build without it still works. */
   setCallLabel?(label: string): void;
+  /** Opens the call screen ("Calling...", End Call) the moment Call is pressed; dismissCallScreen closes it if no call is coming. Optional: an older native build has neither. */
+  showCallScreen?(label: string): void;
+  dismissCallScreen?(): void;
 };
 
 export type ArmResult =

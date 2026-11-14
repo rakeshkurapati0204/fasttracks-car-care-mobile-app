@@ -169,7 +169,7 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
       });
       if (out.kind === 'placed') {
         pendingKey.current = null;
-        setResult({ ok: true, text: out.autoAnswered ? 'Calling...' : `Answer your phone to connect.${out.note ? ` ${out.note}` : ''}` });
+        setResult({ ok: true, text: out.autoAnswered ? 'Calling...' : 'Answer your phone to connect.' });
       } else if (out.kind === 'failed') {
         if (!out.keepKey) pendingKey.current = null;
         setResult({ ok: false, text: out.text });
@@ -229,9 +229,6 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
             <Ionicons name={digits.length > 0 ? 'copy-outline' : 'clipboard-outline'} size={16} color={theme.primary} />
             <ThemedText type="small" style={{ color: theme.primary }}>{digits.length > 0 ? 'Copy' : 'Paste'}</ThemedText>
           </Pressable>
-          {autoOn && isPhoneApp ? (
-            <ThemedText type="small" style={[styles.setupLink, { color: theme.success, textAlign: 'center' }]}>Instant calling is on</ThemedText>
-          ) : null}
           {autoOn && !isPhoneApp ? (
             <Pressable onPress={turnOnAutoAnswer} accessibilityRole="button" accessibilityLabel="Enable instant calling" hitSlop={Spacing.two} style={styles.setupLink}>
               <ThemedText type="small" style={{ color: theme.primary }}>Enable instant calling</ThemedText>
