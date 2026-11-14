@@ -24,10 +24,7 @@ export function OverviewFrame({ children }: { children: ReactNode }) {
   return (
     <View
       style={styles.frame}
-      onLayout={(e) => {
-        console.log('[overview] container width', Math.round(e.nativeEvent.layout.width), 'window-based', Math.round(contentWidth)); // TEMP
-        setWidth(e.nativeEvent.layout.width);
-      }}>
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <WideContext.Provider value={width >= OVERVIEW_WIDE_MIN}>{children}</WideContext.Provider>
     </View>
   );
