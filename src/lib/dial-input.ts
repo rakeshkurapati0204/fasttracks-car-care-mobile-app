@@ -51,7 +51,11 @@ export function mobileFromPaste(text: string): string | null {
 export function digitsFromClipboard(text: string): string | null {
   const full = mobileFromPaste(text);
   if (full) return full;
-  const d = text.replace(INVISIBLE, '').replace(/\D/g, '').slice(0, MAX_DIGITS);
+  // Not a valid mobile (the dial pad will say so), but a +91 or leading 0 is still a prefix, not part of the number.
+  let d = text.replace(INVISIBLE, '').replace(/\D/g, '');
+  if (d.length === 12 && d.startsWith('91')) d = d.slice(2);
+  else if (d.length === 11 && d.startsWith('0')) d = d.slice(1);
+  d = d.slice(0, MAX_DIGITS);
   return d.length > 0 ? d : null;
 }
 

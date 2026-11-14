@@ -37,6 +37,8 @@ test('Paste takes the mobile number out of copied text, or its digits, or nothin
   assert.equal(digitsFromClipboard('Call Rohit on 09848012345 today'), '9848012345');
   assert.equal(digitsFromClipboard('98480 123'), '98480123');
   assert.equal(digitsFromClipboard('12345678901234'), '1234567890');
+  assert.equal(digitsFromClipboard('Call me on +91 12345 67890'), '1234567890'); // +91 is a prefix, even when the number is not a valid mobile
+  assert.equal(digitsFromClipboard('012345 67890'), '1234567890');
   assert.equal(digitsFromClipboard('no number here'), null);
   assert.equal(digitsFromClipboard(''), null);
 });
