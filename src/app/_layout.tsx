@@ -18,6 +18,7 @@ import { BrandSplash } from '@/components/brand-splash';
 import { MenuButton } from '@/components/menu-button';
 import { PushShell } from '@/components/push-shell';
 import { SideMenu } from '@/components/side-menu';
+import { StallWatcher } from '@/components/stall-watcher';
 import { Colors } from '@/constants/theme';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { DrawerProvider, useIsDocked } from '@/lib/drawer-context';
@@ -132,6 +133,7 @@ export default function RootLayout() {
         <AuthProvider>
           <PermissionsProvider>
             <DrawerProvider>
+              <StallWatcher />
               <PushShell>
                 <RootNavigator />
               </PushShell>

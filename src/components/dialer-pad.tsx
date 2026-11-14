@@ -35,7 +35,8 @@ const KEYS: { digit: string; letters?: string }[] = [
   { digit: '0', letters: '+' },
   { digit: '#' },
 ];
-const DISABLED_KEYS = ['*', '#'];
+// `*` and `#` make their key sound but add nothing: a mobile number has neither, and the call service cannot dial them.
+const SOUND_ONLY_KEYS = ['*', '#'];
 
 // Valid Indian mobile: 10 digits starting with 6-9.
 const isValidMobile = (digits: string) => /^[6-9]\d{9}$/.test(digits);
@@ -242,17 +243,16 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
 
         <View style={styles.pad}>
           {KEYS.map((k, i) => {
-            const disabled = DISABLED_KEYS.includes(k.digit);
+            const soundOnly = SOUND_ONLY_KEYS.includes(k.digit);
             return (
               <Animated.View key={k.digit} entering={intro ? FadeInDown.delay(40 + i * 30).duration(280) : undefined} style={styles.cell}>
                 <MotionPressable
-                  disabled={disabled}
-                  onPress={() => { tap(); keyTone(k.digit); edit(insertDigit(input, k.digit)); }}
+                  onPress={() => { tap(); keyTone(k.digit); if (!soundOnly) edit(insertDigit(input, k.digit)); }}
                   onLongPress={k.digit === '0' ? () => { tap(); edit(startPlus(input)); } : undefined}
                   accessibilityLabel={k.digit}
                   glowColor={theme.backgroundSelected}
                   style={styles.key}>
-                  <ThemedText style={[styles.keyDigit, disabled && { color: theme.textMuted }]}>{k.digit}</ThemedText>
+                  <ThemedText style={[styles.keyDigit, soundOnly && { color: theme.textMuted }]}>{k.digit}</ThemedText>
                   <ThemedText style={[styles.keyLetters, { color: theme.textSecondary }]}>{k.letters ?? ' '}</ThemedText>
                 </MotionPressable>
               </Animated.View>

@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useEffect, useState, type ReactNode } from 'react';
-import { BackHandler, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { Alert, BackHandler, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { Extrapolation, interpolate, runOnJS, useAnimatedStyle, useReducedMotion, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ import { initials } from '@/lib/call-tracker-format';
 import { useDrawer, useIsDocked } from '@/lib/drawer-context';
 import { slideDistance } from '@/lib/layout-mode';
 import { ROLE_LABELS } from '@/lib/labels';
+import { stallMonitor } from '@/lib/stall-monitor';
 import { follow, glide } from '@/lib/motion';
 
 // The phone's menu. The screen you are on is a card that slides to the right and shrinks (rounded corners, a fainter card behind it for depth) and the
@@ -114,6 +116,14 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
   const insets = useSafeAreaInsets();
   const { user, signOut } = useAuth();
   const { nodes, activeId, go } = useMenuModel('', onClose, NAV_DELAY_MS);
+  const showSpeedLog = () => {
+    const text = stallMonitor.format();
+    Alert.alert('Speed log', text, [
+      { text: 'Copy', onPress: () => { void Clipboard.setStringAsync(text); } },
+      { text: 'Clear', onPress: () => stallMonitor.clear() },
+      { text: 'Close', style: 'cancel' },
+    ]);
+  };
   const name = user?.name || 'User';
   const role = user?.role ? (ROLE_LABELS[user.role] ?? user.role) : '';
   let n = 0; // running index, so the entries arrive one after another
@@ -155,7 +165,8 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
       </Svg>
 
       <View style={[styles.top, { paddingTop: insets.top + 16 }]}>
-        <View style={styles.who} accessibilityLabel={`${name}, ${role}`}>
+        {/* Long press on the name: the speed log, a list of the moments the app was blocked and on which screen (for support). */}
+        <Pressable style={styles.who} accessibilityLabel={`${name}, ${role}`} onLongPress={showSpeedLog}>
           <View style={[styles.avatar, { backgroundColor: avatarColor(name) }]}>
             <ThemedText style={styles.avatarText}>{user ? initials(name) : 'U'}</ThemedText>
           </View>
@@ -163,7 +174,7 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
             <ThemedText style={styles.name} numberOfLines={1}>{name}</ThemedText>
             <ThemedText style={styles.roleText}>{role}</ThemedText>
           </View>
-        </View>
+        </Pressable>
         <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close menu" hitSlop={8} style={styles.closeBtn}>
           <Ionicons name="close" size={22} color="#ffffff" />
         </Pressable>
