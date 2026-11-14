@@ -997,6 +997,8 @@ export interface DialResult {
   autoAnswer?: { callerIds: string[]; windowSeconds: number };
 }
 
+export type CallAutoAnswerHint = { callerIds: string[]; windowSeconds: number };
+
 export interface CallInitiateResult {
   ok: boolean;
   callSid?: string;

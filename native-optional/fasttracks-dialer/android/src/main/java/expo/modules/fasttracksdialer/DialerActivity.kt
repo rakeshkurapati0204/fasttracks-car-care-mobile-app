@@ -46,7 +46,10 @@ class DialerActivity : Activity() {
   }
 
   private fun openApp() {
-    packageManager.getLaunchIntentForPackage(packageName)?.let { startActivity(it) }
+    packageManager.getLaunchIntentForPackage(packageName)?.let {
+      it.data = Uri.parse("fasttracksmobile://more/calls")
+      startActivity(it)
+    }
     finish()
   }
 

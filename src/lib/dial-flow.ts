@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Alert, Platform } from 'react-native';
 
 import { dialErrorText } from '@/lib/dial';
-import { dialNumber } from '@/lib/api';
+import { dialNumber, fetchCallAutoAnswerHint } from '@/lib/api';
 import { armAutoAnswer, disarmAutoAnswer, enableAutoAnswer, sanitizeHint, type DialerNative } from '@/lib/auto-answer/arm.ts';
 import { shouldAskForRole } from '@/lib/auto-answer/setup.ts';
 
@@ -45,23 +45,31 @@ export async function askForPhoneAppRole(native: DialerNative | null, autoOn: bo
   return (await enableAutoAnswer(native)) === 'enabled';
 }
 
-// The Exotel caller IDs from the last call the server accepted. A phone-app build can arm automatic answer BEFORE it sends the request (the Exotel call can ring
-// the phone before the server's reply has arrived, e.g. on a slow connection or while the app is busy), using what the server said last time.
+// The Exotel caller ID the callback will show. A phone-app build arms automatic answer BEFORE it sends the dial request (Exotel can ring the phone before the server's
+// reply has arrived), so the ID has to be known already when Call is pressed. It is kept on the phone, and refreshed from the server when the dial pad opens and from
+// every dial reply. Pressing Call never waits for the network to learn it.
 const CALLER_IDS_KEY = 'ft_autoanswer_callerids';
+const REFRESH_EVERY_MS = 5 * 60_000;
 let knownCallerIds: string[] | null = null;
 let knownLoaded = false;
+let lastRefreshAt = 0;
 
-/** Reads the remembered caller IDs from the phone (call this when the dial pad opens, so Call itself never waits for it). */
+/** Reads the remembered caller IDs, then refreshes them from the server in the background (at most every 5 minutes). Call it when the dial pad opens. */
 export async function warmAutoAnswerHint(): Promise<void> {
-  if (knownLoaded) return;
-  try {
-    const raw = await SecureStore.getItemAsync(CALLER_IDS_KEY);
-    const ids = raw ? (JSON.parse(raw) as unknown) : null;
-    knownCallerIds = Array.isArray(ids) ? sanitizeHint({ callerIds: ids, windowSeconds: 60 })?.callerIds ?? null : null;
-  } catch {
-    knownCallerIds = null;
+  if (!knownLoaded) {
+    try {
+      const raw = await SecureStore.getItemAsync(CALLER_IDS_KEY);
+      const ids = raw ? (JSON.parse(raw) as unknown) : null;
+      knownCallerIds = Array.isArray(ids) ? sanitizeHint({ callerIds: ids, windowSeconds: 60 })?.callerIds ?? null : null;
+    } catch {
+      knownCallerIds = null;
+    }
+    knownLoaded = true;
   }
-  knownLoaded = true;
+  if (Date.now() - lastRefreshAt < REFRESH_EVERY_MS) return;
+  lastRefreshAt = Date.now();
+  const hint = sanitizeHint(await fetchCallAutoAnswerHint().catch(() => null));
+  if (hint) rememberCallerIds(hint.callerIds);
 }
 
 function rememberCallerIds(ids: string[]): void {
@@ -91,7 +99,8 @@ export async function placeCall(o: PlaceCallOptions): Promise<DialOutcome> {
   // The call screen opens the moment Call is pressed ("Calling...", End Call) and follows Exotel's call when it arrives. Only when this phone can answer that call itself.
   const screen = o.autoOn && o.isPhoneApp;
   if (screen) { try { o.native?.showCallScreen?.(o.display); } catch { /* an older native build: no early screen */ } }
-  // Ready to answer BEFORE the request leaves (the call can ring before the reply arrives). Needs the phone app role and the caller IDs the server gave last time.
+  // Ready to answer BEFORE the request leaves: no network wait here, the caller ID was learned when the dial pad opened (or from the last call). Only for a phone that can
+  // answer the callback itself. The window is short: if the request then fails it is disarmed below.
   if (o.autoOn && o.isPhoneApp && knownCallerIds) armAutoAnswer(o.native, { callerIds: knownCallerIds, windowSeconds: PRE_ARM_SECONDS });
   try {
     const r = await dialNumber(o.target, o.key);

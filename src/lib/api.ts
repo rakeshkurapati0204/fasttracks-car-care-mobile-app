@@ -45,6 +45,7 @@ import type {
   WabaNumber,
   Task,
   TaskStatus,
+  CallAutoAnswerHint,
   CallCapabilities,
   CallInitiateResult,
   DialResult,
@@ -1409,6 +1410,12 @@ export async function submitTimesheet(id: string) {
 
 export async function fetchCallCapabilities() {
   const { data } = await api.get<ApiEnvelope<CallCapabilities>>('/calls/capabilities');
+  return data.data;
+}
+
+export async function fetchCallAutoAnswerHint() {
+  // A short limit: this runs in the background when the dial pad opens and must never hold anything up.
+  const { data } = await api.get<ApiEnvelope<CallAutoAnswerHint | null>>('/calls/auto-answer-hint', { timeout: 4000 });
   return data.data;
 }
 
