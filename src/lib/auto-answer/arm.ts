@@ -68,6 +68,19 @@ export async function enableAutoAnswer(native: DialerNative | null | undefined, 
   }
 }
 
+/** Shown when Call is pressed on a phone where Fasttracks is not the phone app yet. */
+export const PHONE_APP_REQUIRED_TEXT = 'To place calls, set Fasttracks as your phone app. Press Call again and choose Fasttracks.';
+
+/**
+ * The company has instant calling on, so a call is placed only from a phone where Fasttracks is the phone app: Exotel's callback has to be answered by it, or it
+ * rings on the screen. Asks for the role every time Call is pressed until it is granted. A phone that cannot offer the role at all (old Android, no screen to ask on)
+ * is not blocked.
+ */
+export async function ensurePhoneApp(native: DialerNative | null | undefined, autoOn: boolean, isPhoneApp: boolean): Promise<'ok' | 'declined'> {
+  if (!native || !autoOn || isPhoneApp) return 'ok';
+  return (await enableAutoAnswer(native)) === 'declined' ? 'declined' : 'ok';
+}
+
 // One line for the dialer screen. Personal calls (exotel=false) produce no text: they are the phone's business, not ours. Learn mode (a test aid, off by default)
 // is the one exception: it shows the caller ID of the call that arrived during an armed window, which is how the real Exotel caller ID is checked on a device.
 export function describeDialerEvent(e: DialerCallEvent): string | null {

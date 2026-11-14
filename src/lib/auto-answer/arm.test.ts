@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { armAutoAnswer, describeDialerEvent, disarmAutoAnswer, enableAutoAnswer, sanitizeHint, type DialerNative } from './arm.ts';
+import { armAutoAnswer, describeDialerEvent, disarmAutoAnswer, enableAutoAnswer, ensurePhoneApp, sanitizeHint, type DialerNative } from './arm.ts';
 
 function fakeNative(over: Partial<DialerNative> & { isDefault?: boolean; accept?: boolean } = {}) {
   const calls: string[] = [];
@@ -75,4 +75,24 @@ test('the native error is reported, not swallowed', async () => {
   let seen = '';
   await enableAutoAnswer(fakeNative({ requestDialerRole: async () => { throw new Error('NO_ACTIVITY'); } }).n, (m) => { seen = m; });
   assert.equal(seen, 'NO_ACTIVITY');
+});
+
+test('a call needs Fasttracks as the phone app when instant calling is on: the role is asked every time until it is granted', async () => {
+  const asked: number[] = [];
+  const mk = (accept: boolean | 'throw'): DialerNative => ({
+    isDefaultDialer: () => false,
+    requestDialerRole: async () => { asked.push(1); if (accept === 'throw') throw new Error('no screen'); return accept; },
+    armAutoAnswer: () => true,
+    disarmAutoAnswer: () => {},
+  });
+  assert.equal(await ensurePhoneApp(mk(false), true, false), 'declined', 'said no: no call');
+  assert.equal(await ensurePhoneApp(mk(false), true, false), 'declined', 'asked again on the next press');
+  assert.equal(asked.length, 2);
+  assert.equal(await ensurePhoneApp(mk(true), true, false), 'ok', 'said yes: the call goes');
+  assert.equal(await ensurePhoneApp(mk('throw'), true, false), 'ok', 'a phone that cannot offer the role is not blocked');
+  asked.length = 0;
+  assert.equal(await ensurePhoneApp(mk(false), true, true), 'ok', 'already the phone app: nothing is asked');
+  assert.equal(await ensurePhoneApp(mk(false), false, false), 'ok', 'instant calling off for the company: nothing is asked');
+  assert.equal(await ensurePhoneApp(null, true, false), 'ok', 'a build without the module is not blocked');
+  assert.equal(asked.length, 0);
 });

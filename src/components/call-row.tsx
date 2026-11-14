@@ -9,6 +9,7 @@ import { avatarColor, formatCallDuration, formatCallTime, isMissedCall } from '@
 import { getCallCapabilities } from '@/lib/call-caps';
 import { formatPhone } from '@/lib/call-intelligence';
 import { dialBlockedReason, newDialKey } from '@/lib/dial';
+import { ensurePhoneApp, PHONE_APP_REQUIRED_TEXT } from '@/lib/auto-answer/arm.ts';
 import { placeCall } from '@/lib/dial-flow';
 import type { CallLogEntry } from '@/types/api';
 import { FasttracksDialer } from '../../modules/fasttracks-dialer/src';
@@ -42,10 +43,16 @@ export function CallRow({ call }: { call: CallLogEntry }) {
       if (blocked) { Alert.alert('Cannot call', blocked); return; }
       let isPhoneApp = false;
       try { isPhoneApp = !!FasttracksDialer?.isDefaultDialer(); } catch { /* not a phone-app build */ }
+      const autoNow = !!caps?.c2cAutoAnswerEnabled && !!FasttracksDialer;
+      if (autoNow && !isPhoneApp) {
+        // A call goes only from a phone where Fasttracks is the phone app; the role dialog is shown on every press until it is granted.
+        if ((await ensurePhoneApp(FasttracksDialer ?? null, true, false)) === 'declined') { Alert.alert('Set Fasttracks as your phone app', PHONE_APP_REQUIRED_TEXT); return; }
+        try { isPhoneApp = !!FasttracksDialer?.isDefaultDialer(); } catch { isPhoneApp = false; }
+      }
       key.current ??= newDialKey();
       const out = await placeCall({
         target: { fromCallId: call.id }, display: name, key: key.current,
-        native: FasttracksDialer ?? null, autoOn: !!caps?.c2cAutoAnswerEnabled && !!FasttracksDialer, isPhoneApp,
+        native: FasttracksDialer ?? null, autoOn: autoNow, isPhoneApp,
       });
       if (out.kind === 'placed') {
         key.current = null; // the phone rings by itself; no extra popup

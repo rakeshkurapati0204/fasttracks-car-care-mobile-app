@@ -16,11 +16,24 @@ object CallRegistry {
   @Volatile private var connectingSinceMs: Long = 0L
   const val CONNECT_WAIT_MS = 60_000L
   fun isConnecting(): Boolean = connectingSinceMs > 0 && System.currentTimeMillis() - connectingSinceMs < CONNECT_WAIT_MS
-  fun startConnecting(label: String?) { exotelLabel = label; connectingSinceMs = System.currentTimeMillis(); onChanged?.invoke() }
+  fun startConnecting(label: String?) { exotelLabel = label; connectingSinceMs = System.currentTimeMillis(); dialIntentUntilMs = connectingSinceMs + DIAL_INTENT_MS; onChanged?.invoke() }
+
+  /**
+   * Call was pressed a moment ago, so a ringing call that nothing has armed for yet is almost certainly Exotel's, arriving before the server's reply. Such a call is
+   * HELD (no incoming screen, no heads-up) for up to HOLD_MS while the app arms; if it is not answered by then it is shown as a normal incoming call.
+   */
+  @Volatile private var dialIntentUntilMs: Long = 0L
+  const val DIAL_INTENT_MS = 8_000L
+  const val HOLD_MS = 2_500L
+  private val held = HashSet<Call>()
+  fun dialIntentActive(): Boolean = System.currentTimeMillis() < dialIntentUntilMs
+  @Synchronized fun hold(c: Call) { held.add(c) }
+  @Synchronized fun release(c: Call) { held.remove(c) }
+  @Synchronized fun isHeld(c: Call): Boolean = held.contains(c)
   fun stopConnecting() { connectingSinceMs = 0L; onChanged?.invoke() }
 
   @Synchronized fun add(c: Call) { calls.add(c); connectingSinceMs = 0L; onChanged?.invoke() } // a call exists now: the screen follows it
-  @Synchronized fun remove(c: Call) { calls.remove(c); exotel.remove(c); if (exotel.isEmpty()) exotelLabel = null; onChanged?.invoke() }
+  @Synchronized fun remove(c: Call) { calls.remove(c); exotel.remove(c); held.remove(c); if (exotel.isEmpty()) exotelLabel = null; onChanged?.invoke() }
   @Synchronized fun markExotel(c: Call) { exotel.add(c) }
   @Synchronized fun isExotel(c: Call): Boolean = exotel.contains(c)
   @Synchronized fun all(): List<Call> = calls.toList()

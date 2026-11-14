@@ -14,6 +14,7 @@ import { matchDialContacts, type DialContact } from '@/lib/contacts';
 import { loadDialContacts } from '@/lib/dial-contacts';
 import { dialBlockedReason, newDialKey, toE164India } from '@/lib/dial';
 import { askForPhoneAppRole, confirmCall, placeCall, warmAutoAnswerHint } from '@/lib/dial-flow';
+import { ensurePhoneApp, PHONE_APP_REQUIRED_TEXT } from '@/lib/auto-answer/arm.ts';
 import { getCallCapabilities, peekCallCapabilities } from '@/lib/call-caps';
 import { deleteBack, digitsFromClipboard, displayNumber, insertDigit, MAX_DIGITS, spaced, startPlus, type DialInput } from '@/lib/dial-input.ts';
 import { getVoipEngine, voipApi, voipCcmApi } from '@/lib/voip';
@@ -164,10 +165,19 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
         setResult({ ok: false, text: blocked });
         return;
       }
+      // With instant calling on, a call goes only from a phone where Fasttracks is the phone app (Exotel's callback must be answered by it). The role dialog is shown on
+      // every press until it is granted.
+      const autoNow = !!c?.c2cAutoAnswerEnabled && !!dialerNative;
+      let phoneApp = isPhoneApp;
+      if (autoNow && !phoneApp) {
+        if ((await ensurePhoneApp(dialerNative, true, false)) === 'declined') { setResult({ ok: false, text: PHONE_APP_REQUIRED_TEXT }); return; }
+        try { phoneApp = !!dialerNative?.isDefaultDialer(); } catch { phoneApp = false; }
+        setIsPhoneApp(phoneApp);
+      }
       pendingKey.current ??= newDialKey();
       const out = await placeCall({
         target: { phone: e164 }, display: formatNumber(digits), key: pendingKey.current,
-        native: dialerNative, autoOn: !!c?.c2cAutoAnswerEnabled && !!dialerNative, isPhoneApp, confirm: false,
+        native: dialerNative, autoOn: autoNow, isPhoneApp: phoneApp, confirm: false,
       });
       if (out.kind === 'placed') {
         pendingKey.current = null;

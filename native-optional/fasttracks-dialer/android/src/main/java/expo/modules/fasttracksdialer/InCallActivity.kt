@@ -236,6 +236,7 @@ class InCallActivity : Activity() {
       return
     }
     val state = CallRegistry.stateOf(call)
+    if (state == Call.STATE_RINGING && CallRegistry.isHeld(call)) { renderConnecting(); return } // held for a moment: still "Calling...", no Accept / Decline
     val number = call.details?.handle?.schemeSpecificPart
     val label = CallRegistry.exotelLabel
     val isClickToCall = label != null && CallRegistry.isExotel(call)

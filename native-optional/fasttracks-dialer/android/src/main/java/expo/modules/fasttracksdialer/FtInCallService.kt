@@ -83,15 +83,29 @@ class FtInCallService : InCallService() {
         showIncoming(call)
       }
       else -> {
-        CallRegistry.emit("incoming", false, "ringing")
-        showIncoming(call)
+        if (decision == Decision.NO_ATTEMPT && CallRegistry.dialIntentActive()) holdThenShow(call)
+        else { CallRegistry.emit("incoming", false, "ringing"); showIncoming(call) }
       }
     }
+  }
+
+  /** Call was pressed a moment ago and nothing is armed yet: keep this ringing call off the screen for a moment; the app is about to arm and it will be answered. */
+  private fun holdThenShow(call: Call) {
+    CallRegistry.hold(call)
+    Handler(Looper.getMainLooper()).postDelayed({
+      if (CallRegistry.isHeld(call) && CallRegistry.isLive(call) && CallRegistry.stateOf(call) == Call.STATE_RINGING) {
+        CallRegistry.release(call) // not answered in time: it is a normal incoming call after all
+        CallRegistry.emit("incoming", false, "ringing")
+        showIncoming(call)
+        CallRegistry.onChanged?.invoke()
+      }
+    }, CallRegistry.HOLD_MS)
   }
 
   /** Answers a verified Exotel click-to-call call. No incoming-call screen or ringtone is ever shown for it; the call screen (customer, timer, End Call) is. */
   private fun answerAutomatically(call: Call) {
     autoAnswered.add(call)
+    CallRegistry.release(call)
     CallRegistry.markExotel(call)
     try { getSystemService(TelecomManager::class.java).silenceRinger() } catch (_: SecurityException) { /* answering anyway */ }
     call.answer(VideoProfile.STATE_AUDIO_ONLY)
