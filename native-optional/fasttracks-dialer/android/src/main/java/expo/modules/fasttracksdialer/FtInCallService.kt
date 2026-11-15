@@ -66,9 +66,9 @@ class FtInCallService : InCallService() {
   override fun onCallAdded(call: Call) {
     super.onCallAdded(call)
     val otherActive = CallRegistry.all().any { it !== call && CallRegistry.isLive(it) }
-    CallRegistry.add(call)
-    call.registerCallback(callback)
     if (CallRegistry.stateOf(call) != Call.STATE_RINGING) { // an outgoing call (this app or another placed it): show the in-call screen
+      CallRegistry.add(call)
+      call.registerCallback(callback)
       CallRegistry.emit("outgoing", false, stateName(CallRegistry.stateOf(call)))
       showCallScreen()
       refreshNotification()
@@ -79,6 +79,12 @@ class FtInCallService : InCallService() {
     val decision = AutoAnswerPolicy.decideWithIntent(number, attempt, System.currentTimeMillis(), otherActive, PendingStore.known(this), CallRegistry.answerIntentActive())
     // The reason a call was or was not answered. Never the number: only whether it was armed, for how long, and what the policy decided.
     Log.i(TAG, "ringing call: decision=$decision armed=${attempt != null} expiresInMs=${attempt?.let { it.expiresAtMs - System.currentTimeMillis() }} otherActive=$otherActive dialIntent=${CallRegistry.dialIntentActive()} calls=${CallRegistry.all().size}")
+    // Decided BEFORE the call is added to the registry: the call screen redraws the moment it is added, and a call that is about to be answered (or held for a moment)
+    // must already be marked then, or the screen shows "is calling" with Accept / Decline for a second before it turns into the call.
+    if (decision == Decision.ANSWER) CallRegistry.markExotel(call)
+    else if (decision == Decision.NO_ATTEMPT && CallRegistry.dialIntentActive()) CallRegistry.hold(call)
+    CallRegistry.add(call)
+    call.registerCallback(callback)
     if (decision == Decision.EXPIRED || decision == Decision.ANSWER) PendingStore.clear(this) // single use, and expired attempts never linger
     if (decision == Decision.ANSWER) CallRegistry.consumeAnswerIntent()
     when (decision) {
@@ -110,8 +116,8 @@ class FtInCallService : InCallService() {
   /** Answers a verified Exotel click-to-call call. No incoming-call screen or ringtone is ever shown for it; the call screen (customer, timer, End Call) is. */
   private fun answerAutomatically(call: Call) {
     autoAnswered.add(call)
+    CallRegistry.markExotel(call) // before release: the screen must never see this ringing call as a normal, unmarked one
     CallRegistry.release(call)
-    CallRegistry.markExotel(call)
     try { getSystemService(TelecomManager::class.java).silenceRinger() } catch (_: SecurityException) { /* answering anyway */ }
     call.answer(VideoProfile.STATE_AUDIO_ONLY)
     CallRegistry.emit("auto_answered", true, "answering")
