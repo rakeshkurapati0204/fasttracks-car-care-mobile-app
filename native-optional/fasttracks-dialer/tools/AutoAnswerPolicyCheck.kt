@@ -40,6 +40,22 @@ fun main() {
   check("learn mode with an expired window is just expired", decide(exotel, a = learn, at = now + 60_000), Decision.EXPIRED)
   check("tail of a short number is null", if (AutoAnswerPolicy.tail("12345") == null) Decision.ANSWER else Decision.BUSY, Decision.ANSWER)
 
+  // decideWithIntent: the Call-was-just-pressed fallback. Only NO_ATTEMPT and EXPIRED may become ANSWER, and only for a KNOWN Exotel caller ID.
+  val knownIds = setOf("8040001234")
+  fun intent(number: String?, a: PendingAttempt? = null, busy: Boolean = false, known: Set<String> = knownIds, active: Boolean = true, at: Long = now) =
+    AutoAnswerPolicy.decideWithIntent(number, a, at, busy, known, active)
+  check("intent: no attempt left, known Exotel caller ID, Call just pressed: answered", intent(exotel), Decision.ANSWER)
+  check("intent: expired attempt, known caller ID: answered", intent(exotel, a = attempt, at = now + 60_000), Decision.ANSWER)
+  check("intent: same number as +91 is answered", intent("+918040001234"), Decision.ANSWER)
+  check("intent: Call not pressed (no intent): normal call", intent(exotel, active = false), Decision.NO_ATTEMPT)
+  check("intent: a personal number is never answered", intent("+919848012345"), Decision.NO_ATTEMPT)
+  check("intent: nothing known yet: normal call", intent(exotel, known = emptySet()), Decision.NO_ATTEMPT)
+  check("intent: hidden number is never answered", intent(null), Decision.NO_ATTEMPT)
+  check("intent: another call is live: never answered", intent(exotel, busy = true), Decision.NO_ATTEMPT)
+  check("intent: learn mode never answers", intent(exotel, a = attempt.copy(learnOnly = true)), Decision.LEARN_ONLY)
+  check("intent: a mismatching armed attempt stays a mismatch", intent("+919848012345", a = attempt), Decision.NUMBER_MISMATCH)
+  check("intent: busy with an armed attempt stays busy", intent(exotel, a = attempt, busy = true), Decision.BUSY)
+
   println(if (failures == 0) "\nall branches ok" else "\n$failures FAILED")
   exitProcess(if (failures == 0) 0 else 1)
 }

@@ -76,10 +76,11 @@ class FtInCallService : InCallService() {
     }
     val number = call.details?.handle?.schemeSpecificPart
     val attempt = PendingStore.peek(this)
-    val decision = AutoAnswerPolicy.decide(number, attempt, System.currentTimeMillis(), otherActive)
+    val decision = AutoAnswerPolicy.decideWithIntent(number, attempt, System.currentTimeMillis(), otherActive, PendingStore.known(this), CallRegistry.answerIntentActive())
     // The reason a call was or was not answered. Never the number: only whether it was armed, for how long, and what the policy decided.
     Log.i(TAG, "ringing call: decision=$decision armed=${attempt != null} expiresInMs=${attempt?.let { it.expiresAtMs - System.currentTimeMillis() }} otherActive=$otherActive dialIntent=${CallRegistry.dialIntentActive()} calls=${CallRegistry.all().size}")
     if (decision == Decision.EXPIRED || decision == Decision.ANSWER) PendingStore.clear(this) // single use, and expired attempts never linger
+    if (decision == Decision.ANSWER) CallRegistry.consumeAnswerIntent()
     when (decision) {
       Decision.ANSWER -> answerAutomatically(call)
       Decision.LEARN_ONLY -> {

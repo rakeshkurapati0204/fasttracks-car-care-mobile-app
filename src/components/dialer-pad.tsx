@@ -38,6 +38,8 @@ const KEYS: { digit: string; letters?: string }[] = [
   { digit: '#' },
 ];
 // `*` and `#` make their key sound but add nothing: a mobile number has neither, and the call service cannot dial them.
+const CALL_COOLDOWN_MS = 3000; // after a call ends, Call does nothing for this long (a second tap placed a second call)
+const CALL_LIVE_MAX_MS = 10 * 60 * 1000; // a missed 'ended' event must not block Calling for ever
 const SOUND_ONLY_KEYS = ['*', '#'];
 
 // Valid Indian mobile: 10 digits starting with 6-9.
@@ -91,6 +93,9 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
     if (!dialerNative) return;
     if (process.env.EXPO_PUBLIC_AUTOANSWER_LEARN === 'true') { try { dialerNative.setLearnMode(true); } catch { /* not a phone-app build */ } } // test aid: report the real caller ID, answer nothing
     const sub = dialerNative.addListener('onCallEvent', (e) => {
+      if (e.type === 'ended') callEndedAt.current = Date.now();
+      else if (e.type !== 'learn') callLiveSince.current = Date.now();
+      if (e.type === 'ended') callLiveSince.current = 0;
       if (e.type === 'learn') setResult({ ok: true, text: `Learn mode: the call that came in showed ${e.number ?? 'no number'}. It was NOT answered.` });
       else if (e.type === 'ended') setResult((r) => (r?.ok ? null : r)); // the call is over: "Calling..." must not stay on screen
     });
@@ -142,9 +147,15 @@ export function DialerPad({ initialDigits = '', onAddContact, onLeave }: { initi
     setResult({ ok: true, text: 'Number copied.' });
   };
 
+  // A second Call right after a call ended, or while one is on, placed a SECOND call (a second ring on the phone). Ignored: the first call's own screen is the way to end it.
+  const callLiveSince = useRef(0);
+  const callEndedAt = useRef(0);
   const call = async () => {
     const e164 = toE164India(digits);
     if (!e164 || inFlight.current) return;
+    const now = Date.now();
+    if (callLiveSince.current > 0 && now - callLiveSince.current < CALL_LIVE_MAX_MS) { setResult({ ok: false, text: 'A call is already in progress.' }); return; }
+    if (now - callEndedAt.current < CALL_COOLDOWN_MS) return;
     inFlight.current = true;
     setResult(null);
     setBusy(true);

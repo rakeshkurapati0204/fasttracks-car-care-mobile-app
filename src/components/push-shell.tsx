@@ -120,10 +120,8 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
   };
   const name = user?.name || 'User';
   const role = user?.role ? (ROLE_LABELS[user.role] ?? user.role) : '';
-  let n = 0; // running index, so the entries arrive one after another
-
   const row = (item: ScreenMeta, indent = false) => (
-    <PushItem key={item.id} index={n++} progress={progress}>
+    <View key={item.id}>
       <Pressable
         onPress={() => go(item)}
         accessibilityRole="button"
@@ -132,14 +130,14 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
         <MenuIcon id={item.id} color="#ffffff" size={20} />
         <ThemedText style={styles.rowLabel} numberOfLines={2}>{item.title}</ThemedText>
       </Pressable>
-    </PushItem>
+    </View>
   );
 
   const renderNode = (node: NavNode) => {
     if (node.type === 'item') return row(node.item);
     return (
       <View key={node.key}>
-        <PushItem index={n++} progress={progress}><ThemedText style={styles.groupLabel}>{node.label}</ThemedText></PushItem>
+        <ThemedText style={styles.groupLabel}>{node.label}</ThemedText>
         {node.items.map((i) => row(i, true))}
       </View>
     );
@@ -174,9 +172,11 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
         </Pressable>
       </View>
 
-      <ScrollView style={styles.list} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
-        {nodes.map(renderNode)}
-      </ScrollView>
+      <PushList progress={progress}>
+        <ScrollView style={styles.list} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+          {nodes.map(renderNode)}
+        </ScrollView>
+      </PushList>
 
       <View style={[styles.bottom, { paddingBottom: insets.bottom + 16 }]}>
         <Pressable onPress={() => { onClose(); signOut(); }} accessibilityRole="button" accessibilityLabel="Logout" style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
@@ -188,14 +188,15 @@ function PushMenu({ progress, onClose }: { progress: SharedValue<number>; onClos
   );
 }
 
-// Slides in from the left and fades up a little after the card starts moving, each entry slightly later than the one before.
-function PushItem({ index, progress, children }: { index: number; progress: SharedValue<number>; children: ReactNode }) {
+// The whole list slides in from the left and fades up a little after the card starts moving. ONE animated view for the list, not one per row: with a style per row
+// (and an SVG icon in each) every menu open left dozens of animated views whose native views were gone, and Reanimated threw for each of them on every draw (thousands of
+// exceptions in a few seconds on a phone: the app froze). The list is a plain, static tree of rows.
+function PushList({ progress, children }: { progress: SharedValue<number>; children: ReactNode }) {
   const style = useAnimatedStyle(() => {
-    const start = 0.18 + Math.min(index, 14) * 0.022;
-    const t = interpolate(progress.value, [start, start + 0.45], [0, 1], Extrapolation.CLAMP);
+    const t = interpolate(progress.value, [0.18, 0.63], [0, 1], Extrapolation.CLAMP);
     return { opacity: t, transform: [{ translateX: (1 - t) * -14 }] };
   });
-  return <Animated.View style={style}>{children}</Animated.View>;
+  return <Animated.View style={[styles.listWrap, style]}>{children}</Animated.View>;
 }
 
 const styles = StyleSheet.create({
@@ -211,6 +212,7 @@ const styles = StyleSheet.create({
   name: { color: '#ffffff', fontSize: 15, lineHeight: 20, fontFamily: FontWeights.bold },
   roleText: { color: 'rgba(255,255,255,0.7)', fontSize: 12, lineHeight: 16 },
   closeBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center' },
+  listWrap: { flex: 1 },
   list: { flex: 1, marginTop: 12 },
   listContent: { paddingHorizontal: 14, paddingBottom: 12, gap: 2 },
   row: { minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 10, borderRadius: 12 },

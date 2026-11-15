@@ -16,7 +16,7 @@ object CallRegistry {
   @Volatile private var connectingSinceMs: Long = 0L
   const val CONNECT_WAIT_MS = 60_000L
   fun isConnecting(): Boolean = connectingSinceMs > 0 && System.currentTimeMillis() - connectingSinceMs < CONNECT_WAIT_MS
-  fun startConnecting(label: String?) { exotelLabel = label; connectingSinceMs = System.currentTimeMillis(); dialIntentUntilMs = connectingSinceMs + DIAL_INTENT_MS; onChanged?.invoke() }
+  fun startConnecting(label: String?) { exotelLabel = label; connectingSinceMs = System.currentTimeMillis(); dialIntentUntilMs = connectingSinceMs + DIAL_INTENT_MS; answerIntentUntilMs = connectingSinceMs + ANSWER_INTENT_MS; onChanged?.invoke() }
 
   /**
    * Call was pressed a moment ago, so a ringing call that nothing has armed for yet is almost certainly Exotel's, arriving before the server's reply. Such a call is
@@ -24,13 +24,18 @@ object CallRegistry {
    */
   @Volatile private var dialIntentUntilMs: Long = 0L
   const val DIAL_INTENT_MS = 8_000L
+  /** How long after Call a ringing call from an already-known Exotel caller ID is answered even if no attempt is armed any more (single use). */
+  @Volatile private var answerIntentUntilMs: Long = 0L
+  const val ANSWER_INTENT_MS = 45_000L
+  fun answerIntentActive(): Boolean = System.currentTimeMillis() < answerIntentUntilMs
+  fun consumeAnswerIntent() { answerIntentUntilMs = 0L }
   const val HOLD_MS = 2_500L
   private val held = HashSet<Call>()
   fun dialIntentActive(): Boolean = System.currentTimeMillis() < dialIntentUntilMs
   @Synchronized fun hold(c: Call) { held.add(c) }
   @Synchronized fun release(c: Call) { held.remove(c) }
   @Synchronized fun isHeld(c: Call): Boolean = held.contains(c)
-  fun stopConnecting() { connectingSinceMs = 0L; onChanged?.invoke() }
+  fun stopConnecting() { connectingSinceMs = 0L; answerIntentUntilMs = 0L; onChanged?.invoke() } // End Call / a failed dial: nothing is coming, so nothing is answered
 
   @Synchronized fun add(c: Call) { calls.add(c); connectingSinceMs = 0L; onChanged?.invoke() } // a call exists now: the screen follows it
   @Synchronized fun remove(c: Call) { calls.remove(c); exotel.remove(c); held.remove(c); if (exotel.isEmpty()) exotelLabel = null; onChanged?.invoke() }

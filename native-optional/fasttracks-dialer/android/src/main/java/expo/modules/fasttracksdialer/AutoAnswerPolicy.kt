@@ -35,4 +35,19 @@ object AutoAnswerPolicy {
     if (attempt.callerTails.isEmpty() || incoming !in attempt.callerTails) return Decision.NUMBER_MISMATCH
     return Decision.ANSWER
   }
+
+  /**
+   * [decide] plus ONE more way to answer: Call was pressed a short while ago (`intentActive`) and the ringing number is, by its last 10 digits, a caller ID
+   * this phone has already seen Exotel use (`knownTails`, kept even after an attempt is consumed or cleared). It covers the moment where the armed attempt is
+   * gone although the call is certainly the one that was just placed (a second call right after the first, a refused arm, a cleared window). It never
+   * answers an unknown number, a hidden number or a busy phone, and never in learn mode: only NO_ATTEMPT and EXPIRED can turn into ANSWER.
+   */
+  fun decideWithIntent(incomingNumber: String?, attempt: PendingAttempt?, nowMs: Long, otherCallActive: Boolean, knownTails: Set<String>, intentActive: Boolean): Decision {
+    val d = decide(incomingNumber, attempt, nowMs, otherCallActive)
+    if ((d == Decision.NO_ATTEMPT || d == Decision.EXPIRED) && intentActive && !otherCallActive) {
+      val incoming = tail(incomingNumber)
+      if (incoming != null && incoming in knownTails) return Decision.ANSWER
+    }
+    return d
+  }
 }
