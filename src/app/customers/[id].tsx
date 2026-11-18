@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Linking, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { InvStatusBadge, VisitStatusBadge } from '@/components/customers/badges';
@@ -18,11 +18,15 @@ import {
   fetchCustomerProfile,
   fetchCustomerRemarksFor,
   getErrorMessage,
-  initiateCall,
 } from '@/lib/api';
+import { ensurePhoneApp, PHONE_APP_REQUIRED_TEXT } from '@/lib/auto-answer/arm.ts';
 import { useAuth } from '@/lib/auth-context';
+import { getCallCapabilities } from '@/lib/call-caps';
+import { newDialKey } from '@/lib/dial';
+import { placeCall, warmAutoAnswerHint } from '@/lib/dial-flow';
 import { fmtDate, fmtINR, fmtMonthYear, quoteLabel } from '@/lib/customers-format';
 import type { CrmInteraction, CrmVisitJobCard, CustomerProfile, CustomerProfileInvoice, CustomerRemark } from '@/types/api';
+import { FasttracksDialer } from '../../../modules/fasttracks-dialer/src';
 
 import { humanize } from '@/lib/labels';
 type VisitEntry = { kind: 'jc'; date: string; jc: CrmVisitJobCard } | { kind: 'inv'; date: string; inv: CustomerProfileInvoice };
@@ -79,7 +83,13 @@ export default function CustomerPanelScreen() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount
     load();
-    fetchCallCapabilities().then((c) => setCanCall(c.canInitiate)).catch(() => setCanCall(false));
+    fetchCallCapabilities()
+      .then((c) => {
+        setCanCall(c.canInitiate);
+        // So the first Call can arm automatic answer before the request leaves (the caller ID is kept on the phone).
+        if (c.canInitiate && c.c2cAutoAnswerEnabled && FasttracksDialer) void warmAutoAnswerHint();
+      })
+      .catch(() => setCanCall(false));
   }, [load]);
 
   useEffect(() => {
@@ -109,13 +119,39 @@ export default function CustomerPanelScreen() {
     }
   };
 
+  // The same Exotel click-to-call and automatic answer as the dial pad and the history's call back (dial-flow.ts). The key is kept until a call is placed, so a retry
+  // after a network failure cannot ring the customer twice. The button already is the decision, so there is no "Call X?" question (as before).
+  const callKey = useRef<string | null>(null);
+  const callInFlight = useRef(false); // set synchronously: a fast double tap cannot start two calls
   const onCall = async () => {
+    if (callInFlight.current) return;
+    callInFlight.current = true;
     setCalling(true);
     try {
-      await initiateCall(id);
+      const caps = await getCallCapabilities().catch(() => null);
+      if (!caps?.callingEnabled || !caps.canInitiate) { setError(caps ? 'Your account is not allowed to place calls.' : "Can't reach the server. Check your internet and try again."); return; }
+      let isPhoneApp = false;
+      try { isPhoneApp = !!FasttracksDialer?.isDefaultDialer(); } catch { /* not a phone-app build */ }
+      const autoNow = !!caps.c2cAutoAnswerEnabled && !!FasttracksDialer;
+      if (autoNow && !isPhoneApp) {
+        // A call goes only from a phone where Fasttracks is the phone app; the role dialog is shown on every press until it is granted.
+        if ((await ensurePhoneApp(FasttracksDialer ?? null, true, false)) === 'declined') { Alert.alert('Set Fasttracks as your phone app', PHONE_APP_REQUIRED_TEXT); return; }
+        try { isPhoneApp = !!FasttracksDialer?.isDefaultDialer(); } catch { isPhoneApp = false; }
+      }
+      callKey.current ??= newDialKey();
+      const out = await placeCall({
+        target: { customerId: id }, display: profile?.customer?.name || nameParam || 'the customer', key: callKey.current,
+        native: FasttracksDialer ?? null, autoOn: autoNow, isPhoneApp, confirm: false,
+      });
+      if (out.kind === 'placed') callKey.current = null; // the phone rings by itself
+      else if (out.kind === 'failed') {
+        if (!out.keepKey) callKey.current = null;
+        setError(out.text);
+      }
     } catch (e: unknown) {
       setError(getErrorMessage(e, 'Could not start that call.'));
     } finally {
+      callInFlight.current = false;
       setCalling(false);
     }
   };

@@ -4,11 +4,12 @@ import * as SecureStore from 'expo-secure-store';
 import { Alert, Platform } from 'react-native';
 
 import { dialErrorText } from '@/lib/dial';
-import { dialNumber, fetchCallAutoAnswerHint } from '@/lib/api';
+import { dialNumber, fetchCallAutoAnswerHint, initiateCall } from '@/lib/api';
 import { armAutoAnswer, disarmAutoAnswer, enableAutoAnswer, sanitizeHint, type DialerNative } from '@/lib/auto-answer/arm.ts';
 import { shouldAskForRole } from '@/lib/auto-answer/setup.ts';
 
-export type DialTarget = { phone: string } | { fromCallId: string };
+// `customerId`: the customer page's Call button (POST /calls/initiate, the server looks the number up). The others are the dial pad and the history's call back (POST /calls/dial).
+export type DialTarget = { phone: string } | { fromCallId: string } | { customerId: string };
 
 export type DialOutcome =
   /** autoAnswerOff: auto-answer is available on this build but this phone is not set up for it, so the salesman has to pick up. */
@@ -80,6 +81,11 @@ function rememberCallerIds(ids: string[]): void {
 
 const PRE_ARM_SECONDS = 60;
 
+// Both endpoints answer a NEW call with the same autoAnswer hint, so the arming below is identical for every kind of call.
+function requestCall(target: DialTarget, key: string) {
+  return 'customerId' in target ? initiateCall(target.customerId, key) : dialNumber(target, key);
+}
+
 export type PlaceCallOptions = {
   target: DialTarget;
   /** What the salesman sees on the confirmation and on the call screen: the typed number, or the customer's name/number from the history. */
@@ -103,7 +109,7 @@ export async function placeCall(o: PlaceCallOptions): Promise<DialOutcome> {
   // answer the callback itself. The window is short: if the request then fails it is disarmed below.
   if (o.autoOn && o.isPhoneApp && knownCallerIds) armAutoAnswer(o.native, { callerIds: knownCallerIds, windowSeconds: PRE_ARM_SECONDS });
   try {
-    const r = await dialNumber(o.target, o.key);
+    const r = await requestCall(o.target, o.key);
     const hint = sanitizeHint(r.autoAnswer);
     if (hint) rememberCallerIds(hint.callerIds);
     const armed = o.autoOn ? armAutoAnswer(o.native, r.autoAnswer) : null; // refreshed from this reply (one attempt, only for a NEW call: a repeat carries no hint)

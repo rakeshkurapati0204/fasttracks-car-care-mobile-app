@@ -1449,10 +1449,10 @@ export async function voipCancel(callRef: string, reason: string) {
   await api.post('/calls/voip/cancel', { callRef, reason });
 }
 
-export async function initiateCall(customerId: string) {
+export async function initiateCall(customerId: string, idempotencyKey?: string) {
   const { data } = await api.post<ApiEnvelope<CallInitiateResult>>('/calls/initiate', {
     customerId,
-    idempotencyKey: `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    idempotencyKey: idempotencyKey ?? `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   });
   return data.data;
 }

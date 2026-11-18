@@ -1002,6 +1002,9 @@ export type CallAutoAnswerHint = { callerIds: string[]; windowSeconds: number };
 export interface CallInitiateResult {
   ok: boolean;
   callSid?: string;
+  deduped?: boolean;
+  /** Present only for a newly placed call when the backend's auto-answer flag is on (same shape as the dial pad's reply). */
+  autoAnswer?: { callerIds: string[]; windowSeconds: number };
 }
 
 export interface PayrollResult {
