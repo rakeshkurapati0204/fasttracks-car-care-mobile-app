@@ -17,7 +17,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://dashboard.fasttrackscarcare.in/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://staging.dashboard.fasttrackscarcare.in/api/v1"
       }
     },
     "staging": {
@@ -32,6 +32,17 @@
     "production": {
       "autoIncrement": true,
       "env": {
+        "EXPO_PUBLIC_API_URL": "https://dashboard.fasttrackscarcare.in/api/v1"
+      }
+    },
+    "production-apk": {
+      "distribution": "internal",
+      "autoIncrement": false,
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "FASTTRACKS_DIALER": "1",
         "EXPO_PUBLIC_API_URL": "https://dashboard.fasttrackscarcare.in/api/v1"
       }
     },
