@@ -4723,7 +4723,7 @@ export async function downloadCustomersCsv(filters: {
   });
   if (result.status < 200 || result.status >= 300) {
     await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
-    throw new Error(`CSV export failed (error ${result.status}).`);
+    throw Object.assign(new Error(`CSV export failed (error ${result.status}).`), { status: result.status });
   }
   return { uri: result.uri, filename };
 }

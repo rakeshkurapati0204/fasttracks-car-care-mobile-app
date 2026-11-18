@@ -34,6 +34,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useContentWidth } from '@/lib/drawer-context';
+import { downloadFailureText, downloadStatus, type DownloadErrorLike } from '@/lib/download-errors';
 import { CRM_SEARCH_LABELS, CRM_SEARCH_PLACEHOLDERS, CRM_TABLE_MIN_WIDTH, JOB_STATUS_LABELS, SOURCE_FILTER_OPTIONS } from '@/lib/customers-format';
 import { usePermissions } from '@/lib/permissions-context';
 import type { BoardStage, CjJobCard, CrmCustomerRow, CrmSearchBy, HandledByEmployee, JobCardStatus } from '@/types/api';
@@ -307,12 +308,23 @@ export default function CustomersScreen() {
   // Dashboard downloadCsv: same filters as the list, built by the server, saved to the cache, then the share sheet.
   const downloadCsv = async () => {
     setCsvLoading(true);
+    let uri: string;
     try {
-      const { uri } = await downloadCustomersCsv({ fromDate: crmFromDate, toDate: crmToDate, source: crmSource, search: crmSearch, searchBy: crmSearchBy });
+      ({ uri } = await downloadCustomersCsv({ fromDate: crmFromDate, toDate: crmToDate, source: crmSource, search: crmSearch, searchBy: crmSearchBy }));
+    } catch (e) {
+      // Say WHY (refused account, server error, no internet): the one fixed line told nobody anything. The status is also logged for adb.
+      console.warn('[customers csv] download failed, status', downloadStatus(e as DownloadErrorLike));
+      Alert.alert('CSV download failed', downloadFailureText(e as DownloadErrorLike, 'The CSV'));
+      setCsvLoading(false);
+      return;
+    }
+    try {
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'text/csv', dialogTitle: 'Customers & Jobs CSV', UTI: 'public.comma-separated-values-text' });
-      else Alert.alert('CSV saved', 'Sharing isn’t available on this device.');
-    } catch {
-      Alert.alert('CSV download failed. Please try again.');
+      else Alert.alert('CSV downloaded', 'The file was built, but sharing is not available on this device.');
+    } catch (e) {
+      // The file was built; only the share sheet failed. Not the same problem as a failed download.
+      console.warn('[customers csv] share failed', (e as Error)?.message);
+      Alert.alert('CSV downloaded, but it could not be shared', 'The file was built, but the share sheet would not open. Try again.');
     } finally {
       setCsvLoading(false);
     }
