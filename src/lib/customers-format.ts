@@ -90,3 +90,12 @@ export function quoteLabel(index: number, total: number): string {
 }
 
 export const UNPAID_STATUSES = ['ACTIVE', 'ISSUED', 'PARTIAL', 'OVERDUE'];
+
+// The All Customers table (wide layout). Fixed column widths, and a customer name that must stay readable: the name column takes what is left, so the table is
+// only drawn when the screen leaves at least CRM_NAME_MIN_WIDTH for it. Narrower than that (a phone, a half-open foldable) the compact two-line row is used.
+export const CRM_COLUMNS = { phone: 120, vehicles: 170, lastVisit: 110, status: 100, total: 80 } as const;
+export const CRM_NAME_MIN_WIDTH = 220;
+const CRM_ROW_PADDING = 16 * 2; // paddingHorizontal 16 on each side
+const CRM_ROW_GAPS = 12 * 7; // 8 cells (name, 5 columns, delete, arrow), gap 12 between them
+const CRM_ROW_TRAILING = 30 + 16; // delete button (18 icon + 2 x 6 padding) + arrow icon
+export const CRM_TABLE_MIN_WIDTH = CRM_NAME_MIN_WIDTH + Object.values(CRM_COLUMNS).reduce((a, b) => a + b, 0) + CRM_ROW_PADDING + CRM_ROW_GAPS + CRM_ROW_TRAILING;

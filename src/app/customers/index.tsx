@@ -34,7 +34,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useContentWidth } from '@/lib/drawer-context';
-import { CRM_SEARCH_LABELS, CRM_SEARCH_PLACEHOLDERS, JOB_STATUS_LABELS, SOURCE_FILTER_OPTIONS } from '@/lib/customers-format';
+import { CRM_SEARCH_LABELS, CRM_SEARCH_PLACEHOLDERS, CRM_TABLE_MIN_WIDTH, JOB_STATUS_LABELS, SOURCE_FILTER_OPTIONS } from '@/lib/customers-format';
 import { usePermissions } from '@/lib/permissions-context';
 import type { BoardStage, CjJobCard, CrmCustomerRow, CrmSearchBy, HandledByEmployee, JobCardStatus } from '@/types/api';
 
@@ -58,6 +58,7 @@ export default function CustomersScreen() {
   const router = useRouter();
   const width = useContentWidth();
   const wide = width >= SM_BREAKPOINT;
+  const crmTable = width >= CRM_TABLE_MIN_WIDTH; // the All Customers table needs more room than the 2-column job cards do
   const columns = width >= 1100 ? 3 : wide ? 2 : 1;
   const halfGap = columns > 1 ? GUTTER / 2 : 0;
   const { user } = useAuth();
@@ -283,9 +284,9 @@ export default function CustomersScreen() {
 
   const renderCustomer = useCallback(({ item }: { item: CrmCustomerRow }) => (
     <View style={[styles.rowSides, { borderColor: theme.border }]}>
-      <CrmRow customer={item} wide={wide} onView={openCustomer} onDelete={isOwner ? askDelete : undefined} />
+      <CrmRow customer={item} wide={crmTable} onView={openCustomer} onDelete={isOwner ? askDelete : undefined} />
     </View>
-  ), [wide, openCustomer, isOwner, askDelete, theme.border]);
+  ), [crmTable, openCustomer, isOwner, askDelete, theme.border]);
 
   const renderBoardCard = useCallback(({ item }: { item: CjJobCard }) => (
     <View style={cell}>
@@ -403,8 +404,8 @@ export default function CustomersScreen() {
               </View>
             ) : null}
           </View>
-          {!wide && !crmLoading && customers.length > 0 ? <View style={[styles.tableCap, { borderColor: theme.border }]} /> : null}
-          {wide && !crmLoading && customers.length > 0 ? (
+          {!crmTable && !crmLoading && customers.length > 0 ? <View style={[styles.tableCap, { borderColor: theme.border }]} /> : null}
+          {crmTable && !crmLoading && customers.length > 0 ? (
             <View style={[styles.tableHead, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
               <ThemedText themeColor="textMuted" style={[styles.th, styles.flex1]}>CUSTOMER</ThemedText>
               <ThemedText themeColor="textMuted" style={[styles.th, { width: CRM_COLUMNS.phone }]}>PHONE</ThemedText>

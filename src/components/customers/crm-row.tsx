@@ -7,7 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Badge } from '@/components/ui';
 import { FontWeights, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { fmtDate, fmtINR, SOURCE_LABELS } from '@/lib/customers-format';
+import { CRM_COLUMNS, fmtDate, fmtINR, SOURCE_LABELS } from '@/lib/customers-format';
 import type { CrmCustomerRow } from '@/types/api';
 
 type Props = {
@@ -18,8 +18,8 @@ type Props = {
   onDelete?: (customer: CrmCustomerRow) => void;
 };
 
-// Column widths of the wide table; the header in the screen uses the same.
-export const CRM_COLUMNS = { phone: 120, vehicles: 170, lastVisit: 110, status: 100, total: 80 } as const;
+// Column widths of the wide table (customers-format.ts); the header in the screen uses the same.
+export { CRM_COLUMNS };
 
 // Dashboard CRMRow: phone shows the compact two-line row, wide the table row.
 function CrmRowBase({ customer, wide, onView, onDelete }: Props) {
