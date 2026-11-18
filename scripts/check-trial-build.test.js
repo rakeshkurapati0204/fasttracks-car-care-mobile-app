@@ -58,11 +58,28 @@ test('eas.json: the sales-trial URL is the staging dashboard and passes the guar
   assert.deepEqual(check({ ...p.env }), []);
 });
 
-test('eas.json: every existing profile is exactly as before', () => {
+test('eas.json: the other profiles are exactly as pinned here', () => {
   assert.deepEqual(eas.build.development, { developmentClient: true, distribution: 'internal', android: { buildType: 'apk' } });
-  assert.deepEqual(eas.build.preview, { distribution: 'internal', android: { buildType: 'apk' }, env: { EXPO_PUBLIC_API_URL: 'https://dashboard.fasttrackscarcare.in/api/v1' } });
+  // preview used to point at production (and so skipped the trial guard); an internal build named "preview" now uses staging. Production tests use production-apk.
+  assert.deepEqual(eas.build.preview, { distribution: 'internal', android: { buildType: 'apk' }, env: { EXPO_PUBLIC_API_URL: 'https://staging.dashboard.fasttrackscarcare.in/api/v1' } });
   assert.deepEqual(eas.build.production, { autoIncrement: true, env: { EXPO_PUBLIC_API_URL: 'https://dashboard.fasttrackscarcare.in/api/v1' } });
   assert.deepEqual(eas.build['development-voip'], { extends: 'development', env: { FASTTRACKS_VOIP_NATIVE: '1', EXPO_PUBLIC_VOIP_NATIVE: 'true' } });
   assert.deepEqual(eas.build['development-dialer'], { extends: 'development', env: { FASTTRACKS_DIALER: '1' } });
-  assert.deepEqual(Object.keys(eas.build).sort(), ['development', 'development-dialer', 'development-voip', 'preview', 'production', 'sales-trial', 'staging']);
+  assert.deepEqual(Object.keys(eas.build).sort(), ['development', 'development-dialer', 'development-voip', 'preview', 'production', 'production-apk', 'sales-trial', 'staging']);
+});
+
+test('eas.json: production-apk is an installable APK on the production API with the dialer module, and is not a trial build', () => {
+  const p = eas.build['production-apk'];
+  assert.deepEqual(p, {
+    distribution: 'internal',
+    autoIncrement: false,
+    android: { buildType: 'apk' },
+    env: { FASTTRACKS_DIALER: '1', EXPO_PUBLIC_API_URL: 'https://dashboard.fasttrackscarcare.in/api/v1' },
+  });
+  // No FASTTRACKS_TRIAL: the trial guard refuses the production host on purpose, and this profile is the one that is meant to use it.
+  assert.equal(p.env.FASTTRACKS_TRIAL, undefined);
+  // Only the production profiles point at the production host.
+  const prodHost = 'dashboard.fasttrackscarcare.in';
+  const onProd = Object.entries(eas.build).filter(([, v]) => v.env?.EXPO_PUBLIC_API_URL && new URL(v.env.EXPO_PUBLIC_API_URL).host === prodHost).map(([k]) => k).sort();
+  assert.deepEqual(onProd, ['production', 'production-apk']);
 });
